@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 from typing import Dict, Any
 
 from src.state.conversation_state import ConversationState
-from src.flows.core_nodes import (
+from src.flows.node_logic.core_nodes import (
     retrieve_chunks,
     generate_answer,
     apply_role_context,

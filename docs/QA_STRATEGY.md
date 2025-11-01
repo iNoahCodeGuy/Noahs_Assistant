@@ -2577,7 +2577,7 @@ class SupabaseSettings:
 - [ ] `src/services/storage_service.py:261, 312` - Storage operations
 
 **Priority 3 - Analytics (LOW IMPACT)**:
-- [ ] `src/analytics/feedback_test_generator.py:318, 323` - Dashboard tooling
+- [x] `src/analytics/feedback_test_generator.py` - Archived (unused, replaced by LangSmith evaluation pipeline)
 - [ ] `src/analytics/code_display_monitor.py:233, 236` - Monitoring scripts
 
 **Implementation Plan**:

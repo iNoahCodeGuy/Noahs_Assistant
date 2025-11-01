@@ -8,6 +8,7 @@ Before implementing features or answering questions, open these master docs:
 2. 🧩 **System Architecture** → `docs/context/SYSTEM_ARCHITECTURE_SUMMARY.md` (control flow, RAG pipeline, data layer)
 3. 🧮 **Data & Schema Reference** → `docs/context/DATA_COLLECTION_AND_SCHEMA_REFERENCE.md` (tables, queries, presentation rules)
 4. 💬 **Conversation Personality** → `docs/context/CONVERSATION_PERSONALITY.md` (warmth, enthusiasm, engagement)
+5. 🔍 **LangSmith Tracing** → `docs/LANGSMITH_TRACING_SETUP.md` (observability, debugging, performance monitoring)
 
 These define:
 - What the assistant is and why it exists
@@ -21,11 +22,30 @@ These define:
 This is a **role-based RAG (Retrieval-Augmented Generation) application** serving as an interactive résumé assistant. The system uses:
 
 - **Hybrid deployment**: Streamlit UI (`src/main.py`) for local dev + Vercel serverless (`api/`) for production
-- **LangGraph-style orchestration**: Modular node-based conversation flow across 4 focused modules:
-  - `conversation_nodes.py` - Core pipeline (classify → retrieve → generate → plan → apply → execute → log)
+- **LangGraph-style orchestration**: Modular node-based conversation flow with organized node logic:
+  - `conversation_nodes.py` - Central export hub (re-exports all nodes from `node_logic/`)
+  - `node_logic/` package - Focused modules (<200 lines each):
+    - `session_management.py` - State initialization
+    - `role_routing.py` - Role classification
+    - `query_classification.py` - Intent detection
+    - `entity_extraction.py` - Company/role/contact extraction
+    - `clarification.py` - Vague query handling
+    - `query_composition.py` - Retrieval-ready queries
+    - `presentation_control.py` - Depth/display formatting
+    - `retrieval_nodes.py` - Retrieval pipeline (pgvector search, re-ranking, grounding validation)
+    - `generation_nodes.py` - Generation pipeline (LLM call, hallucination check)
+    - `formatting_nodes.py` - Formatting pipeline (structured layout, toggles, enrichments)
+    - `logging_nodes.py` - Logging pipeline (analytics persistence, followups, memory)
+    - `core_nodes.py` - Backward-compatible aliases (re-exports from split modules)
+    - `action_planning.py` - Role-based action decisions
+    - `action_execution.py` - Side effects (email, SMS, storage)
+    - `code_validation.py` - Sanitization and validation
+    - `greetings.py` - Role-specific welcome messages
+    - `resume_distribution.py` - Hiring signal detection
+    - `analytics_renderer.py` - Analytics display
+    - `performance_metrics.py` - Performance tracking
   - `content_blocks.py` - Reusable enterprise messaging blocks
   - `data_reporting.py` - Analytics display with markdown tables
-  - `action_execution.py` - Side effects handler (email, SMS, storage)
 - **Supabase pgvector**: Centralized vector storage replacing any local FAISS (see `src/retrieval/pgvector_retriever.py`)
 - **Role-driven retrieval**: Each of 5 roles (technical/nontechnical hiring managers, developers, casual visitors, confessions) triggers different knowledge sources and formatting
 
@@ -183,18 +203,36 @@ Routes configured in `vercel.json` (no Next.js required, pure Python functions).
 ## Common Workflows
 
 ### Adding a New Conversation Node
-1. Define node function in `src/flows/conversation_nodes.py`:
+1. Define node function in `src/flows/node_logic/<module>.py` (choose appropriate module or create new one):
    ```python
    def my_node(state: ConversationState) -> ConversationState:
        # Mutate state immutably
        state.stash("my_key", value)
        return state
    ```
-2. Insert into pipeline in `conversation_flow.py`:
+2. Export from `src/flows/node_logic/__init__.py`:
+   ```python
+   from src.flows.node_logic.<module> import my_node
+   __all__ = [..., "my_node"]
+   ```
+3. Re-export from `src/flows/conversation_nodes.py`:
+   ```python
+   from src.flows.node_logic.<module> import my_node
+   __all__ = [..., "my_node"]
+   ```
+4. Insert into pipeline in `conversation_flow.py`:
    ```python
    pipeline = (classify_query, retrieve_chunks, my_node, generate_answer, ...)
    ```
-3. Add tests in `tests/test_conversation_flow.py`
+5. Add tests in `tests/test_conversation_flow.py`
+
+**Module organization guidelines:**
+- **Retrieval concerns** → `retrieval_nodes.py` (pgvector search, re-ranking, grounding)
+- **Generation concerns** → `generation_nodes.py` (LLM calls, hallucination checks)
+- **Formatting concerns** → `formatting_nodes.py` (layout, toggles, enrichments)
+- **Logging concerns** → `logging_nodes.py` (analytics, followups, memory)
+- **New concern** → Create new module following <200 line principle
+- **Backward compatibility** → Add aliases in `core_nodes.py` if needed for tests
 
 ### Adding Enterprise Content Blocks
 1. Add new function to `src/flows/content_blocks.py`:
@@ -206,14 +244,14 @@ Routes configured in `vercel.json` (no Next.js required, pure Python functions).
 3. Trigger via action in `plan_actions()` node
 
 ### Adding New Action Types
-1. Add action handler to `src/flows/action_execution.py`:
+1. Add action handler to `src/flows/node_logic/action_execution.py`:
    ```python
    def execute_my_action(self, state: ConversationState, action: Dict[str, Any]) -> None:
        # Perform side effect
        pass
    ```
 2. Wire in `ActionExecutor.execute()` method
-3. Plan action in `plan_actions()` node
+3. Plan action in `src/flows/node_logic/action_planning.py`'s `plan_actions()` node
 
 ### Updating Knowledge Base
 ```bash
@@ -354,10 +392,15 @@ else:
 | `src/main.py` | Streamlit entry point, role selection UI |
 | `api/chat.py` | Vercel serverless endpoint for chat |
 | `src/flows/conversation_flow.py` | LangGraph pipeline orchestrator |
-| `src/flows/conversation_nodes.py` | Core conversation nodes (311 lines) |
+| `src/flows/conversation_nodes.py` | Central export hub for all nodes (re-exports from node_logic/) |
+| `src/flows/node_logic/` | Package containing all node implementations (19 modules, <200 lines each) |
+| `src/flows/node_logic/retrieval_nodes.py` | Retrieval pipeline: pgvector search, re-ranking, grounding (273 lines) |
+| `src/flows/node_logic/generation_nodes.py` | Generation pipeline: LLM call, hallucination check (304 lines) |
+| `src/flows/node_logic/formatting_nodes.py` | Formatting pipeline: structured layout, toggles, enrichments (435 lines) |
+| `src/flows/node_logic/logging_nodes.py` | Logging pipeline: analytics persistence, followups, memory (193 lines) |
+| `src/flows/node_logic/core_nodes.py` | Backward-compatible aliases (re-exports from split modules) (65 lines) |
 | `src/flows/content_blocks.py` | Reusable enterprise messaging blocks (127 lines) |
 | `src/flows/data_reporting.py` | Analytics display with markdown tables (172 lines) |
-| `src/flows/action_execution.py` | Side effects handler with service management (222 lines) |
 | `src/core/rag_engine.py` | RAG logic, pgvector retrieval, LLM generation |
 | `src/agents/role_router.py` | Role-based query routing (legacy, migrating to nodes) |
 | `src/config/supabase_config.py` | All environment config, settings singleton |
@@ -370,5 +413,5 @@ else:
 - **Role behavior specs**: `ROLE_FEATURES.md` and `ROLE_FUNCTIONALITY_CHECKLIST.md`
 - **Supabase schema**: `supabase/migrations/*.sql`
 - **API contracts**: `api/README.md`
-- **Supplementary guides**: `docs/GLOSSARY.md`, `docs/EXTERNAL_SERVICES.md`, `docs/OBSERVABILITY.md`
+- **Supplementary guides**: `docs/GLOSSARY.md`, `docs/EXTERNAL_SERVICES.md`, `docs/OBSERVABILITY.md`, `docs/LANGSMITH_TRACING_SETUP.md`
 - **Legacy docs**: `docs/archive/legacy/` - archived for historical reference only

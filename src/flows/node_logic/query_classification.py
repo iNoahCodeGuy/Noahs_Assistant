@@ -21,13 +21,12 @@ Design Principles Applied:
 - Maintainability: Pure helper functions separated from I/O
 """
 
-import logging
 import re
+import logging
 from typing import Dict, Any
 
 # Import NEW TypedDict state (Phase 3A migration)
 from src.state.conversation_state import ConversationState
-from src.flows.code_display import detect_requested_modules
 
 logger = logging.getLogger(__name__)
 
@@ -336,7 +335,6 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         logger.info(f"Expanded vague query: '{query}' → '{expanded_query}'")
 
     lowered = query.lower()
-    requested_modules = detect_requested_modules(query)
 
     # Detect when a longer teaching-focused response is needed
     # These queries require depth, explanation, and educational context
@@ -360,14 +358,8 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         "show me the", "show retrieval", "show api",
         "code snippet", "code example", "source code"
     ]
-    code_request_detected = any(keyword in lowered for keyword in code_display_keywords)
-    if requested_modules:
-        update["requested_code_modules"] = requested_modules
-        code_request_detected = True
-
-    if code_request_detected:
+    if any(keyword in lowered for keyword in code_display_keywords):
         update["code_display_requested"] = True
-        update["self_code_requested"] = True
         update["query_type"] = "technical"
 
     # PROACTIVE code detection - when code would clarify the answer for technical roles
@@ -467,6 +459,7 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         intent_label = "business_value"
 
     update["query_intent"] = intent_label
+    update["intent_confidence"] = 0.9
 
     # Update state in-place (current functional pipeline pattern)
     state.update(update)

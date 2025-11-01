@@ -19,15 +19,15 @@ See docs/CONVERSATION_PIPELINE_MODULES.md for implementation details.
 
 from __future__ import annotations
 
-# Import all conversation nodes from their focused modules
-from src.flows.session_management import initialize_conversation_state
-from src.flows.role_routing import classify_role_mode
-from src.flows.query_classification import classify_intent, classify_query
-from src.flows.entity_extraction import extract_entities
-from src.flows.clarification import assess_clarification_need, ask_clarifying_question
-from src.flows.query_composition import compose_query
-from src.flows.presentation_control import depth_controller, display_controller
-from src.flows.core_nodes import (
+# Import all conversation nodes from the node_logic package
+from src.flows.node_logic.session_management import initialize_conversation_state
+from src.flows.node_logic.role_routing import classify_role_mode
+from src.flows.node_logic.query_classification import classify_intent, classify_query
+from src.flows.node_logic.entity_extraction import extract_entities
+from src.flows.node_logic.clarification import assess_clarification_need, ask_clarifying_question
+from src.flows.node_logic.query_composition import compose_query
+from src.flows.node_logic.presentation_control import depth_controller, display_controller
+from src.flows.node_logic.core_nodes import (
     retrieve_chunks,
     re_rank_and_dedup,
     validate_grounding,
@@ -41,14 +41,14 @@ from src.flows.core_nodes import (
     suggest_followups,
     update_memory,
 )
-from src.flows.action_planning import plan_actions
-from src.flows.action_execution import execute_actions
-from src.flows.code_validation import (
+from src.flows.node_logic.action_planning import plan_actions
+from src.flows.node_logic.action_execution import execute_actions
+from src.flows.node_logic.code_validation import (
     is_valid_code_snippet,
     sanitize_generated_answer
 )
-from src.flows.greetings import get_role_greeting, should_show_greeting, is_first_turn
-from src.flows.resume_distribution import (
+from src.flows.node_logic.greetings import get_role_greeting, should_show_greeting, is_first_turn
+from src.flows.node_logic.resume_distribution import (
     detect_hiring_signals,
     handle_resume_request,
     should_add_availability_mention,

@@ -12,16 +12,105 @@ Run with: pytest tests/test_conversation_quality.py -v
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from src.state.conversation_state import ConversationState
-from src.flows.query_classification import classify_query
-from src.flows.core_nodes import (
-    generate_answer, apply_role_context, retrieve_chunks
+from src.flows.node_logic.query_classification import classify_query
+from src.flows.node_logic.core_nodes import (
+    retrieve_chunks, generate_answer, apply_role_context
 )
-from src.flows.code_validation import is_valid_code_snippet
+from src.flows.node_logic.code_validation import is_valid_code_snippet
+from src.flows.data_reporting import render_full_data_report
 
 
-# TestAnalyticsQuality class removed - tested deleted data_reporting.py module
-# Analytics now handled by analytics_renderer.py via /api/analytics endpoint
-# See docs/features/ANALYTICS_IMPLEMENTATION.md for new architecture
+class TestAnalyticsQuality:
+    """Ensure analytics remain clean and aggregated."""
+
+    def test_kb_coverage_aggregated_not_detailed(self):
+        """KB coverage should show 3-4 sources, not 245+ individual entries."""
+        with patch('src.flows.data_reporting.supabase_analytics') as mock_analytics:
+            # Mock analytics data
+            mock_analytics.client.table.return_value.select.return_value.execute.return_value.data = []
+            mock_analytics.get_kb_coverage.return_value = {
+                'architecture_kb': 15,
+                'career_kb': 122,
+                'technical_kb': 89
+            }
+
+            report = render_full_data_report()
+
+            # Count rows in KB coverage section
+            if "Knowledge Base Coverage" in report:
+                kb_section = report.split("#### Knowledge Base Coverage")[1].split("####")[0]
+                kb_rows = [line for line in kb_section.split("\n") if line.startswith("|") and "---" not in line]
+
+                # Should be: header + 3-4 data rows (one per source)
+                assert len(kb_rows) <= 6, f"KB coverage has {len(kb_rows)} rows - should be ≤6 (header + 3-5 sources)"
+
+                # Should NOT have individual entry names like "entry_1", "entry_100"
+                assert "entry_1" not in report.lower()
+                assert "entry_100" not in report.lower()
+                assert "section_" not in report.lower()  # No section-level breakdowns
+
+    def test_kpi_metrics_calculated(self):
+        """Analytics should include calculated metrics, not raw dumps."""
+        with patch('src.flows.data_reporting.supabase_analytics') as mock_analytics:
+            # Mock analytics data
+            mock_analytics.client.table.return_value.select.return_value.execute.return_value.data = [
+                {"success": True, "latency_ms": 3200},
+                {"success": True, "latency_ms": 2800},
+                {"success": False, "latency_ms": 5100},
+            ]
+            mock_analytics.get_kb_coverage.return_value = {}
+
+            report = render_full_data_report()
+
+            # Must have metrics terminology (even if empty state)
+            assert "Success Rate" in report or "Conversations" in report or "Performance" in report
+
+            # Should NOT have raw SQL dumps
+            assert "SELECT * FROM" not in report
+            assert "latency_ms:" not in report  # Raw column names
+
+    def test_recent_activity_limited(self):
+        """Should show last 10 messages, not entire history."""
+        with patch('src.flows.data_reporting.supabase_analytics') as mock_analytics:
+            # Mock 50 messages (simulating large history)
+            mock_analytics.client.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value.data = [
+                {"id": i, "query_type": "general", "latency_ms": 3000} for i in range(50)
+            ]
+            mock_analytics.get_kb_coverage.return_value = {}
+
+            report = render_full_data_report()
+
+            if "Recent Conversations" in report or "Recent Activity" in report:
+                # Count table rows
+                table_rows = report.count("| ")
+
+                # Should have manageable number of rows (header + ~10 data rows = ~20 pipe chars per row)
+                assert table_rows < 300, f"Report has ~{table_rows // 2} table rows - too many for recent activity"
+
+    def test_confessions_privacy_protected(self):
+        """Confessions should show count only, no personal details."""
+        with patch('src.flows.data_reporting.supabase_analytics') as mock_analytics:
+            mock_analytics.client.table.return_value.select.return_value.execute.return_value.data = []
+            mock_analytics.get_kb_coverage.return_value = {}
+
+            # Mock confessions
+            with patch('src.flows.data_reporting.supabase_analytics.client.table') as mock_table:
+                mock_table.return_value.select.return_value.execute.return_value.data = [
+                    {"name": "John Doe", "email": "john@example.com", "message": "I like you"}
+                ]
+
+                report = render_full_data_report()
+
+                if "Confessions" in report or "confessions" in report:
+                    # Should have count statement, not table with PII
+                    assert "Total" in report or "Received" in report
+
+                    # Should NOT have PII
+                    assert "John Doe" not in report
+                    assert "john@example.com" not in report
+                    assert "| name |" not in report
+                    assert "| email |" not in report
+                    assert "| message |" not in report
 
 
 class TestConversationFlowQuality:
@@ -453,13 +542,20 @@ class TestSpecificRegressions:
     """Tests for specific bugs that have occurred."""
 
     def test_analytics_no_section_iteration(self):
-        """Ensure we don't iterate over sections (245 rows bug) - DEPRECATED.
+        """Ensure we don't iterate over sections (245 rows bug)."""
+        import inspect
+        from src.flows import data_reporting
 
-        This test checked data_reporting.py which has been removed.
-        Analytics now handled by analytics_renderer.py via /api/analytics.
-        See docs/features/ANALYTICS_IMPLEMENTATION.md for new architecture.
-        """
-        pytest.skip("data_reporting.py removed - analytics now use /api/analytics endpoint")
+        # Get source code
+        source = inspect.getsource(data_reporting)
+
+        # Should NOT have nested section iteration
+        assert "for section, count in sections.items()" not in source, \
+            "Found section-level iteration - this causes 245-row dumps"
+
+        # Should aggregate by source only
+        assert "source_aggregation" in source or "aggregate" in source, \
+            "Missing source-level aggregation logic"
 
     def test_response_generator_no_prompts(self):
         """Ensure response_generator doesn't add follow-up prompts."""

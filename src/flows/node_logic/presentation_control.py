@@ -43,7 +43,6 @@ def depth_controller(state: ConversationState) -> ConversationState:
     role_mode = _resolve_role_mode(state)
     intent = state.get("query_intent") or state.get("query_type") or "general"
     conversation_turn = state.get("conversation_turn", 0)
-    lowered_query = state.get("query", "").lower()
 
     rules: Tuple[DepthRule, ...] = (
         DepthRule("default", 1, "Opening overview"),
@@ -78,20 +77,6 @@ def depth_controller(state: ConversationState) -> ConversationState:
         depth = 3
         reason = "Engineering deep dive requested"
 
-    escalation_tokens = (
-        "show me the code",
-        "under the hood",
-        "walk me through",
-        "diagram",
-        "flowchart",
-        "architecture detail",
-        "implementation detail",
-    )
-    if any(token in lowered_query for token in escalation_tokens) or state.get("self_code_requested"):
-        depth = 3
-        reason = "User escalated for implementation detail"
-        state["technical_escalation"] = True
-
     state["depth_level"] = min(depth, 3)
     state["detail_strategy"] = reason
 
@@ -104,10 +89,6 @@ def depth_controller(state: ConversationState) -> ConversationState:
     else:
         state["layout_variant"] = "mixed"
         state["followup_variant"] = "mixed"
-
-    if state.get("technical_escalation") and state.get("layout_variant") != "engineering":
-        state["layout_variant"] = "engineering"
-        state["followup_variant"] = "engineering"
 
     return state
 
@@ -122,33 +103,21 @@ def display_controller(state: ConversationState) -> ConversationState:
     reasons: Dict[str, str] = {}
 
     code_triggers = ("how ", "how do", "how does", "code", "sql", "langgraph")
-    if state.get("self_code_requested"):
-        toggles["code"] = True
-        reasons["code"] = "User explicitly asked to see implementation"
-    elif depth >= 2 and (
+    if depth >= 2 and (
         any(trigger in lowered_query for trigger in code_triggers)
         or intent in ENGINEERING_INTENTS
-        or state.get("code_display_requested")
     ):
         toggles["code"] = True
-        reasons.setdefault("code", "Engineering-oriented question benefits from code context")
+        reasons["code"] = "Engineering-oriented question benefits from code context"
 
-    data_triggers = ("latency", "cost", "reliability", "compliance", "sla")
-    if (
-        any(trigger in lowered_query for trigger in data_triggers)
-        or intent in {"business_value", "analytics", "data"}
-    ):
+    data_triggers = ("latency", "cost", "reliability")
+    if any(trigger in lowered_query for trigger in data_triggers) or intent == "business_value":
         toggles["data"] = True
         reasons["data"] = "Business or reliability question warrants metrics"
 
-    diagram_triggers = ("diagram", "flowchart", "visual", "mermaid", "map it")
-    if any(trigger in lowered_query for trigger in diagram_triggers):
+    if depth >= 2 and not state.get("is_greeting"):
         toggles["diagram"] = True
-        state["diagram_focus"] = state.get("topic_focus", "pipeline")
-        reasons["diagram"] = "User asked for a visual walkthrough"
-    elif depth >= 2 and not state.get("is_greeting"):
-        toggles["diagram"] = True
-        reasons.setdefault("diagram", "Depth ≥2 unlocks architecture diagrams")
+        reasons["diagram"] = "Depth ≥2 unlocks architecture diagrams"
 
     state["display_toggles"] = toggles
     state["display_reasons"] = reasons

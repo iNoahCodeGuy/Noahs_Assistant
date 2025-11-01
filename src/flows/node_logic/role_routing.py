@@ -27,6 +27,7 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
         normalized = _ROLE_ALIASES.get(raw_role, raw_role.replace(" ", "_"))
 
         state["role_mode"] = normalized
+        state["role_confidence"] = 1.0
 
         # Attach persona hints for downstream nodes (analytics + memory)
         persona_hints: Dict[str, str] = state["session_memory"].setdefault("persona_hints", {})

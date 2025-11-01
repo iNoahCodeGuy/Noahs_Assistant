@@ -74,6 +74,9 @@ class ConversationState(TypedDict, total=False):
     role_mode: str
     """Normalized persona mode after classification (tech HM, nontech HM, developer, explorer)."""
 
+    role_confidence: float
+    """Confidence score (0-1) for role classification."""
+
     session_id: str
     """Unique session identifier for analytics and conversation tracking."""
 
@@ -97,20 +100,14 @@ class ConversationState(TypedDict, total=False):
     query_intent: str
     """Higher level intent grouping (engineering, business, data, action)."""
 
+    intent_confidence: float
+    """Confidence score for query intent classification."""
+
     is_greeting: bool
     """True if query is a greeting (allows pipeline short-circuit)."""
 
     topic_focus: str
     """Primary topical focus of the query (architecture, data, testing, etc.)."""
-
-    conversation_turn: int
-    """Zero-indexed turn number for the current user message."""
-
-    conversation_depth: int
-    """Deepest presentation depth reached during the session."""
-
-    topic_history: List[str]
-    """Rolling history of detected topic_focus values for follow-up guidance."""
 
     # --- Entity Extraction & Memory ---
     entities: Dict[str, Any]
@@ -181,18 +178,6 @@ class ConversationState(TypedDict, total=False):
 
     followup_variant: str
     """Variant used to craft follow-up invitations (maps to layout variant)."""
-
-    requested_code_modules: List[str]
-    """Normalized module keys requested for self-code display."""
-
-    self_code_requested: bool
-    """Flag indicating the user explicitly asked to view Portfolia's own code."""
-
-    technical_escalation: bool
-    """True when the user forced a deeper technical walkthrough mid-conversation."""
-
-    diagram_focus: str
-    """Light guidance on which diagram variant to prioritize (pipeline, data, adoption)."""
 
     # --- Action Planning & Execution ---
     pending_actions: List[Dict[str, Any]]

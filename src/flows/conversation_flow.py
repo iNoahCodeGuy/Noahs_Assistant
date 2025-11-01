@@ -34,7 +34,10 @@ Performance characteristics remain consistent with Week 1 launch targets:
 from __future__ import annotations
 
 import time
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional, Sequence, TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from langgraph.graph import CompiledGraph
 
 from src.core.rag_engine import RagEngine
 from src.state.conversation_state import ConversationState
@@ -64,6 +67,16 @@ from src.flows.conversation_nodes import (
     update_memory,
     log_and_notify,
 )
+
+# LangGraph Studio support
+try:
+    from langgraph.graph import StateGraph, START, END
+    LANGGRAPH_AVAILABLE = True
+except ImportError:
+    LANGGRAPH_AVAILABLE = False
+    StateGraph = None
+    START = "START"
+    END = "END"
 
 
 Node = Callable[[ConversationState], ConversationState]
@@ -144,3 +157,96 @@ def run_conversation_flow(
     elapsed_ms = int((time.time() - start) * 1000)
     state = log_and_notify(state, session_id=session_id, latency_ms=elapsed_ms)
     return state
+
+
+def _build_langgraph() -> Any:
+    """Build LangGraph StateGraph for Studio visualization.
+
+    Returns:
+        Compiled StateGraph if LangGraph available, None otherwise
+    """
+    if not LANGGRAPH_AVAILABLE:
+        return None
+
+    # Create StateGraph with ConversationState schema
+    workflow = StateGraph(ConversationState)
+
+    # Add all nodes
+    workflow.add_node("initialize", initialize_conversation_state)
+    workflow.add_node("greeting", lambda s: handle_greeting(s, None))  # RAG engine injected at runtime
+    workflow.add_node("classify_role", classify_role_mode)
+    workflow.add_node("classify_intent", classify_intent)
+    workflow.add_node("depth_control", depth_controller)
+    workflow.add_node("display_control", display_controller)
+    workflow.add_node("detect_hiring", detect_hiring_signals)
+    workflow.add_node("resume_request", handle_resume_request)
+    workflow.add_node("extract_entities", extract_entities)
+    workflow.add_node("assess_clarification", assess_clarification_need)
+    workflow.add_node("clarify", ask_clarifying_question)
+    workflow.add_node("compose_query", compose_query)
+    workflow.add_node("retrieve", lambda s: retrieve_chunks(s, None))
+    workflow.add_node("re_rank", re_rank_and_dedup)
+    workflow.add_node("validate_grounding", validate_grounding)
+    workflow.add_node("grounding_gap", handle_grounding_gap)
+    workflow.add_node("generate_draft", lambda s: generate_draft(s, None))
+    workflow.add_node("hallucination_check", hallucination_check)
+    workflow.add_node("plan_actions", plan_actions)
+    workflow.add_node("format_answer", lambda s: format_answer(s, None))
+    workflow.add_node("execute_actions", execute_actions)
+    workflow.add_node("suggest_followups", suggest_followups)
+    workflow.add_node("update_memory", update_memory)
+    workflow.add_node("log_and_notify", lambda s: log_and_notify(s, "studio-session", 0))
+
+    # Build linear pipeline with conditional edges
+    workflow.add_edge(START, "initialize")
+    workflow.add_edge("initialize", "greeting")
+
+    # Greeting can short-circuit to end
+    workflow.add_conditional_edges(
+        "greeting",
+        lambda s: "end" if s.get("is_greeting") else "classify_role",
+        {"end": END, "classify_role": "classify_role"}
+    )
+
+    workflow.add_edge("classify_role", "classify_intent")
+    workflow.add_edge("classify_intent", "depth_control")
+    workflow.add_edge("depth_control", "display_control")
+    workflow.add_edge("display_control", "detect_hiring")
+    workflow.add_edge("detect_hiring", "resume_request")
+    workflow.add_edge("resume_request", "extract_entities")
+    workflow.add_edge("extract_entities", "assess_clarification")
+
+    # Clarification conditional
+    workflow.add_conditional_edges(
+        "assess_clarification",
+        lambda s: "clarify" if s.get("needs_clarification") else "compose_query",
+        {"clarify": "clarify", "compose_query": "compose_query"}
+    )
+    workflow.add_edge("clarify", END)  # Clarification questions end the flow
+
+    workflow.add_edge("compose_query", "retrieve")
+    workflow.add_edge("retrieve", "re_rank")
+    workflow.add_edge("re_rank", "validate_grounding")
+
+    # Grounding validation conditional
+    workflow.add_conditional_edges(
+        "validate_grounding",
+        lambda s: "grounding_gap" if s.get("grounding_failed") else "generate_draft",
+        {"grounding_gap": "grounding_gap", "generate_draft": "generate_draft"}
+    )
+    workflow.add_edge("grounding_gap", "generate_draft")
+
+    workflow.add_edge("generate_draft", "hallucination_check")
+    workflow.add_edge("hallucination_check", "plan_actions")
+    workflow.add_edge("plan_actions", "format_answer")
+    workflow.add_edge("format_answer", "execute_actions")
+    workflow.add_edge("execute_actions", "suggest_followups")
+    workflow.add_edge("suggest_followups", "update_memory")
+    workflow.add_edge("update_memory", "log_and_notify")
+    workflow.add_edge("log_and_notify", END)
+
+    return workflow.compile()
+
+
+# Export compiled graph for LangGraph Studio
+graph = _build_langgraph()

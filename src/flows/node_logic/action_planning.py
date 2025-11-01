@@ -14,7 +14,7 @@ to a list. The actual work happens in a later step.
 
 from typing import Any
 from src.state.conversation_state import ConversationState
-from src.flows.query_classification import _is_data_display_request
+from src.flows.node_logic.query_classification import _is_data_display_request
 
 
 def plan_actions(state: ConversationState) -> ConversationState:

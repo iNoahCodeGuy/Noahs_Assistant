@@ -276,7 +276,7 @@ class RagEngine:
 
     # ========== ADVANCED RETRIEVAL ==========
     @trace_retrieval
-    def retrieve_with_code(self, query: str, role: str, include_code: Optional[bool] = None):
+    def retrieve_with_code(self, query: str, role: str):
         """Enhanced retrieval that can include code snippets when allowed.
 
         **NEW**: Uses pgvector's role-aware retrieval when available.
@@ -284,6 +284,7 @@ class RagEngine:
         DEPRECATION: passing only `role` to trigger code inclusion will be removed in a future version.
         Callers should pass include_code=bool explicitly (RoleRouter now handles this).
         """
+        include_code = None
         if include_code is None and role is not None:
             logger.debug("DEPRECATION: implicit role-based code inclusion – supply include_code explicitly.")
 
@@ -349,12 +350,12 @@ class RagEngine:
     def ensure_code_index_current(self):
         if getattr(self, 'code_service', None):
             self.code_service.ensure_current()
-            self._code_index_snapshot = self.code_service.version()
+            self._code_index_snapshot = self.code_service._snapshot
 
     def code_index_version(self) -> str:
         """Return code index version hash for tracking changes."""
         if getattr(self, 'code_service', None):
-            return self.code_service.version()
+            return getattr(self.code_service, '_snapshot', 'none')
         return "none"
 
     # ========== HEALTH & MONITORING ==========

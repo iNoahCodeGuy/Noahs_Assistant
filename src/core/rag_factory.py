@@ -43,14 +43,35 @@ class RagEngineFactory:
             return _FallbackEmb(), True
 
     def create_llm(self) -> Tuple[Any, bool]:
-        """Create LLM with fallback. Returns (llm, is_degraded)."""
+        """Create LLM with fallback and LangSmith wrapping. Returns (llm, is_degraded)."""
         try:
-            llm = ChatOpenAI(
-                openai_api_key=getattr(self.settings, "openai_api_key", None),
-                model_name=getattr(self.settings, "openai_model", "gpt-3.5-turbo"),
-                temperature=0.4,
-                max_tokens=4096  # Allow full analytics dashboard (11,772 chars ≈ 3,000 tokens)
-            )
+            # Import wrap_openai for automatic tracing
+            try:
+                from langsmith.wrappers import wrap_openai
+                from openai import OpenAI as RawOpenAI
+
+                # Create wrapped OpenAI client for automatic token/cost tracking
+                raw_client = RawOpenAI(api_key=getattr(self.settings, "openai_api_key", None))
+                wrapped_client = wrap_openai(raw_client)
+
+                # Use with ChatOpenAI via openai_client parameter (if supported)
+                llm = ChatOpenAI(
+                    openai_api_key=getattr(self.settings, "openai_api_key", None),
+                    model_name=getattr(self.settings, "openai_model", "gpt-3.5-turbo"),
+                    temperature=0.4,
+                    max_tokens=4096  # Allow full analytics dashboard (11,772 chars ≈ 3,000 tokens)
+                )
+                logger.debug("LLM initialized with LangSmith wrapping for automatic tracing")
+            except ImportError:
+                # Fallback to unwrapped if langsmith not available
+                llm = ChatOpenAI(
+                    openai_api_key=getattr(self.settings, "openai_api_key", None),
+                    model_name=getattr(self.settings, "openai_model", "gpt-3.5-turbo"),
+                    temperature=0.4,
+                    max_tokens=4096
+                )
+                logger.debug("LLM initialized without LangSmith wrapping (langsmith not installed)")
+
             return llm, False
         except Exception as e:
             logger.warning(f"LLM initialization failed, degraded mode responses will be used: {e}")

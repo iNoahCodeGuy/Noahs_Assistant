@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Dict, Any
 
 from src.state.conversation_state import ConversationState
-from src.flows.resume_distribution import (
+from src.flows.node_logic.resume_distribution import (
     extract_email_from_query,
     extract_name_from_query,
     extract_job_details_from_query,

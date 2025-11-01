@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "conversation_flow": "./src/flows/conversation_flow.py:graph"
+  },
+  "env": ".env"
+}

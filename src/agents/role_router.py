@@ -1,126 +1,184 @@
-"""Compatibility RoleRouter wrapper.
-
-This module keeps the legacy ``RoleRouter`` API available for tests and
-example scripts while delegating to the modern LangGraph-aware stack. It
-classifies queries with lightweight heuristics, calls into ``RagEngine``
-when available, and returns the historical dictionary payload expected by
-older integrations.
-"""
-
-from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
-
+from typing import Dict, Any, List, Optional
+from src.core.rag_engine import RagEngine
+from src.core.memory import Memory
 from src.config.supabase_config import supabase_settings
-from src.flows.query_classification import detect_topic_focus
-
-_TECH_KEYWORDS = (
-    "code",
-    "stack",
-    "implementation",
-    "deploy",
-    "diagram",
-    "architecture",
-    "langgraph",
-    "retrieval",
-    "rag",
-    "supabase",
-    "vector",
-)
-
-_CONFESSION_KEYWORDS = ("confess", "crush", "secret", "message for noah")
-
-
-@dataclass
-class Classification:
-    query_type: str
-    topic_focus: str
-    include_code: bool
-
+from src.flows.node_logic.query_classification import detect_topic_focus
+from .roles import role_include_code  # NEW import
 
 class RoleRouter:
-    """Small compatibility layer for legacy integrations."""
+    """Routes queries based on user role and query type."""
 
-    def __init__(self) -> None:
+    def __init__(self):
         self.settings = supabase_settings
-
-    def _classify_query(self, query: str, role: str) -> Classification:
-        lowered = (query or "").strip().lower()
-        if not lowered:
-            return Classification("general", "general", include_code=False)
-
-        if any(token in lowered for token in _CONFESSION_KEYWORDS) or role == "Looking to confess crush":
-            return Classification("confession", detect_topic_focus(query), include_code=False)
-
-        topic_focus = detect_topic_focus(query)
-        if any(token in lowered for token in _TECH_KEYWORDS):
-            include_code = role in {"Software Developer", "Hiring Manager (technical)"}
-            return Classification("technical", topic_focus, include_code=include_code)
-
-        if role in {"Hiring Manager (technical)", "Software Developer"}:
-            return Classification("technical", topic_focus, include_code=True)
-
-        return Classification("career", topic_focus, include_code=False)
 
     def route(
         self,
         role: str,
         query: str,
-        memory: Any,
-        rag_engine: Any,
-        chat_history: Optional[List[Dict[str, str]]] = None,
+        memory: Memory,
+        rag_engine: RagEngine,
+        chat_history: Optional[List[Dict[str, str]]] = None
     ) -> Dict[str, Any]:
-        classification = self._classify_query(query, role)
-        if hasattr(memory, "set_role"):
-            memory.set_role(role)
+        """Route query based on role and content.
+        chat_history kept optional for future LangGraph or summarization hooks.
+        """
+        memory.set_role(role)
+        classification = self._classify_query(query)
+        query_type = classification["query_type"]
+        topic_focus = classification["topic_focus"]
 
-        if classification.query_type == "confession":
-            message = (
-                "💌 I can pass that along discreetly. Share whatever you'd like—"
-                "I'll keep it private unless you ask me to introduce you."
-            )
-            return {
-                "type": "confession",
-                "topic_focus": classification.topic_focus,
-                "response": message,
-            }
+        chat_history = chat_history or []
+        user_turns = sum(1 for message in chat_history if message.get("role") == "user")
+        assistant_turns = sum(1 for message in chat_history if message.get("role") == "assistant")
+        turn_index = assistant_turns + 1
+        emotional_mode = "energetic" if assistant_turns % 2 == 0 else "reflective"
 
-        response_text = "Let me gather the highlights."
-        context: Dict[str, Any] = {
-            "type": classification.query_type,
-            "topic_focus": classification.topic_focus,
-        }
-
-        generator = getattr(rag_engine, "generate_response", None)
-        if callable(generator):
-            try:
-                response_text = generator(query, chat_history=chat_history)
-            except TypeError:
-                response_text = generator(query)
-
-        if classification.query_type == "technical":
-            include_code = classification.include_code
-            retrieve_with_code = getattr(rag_engine, "retrieve_with_code", None)
-            code_payload = None
-            if callable(retrieve_with_code):
-                try:
-                    code_payload = retrieve_with_code(query, role=role, include_code=include_code)
-                except TypeError:
-                    code_payload = retrieve_with_code(query, role=role)
-            elif include_code:
-                code_info = getattr(rag_engine, "retrieve_code_info", None)
-                if callable(code_info):
-                    code_payload = code_info(query, role=role)
-            if code_payload:
-                context["code"] = code_payload
+        if role == "Hiring Manager (nontechnical)":
+            result = self._handle_hiring_manager(query, query_type, rag_engine, technical=False, chat_history=chat_history)
+        elif role == "Hiring Manager (technical)":
+            result = self._handle_hiring_manager(query, query_type, rag_engine, technical=True, chat_history=chat_history)
+        elif role == "Software Developer":
+            result = self._handle_developer(query, query_type, rag_engine, chat_history=chat_history)
+        elif role == "Just looking around":
+            result = self._handle_casual(query, query_type, rag_engine, chat_history=chat_history)
+        elif role == "Looking to confess crush":
+            result = self._handle_confession(query)
         else:
-            career_retrieve = getattr(rag_engine, "retrieve_career_info", None)
-            if callable(career_retrieve):
-                context["career_matches"] = career_retrieve(query, role=role)
+            result = {"response": "Please select a valid role to continue.", "type": "error", "context": []}
 
-        context["response"] = response_text
-        return context
+        meta = result.setdefault("meta", {})
+        meta.update(
+            {
+                "topic_focus": topic_focus,
+                "role": role,
+                "turn_index": turn_index,
+                "user_turns": user_turns,
+                "emotional_mode": emotional_mode,
+                "suppress_follow_up": result.get("type") in {"error", "mma", "confession"},
+            }
+        )
 
+        return result
 
-__all__ = ["RoleRouter"]
+    def _classify_query(self, query: str) -> Dict[str, str]:
+        q = query.lower()
+        # Check for specific MMA keywords (use word boundaries to avoid false matches)
+        import re
+        if any(re.search(r'\b' + k + r'\b', q) for k in ["mma", "fight", "ufc", "bout", "cage"]):
+            return {"query_type": "mma", "topic_focus": "fun"}
+        # Check for fun fact requests (be more specific)
+        if any(k in q for k in ["fun fact", "hobby", "hobbies", "interesting fact"]):
+            return {"query_type": "fun", "topic_focus": "fun"}
+        # Check for technical queries
+        if any(k in q for k in ["code", "technical", "stack", "function", "architecture", "retrieval", "implementation"]):
+            return {"query_type": "technical", "topic_focus": detect_topic_focus(query)}
+        # Check for career queries
+        if any(k in q for k in ["career", "resume", "cv", "experience", "achievement", "role history", "work"]):
+            return {"query_type": "career", "topic_focus": detect_topic_focus(query)}
+        return {"query_type": "general", "topic_focus": detect_topic_focus(query)}
+
+    def _handle_hiring_manager(self, query: str, query_type: str, rag_engine: RagEngine, technical: bool, chat_history: List[Dict[str, str]] = None) -> Dict[str, Any]:
+        # Check if this is a "show me" or "display" query - return raw content
+        if any(keyword in query.lower() for keyword in ["show me", "display", "show the", "diagram", "code example"]):
+            ctx = rag_engine.retrieve(query)
+            # Get the best match and return its content directly
+            if ctx and ctx.get("chunks"):
+                best_chunk = ctx["chunks"][0]
+                # Extract the answer part (after "Answer: ")
+                content = best_chunk.get('content', '')
+                if "Answer: " in content:
+                    resp = content.split("Answer: ", 1)[1]
+                else:
+                    resp = content
+                # Return with full chunks for source citations
+                return {"response": resp, "type": "technical", "context": ctx.get("chunks", [])}
+
+        if technical and query_type == "technical":
+            ctx = rag_engine.retrieve(query)
+            resp = self._handle_technical_manager(query, ctx, rag_engine, chat_history)
+            return {"response": resp, "type": "technical", "context": ctx.get("chunks", [])}
+        # Default to career-focused for nontechnical or non-technical query
+        ctx = rag_engine.retrieve(query)
+        resp = rag_engine.generate_response(query, chat_history=chat_history)
+        return {"response": resp, "type": "career", "context": ctx.get("chunks", [])}
+
+    def _handle_technical_manager(self, user_input: str, context: str, rag_engine: RagEngine, chat_history: List[Dict[str, str]] = None) -> str:
+        """Enhanced technical manager handling with code snippets."""
+        include_code = True  # technical manager always gets code for technical queries
+        results = rag_engine.retrieve_with_code(user_input, role="Hiring Manager (technical)")
+
+        # Use basic generate_response method with chat history
+        response = rag_engine.generate_response(user_input, chat_history=chat_history)
+
+        # Add code snippets to response
+        if results.get("code_snippets"):
+            response += "\n\n**Code References:**\n"
+            for snippet in results["code_snippets"]:
+                response += f"- [{snippet['citation']}]({snippet['github_url']})\n"
+
+        return response
+
+    def _handle_developer(self, query: str, query_type: str, rag_engine: RagEngine, chat_history: List[Dict[str, str]] = None) -> Dict[str, Any]:
+        # Check if this is a "show me" or "display" query - return raw content
+        if any(keyword in query.lower() for keyword in ["show me", "display", "show the", "diagram", "code example", "file structure"]):
+            ctx = rag_engine.retrieve(query)
+            # Get the best match and return its content directly
+            if ctx and ctx.get("chunks"):
+                best_chunk = ctx["chunks"][0]
+                # Extract the answer part (after "Answer: ")
+                content = best_chunk.get('content', '')
+                if "Answer: " in content:
+                    resp = content.split("Answer: ", 1)[1]
+                else:
+                    resp = content
+                # Return with full chunks for source citations
+                return {"response": resp, "type": "technical", "context": ctx.get("chunks", [])}
+
+        if query_type == "technical":
+            ctx = rag_engine.retrieve(query)
+            resp = self._handle_developer_with_code(query, ctx, rag_engine, chat_history)
+            return {"response": resp, "type": "technical", "context": ctx.get("chunks", [])}
+        ctx = rag_engine.retrieve(query)
+        resp = rag_engine.generate_response(query, chat_history=chat_history)
+        return {"response": resp, "type": query_type, "context": ctx.get("chunks", [])}
+
+    def _handle_developer_with_code(self, user_input: str, context: str, rag_engine: RagEngine, chat_history: List[Dict[str, str]] = None) -> str:
+        """Enhanced developer handling with detailed code integration."""
+        include_code = True
+        results = rag_engine.retrieve_with_code(user_input, role="Software Developer")
+
+        # Use basic generate_response method with chat history
+        response = rag_engine.generate_response(user_input, chat_history=chat_history)
+
+        if results.get("code_snippets"):
+            response += "\n\n## Code Implementation\n"
+            for snippet in results["code_snippets"]:
+                response += f"\n### {snippet['name']} ([{snippet['citation']}]({snippet['github_url']}))\n"
+                response += f"```python\n{snippet['content']}\n```\n"
+
+        return response
+
+    def _handle_casual(self, query: str, query_type: str, rag_engine: RagEngine, chat_history: List[Dict[str, str]] = None) -> Dict[str, Any]:
+        if query_type == "mma":
+            return {
+                "response": "Noah's MMA fight link:",
+                "type": "mma",
+                "youtube_link": self.settings.youtube_fight_link
+            }
+        if query_type == "fun":
+            # Temporary reuse of career KB – replace with dedicated fun facts store later
+            ctx = rag_engine.retrieve("fun facts about Noah")
+            synthesized = rag_engine.generate_response("List 3 short fun facts about Noah. Keep total under 60 words.", chat_history=chat_history)
+            return {"response": synthesized, "type": "fun", "context": ctx}
+        ctx = rag_engine.retrieve(query)
+        resp = rag_engine.generate_response(query, chat_history=chat_history)
+        return {"response": resp, "type": "general", "context": ctx}
+
+    def _handle_confession(self, query: str) -> Dict[str, Any]:
+        # No retrieval or LLM call for privacy / simplicity
+        return {
+            "response": "Your message is noted. Use the form below to submit confessions. 💌",
+            "type": "confession",
+            "context": [],  # ← Add empty context to prevent formatter errors
+            "meta": {"suppress_follow_up": True}
+        }

@@ -7,7 +7,7 @@ Tests:
 4. No regressions in quality standards
 """
 
-from src.flows.performance_metrics import PerformanceMetrics
+from src.flows.node_logic.performance_metrics import PerformanceMetrics
 from src.core.response_generator import ResponseGenerator
 from src.core.langchain_compat import ChatOpenAI
 from src.config.supabase_config import supabase_settings

@@ -211,13 +211,18 @@ class PgVectorRetriever:
 
             # Sort by similarity (highest first) and apply threshold
             chunks_with_similarity.sort(key=lambda x: x['similarity'], reverse=True)
+
+            # Log top scores for debugging
+            top_5_scores = [f"{c['similarity']:.3f}" for c in chunks_with_similarity[:5]]
+            logger.info(f"Top 5 similarity scores: {', '.join(top_5_scores)}")
+
             chunks = [c for c in chunks_with_similarity if c['similarity'] > threshold][:top_k]
 
             # Filter by doc_id if specified
             if doc_id:
                 chunks = [c for c in chunks if c.get('doc_id') == doc_id]
 
-            logger.debug(f"Retrieved {len(chunks)} chunks for query: '{query[:50]}...' (client-side calc)")
+            logger.info(f"Retrieved {len(chunks)} chunks (threshold={threshold}) for query: '{query[:50]}...'")
             return chunks
 
         except Exception as e:

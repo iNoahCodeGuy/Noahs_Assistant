@@ -211,28 +211,16 @@ def enterprise_adaptability_block() -> str:
     """
     return """Here's what makes this production-ready for enterprise scale.
 
-🏢 Infrastructure & Throughput
-- Today: Vercel serverless handles ~25k sessions/day. Containerized on Kubernetes with autoscaling jumps to 250k sessions/day with three replicas and a managed Postgres.
-- Multi-region read replicas keep p95 latency under 150ms for North America and Europe.
+🏢 Infrastructure
+Containerize the Vercel services or move into Kubernetes for regional redundancy and traffic shaping. Scale horizontally as load increases.
 
-🔐 IAM, Compliance, & Data Guardrails
-- Supabase Row Level Security + audit triggers record every read/write. Tie JWT claims to tenant_id so each business unit sees only its corpus.
-- Plugs into Okta or Entra ID (OIDC/SAML) in under a sprint. Secrets live in a managed vault (Vercel KV or AWS Secrets Manager) with 30-day rotation by policy.
-
-📊 Observability & SLOs
-- LangSmith + Supabase analytics capture latency, similarity scores, and satisfaction ratings. Weekly ops reviews target 99.5% delivery success, <900ms retrieval, and <2.5s completion.
-- Error budgets feed directly into the action planner so degraded APIs trigger graceful fallbacks.
-
-💸 Economics
-- Pilot (500 conversations/month): ~$240 all-in (OpenAI + Supabase + Vercel).
-- Production (10k/month): ~$2.4k with batching + embedding caching.
-- Enterprise (100k/month): ~$7.8k across compute, embeddings, storage, and observability — still below typical Pinecone+GPT4 stacks.
+🔒 Security
+Layer in SSO, secrets management, and dedicated vector clusters to satisfy enterprise governance. Zero-trust architecture from the ground up.
 
 🔧 Extensibility
-- Swap in ServiceNow, Zendesk, or Jira actions via the existing factory functions (`get_resend_service`, `get_twilio_service`, `get_storage_service`).
-- Feature flags and rollout hooks keep compliance sign-offs deterministic before GA.
+Swap action nodes to integrate ticketing systems, CRM, or observability stacks without rewriting the orchestration logic. The modular design makes this trivial.
 
-Would you like me to step through the deployment checklist or show how the IAM enforcement fits into the LangGraph flow?"""
+Would you like me to show the service factory pattern that makes swapping components this easy?"""
 
 
 def architecture_snapshot() -> str:
@@ -263,59 +251,16 @@ Here's why this matters: this same architecture pattern scales to customer suppo
 Would you like me to visualize how the data flows through these layers, or dive deeper into the RAG pipeline?"""
 
 
-def conversation_pipeline_mermaid() -> str:
-    """Mermaid diagram for the LangGraph conversation pipeline."""
-
-    return """```mermaid
-flowchart TD
-    User["User Query"] --> Classify["classify_intent"]
-    Classify --> Depth["depth_controller"]
-    Depth --> Retrieve["retrieve_chunks"]
-    Retrieve --> Generate["generate_answer"]
-    Generate --> Plan["plan_actions"]
-    Plan --> Apply["apply_role_context"]
-    Apply --> Execute["execute_actions"]
-    Execute --> Log["log_and_notify"]
-    Log --> Telemetry["Supabase Analytics / LangSmith"]
-```"""
-
-
-def enterprise_scaling_mermaid() -> str:
-    """Mermaid diagram showing enterprise deployment surfaces."""
-
-    return """```mermaid
-flowchart LR
-    subgraph Edge
-        UI["Next.js / Streamlit UI"] --> API["Vercel Serverless API"]
-    end
-    API --> Orchestrator["LangGraph Orchestrator"]
-    Orchestrator --> Vector["Supabase pgvector"]
-    Orchestrator --> Services["Action Executor"]
-    Services --> CRM["CRM / Ticketing"]
-    Services --> Notifications["Email / SMS"]
-    Vector --> Observability["Supabase Analytics"]
-    Orchestrator --> Traces["LangSmith"]
-    classDef infra fill:#1f2937,stroke:#0ea5e9,color:#f9fafb;
-    classDef service fill:#0f766e,stroke:#0ea5e9,color:#f0fdfa;
-    class UI,API,Orchestrator,Vector,Observability,Traces infra;
-    class Services,CRM,Notifications service;
-```"""
-
-
 def enterprise_fit_explanation() -> str:
     """Explain how the product fits enterprise use cases.
 
     Returns:
         Paragraph explaining role routing and scalability for major enterprises.
     """
-    return """Role routing keeps answers compliant while the system scales.
-
-- Every message goes through the classifier → persona router, so regulated teams can scope which knowledge base segments each persona may access.
-- IAM: JWT claims from Okta or Entra map to Supabase Row Level Security policies. Each tenant's embeddings live under a tenant_id, so audits prove isolation in minutes.
-- Scale: Add a sixth persona or a new business unit by tagging content and re-running the migration script — no code changes. The planner already knows which persona to activate.
-- Audit: Every reply carries chunk IDs, similarity scores, and run UUIDs in Supabase analytics. Export to SOC2 or ISO 27001 evidence without manual screenshots.
-
-Want to see how the router chooses personas or review the policy definitions?"""
+    return (
+        "A role router lets a major enterprise send each message to the right compliance-approved persona, "
+        "keeping answers auditable while scaling to managed vector databases, event queues, and downstream systems."
+    )
 
 
 def stack_importance_explanation() -> str:

@@ -204,7 +204,7 @@ class TestInputValidation:
         # ignoring surrounding malicious content. This is CORRECT behavior!
 
         # Import email validation function from resume_distribution
-        from src.flows.resume_distribution import extract_email_from_query
+        from src.flows.node_logic.resume_distribution import extract_email_from_query
 
         # Test cases where NO valid email exists (should return empty string)
         invalid_emails = [
@@ -359,7 +359,7 @@ class TestRAGPipelineResilience:
         state["retrieval_scores"] = [0.35, 0.28]  # Both below 0.4 threshold
 
         # Import conversation node directly for precise testing
-        from src.flows.core_nodes import generate_answer
+        from src.flows.node_logic.core_nodes import generate_answer
 
         # Initialize RAG engine
         rag_engine = RagEngine()

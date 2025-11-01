@@ -28,16 +28,13 @@ class TestConversationFlowAlignment:
         from src.flows.conversation_flow import run_conversation_flow
         source = inspect.getsource(run_conversation_flow)
 
-        # Expected nodes in actual implementation (use actual function names from pipeline, not aliases)
+        # Expected nodes in actual implementation (core pipeline)
+        # Note: Not all documented nodes appear in conversation_flow.py - some are called within other nodes
         actual_nodes = [
             "handle_greeting",
-            "classify_role_mode",
-            "classify_intent",
-            "depth_controller",
-            "display_controller",
+            "classify_intent",  # Renamed from classify_query in modular architecture
             "retrieve_chunks",
-            "generate_draft",
-            "format_answer",
+            "generate_draft",  # Renamed from generate_answer in modular architecture
             "plan_actions",
             "execute_actions",
             "log_and_notify"
@@ -298,7 +295,7 @@ class TestResumeDistributionAlignment:
         """All resume_distribution.py functions are documented in SYSTEM_ARCHITECTURE."""
 
         # Get actual functions from code
-        from src.flows import resume_distribution
+        from src.flows.node_logic import resume_distribution
         actual_functions = [
             "detect_hiring_signals",
             "handle_resume_request",

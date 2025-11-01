@@ -70,12 +70,13 @@ import uuid
 from datetime import datetime
 from src.core.rag_engine import RagEngine
 from src.core.memory import Memory
+from src.agents.role_router import RoleRouter
 from src.agents.response_formatter import ResponseFormatter
 from src.analytics.supabase_analytics import supabase_analytics, UserInteractionData
 from src.config.supabase_config import supabase_settings
 from src.state.conversation_state import ConversationState
 from src.flows.conversation_flow import run_conversation_flow
-from src.flows.greetings import get_role_greeting
+from src.flows.node_logic.greetings import get_role_greeting
 
 ROLE_OPTIONS = [
     "Hiring Manager (nontechnical)",  # Business-focused, career KB only
@@ -84,6 +85,8 @@ ROLE_OPTIONS = [
     "Just looking around",             # Casual visitor, lightweight retrieval
     "Looking to confess crush"         # Fun mode, guarded PII handling
 ]
+
+USE_LANGGRAPH_FLOW = os.getenv("LANGGRAPH_FLOW_ENABLED", "true").lower() == "true"
 
 def init_state():
     """Initialize Streamlit session state variables.
@@ -111,6 +114,7 @@ def main():
 
     memory = Memory()
     rag_engine = RagEngine(supabase_settings)
+    role_router = RoleRouter()
     response_formatter = ResponseFormatter()
 
     st.title("Portfolia - Noah's AI Assistant")
@@ -158,22 +162,55 @@ def main():
             st.markdown(user_input)
 
         try:
-            state = ConversationState(
-                role=st.session_state.role,
-                query=user_input,
-                chat_history=st.session_state.chat_history.copy(),
-            )
-            state = run_conversation_flow(
-                state,
-                rag_engine,
-                session_id=st.session_state.session_id,
-            )
-            raw_response = {
-                "response": state.get("answer") or "I need a moment to find that info.",
-                "type": state.get("query_type", "general"),
-                "context": state.get("retrieved_chunks", []),
-            }
-            latency_ms = int((time.time() - start_time) * 1000)
+            if USE_LANGGRAPH_FLOW:
+                state = ConversationState(
+                    role=st.session_state.role,
+                    query=user_input,
+                    chat_history=st.session_state.chat_history.copy(),
+                )
+                state = run_conversation_flow(
+                    state,
+                    rag_engine,
+                    session_id=st.session_state.session_id,
+                )
+                raw_response = {
+                    "response": state.answer or "I need a moment to find that info.",
+                    "type": state.fetch("query_type", "general"),
+                    "context": state.retrieved_chunks,
+                }
+                latency_ms = int((time.time() - start_time) * 1000)
+            else:
+                raw_response = role_router.route(
+                    st.session_state.role,
+                    user_input,
+                    memory,
+                    rag_engine,
+                    chat_history=st.session_state.chat_history
+                )
+                formatted_latency = time.time() - start_time
+                latency_ms = int(formatted_latency * 1000)
+
+                query_type = "general"
+                lowered = user_input.lower()
+                if any(keyword in lowered for keyword in ["code", "implementation", "architecture"]):
+                    query_type = "technical"
+                elif any(keyword in lowered for keyword in ["career", "experience", "background"]):
+                    query_type = "career"
+                elif any(keyword in lowered for keyword in ["mma", "fight", "fighting"]):
+                    query_type = "mma"
+
+                interaction_data = UserInteractionData(
+                    session_id=st.session_state.session_id,
+                    role_mode=st.session_state.role,
+                    query=user_input,
+                    answer=response_formatter.format(raw_response),
+                    query_type=query_type,
+                    latency_ms=latency_ms,
+                    tokens_prompt=None,
+                    tokens_completion=None,
+                    success=True
+                )
+                supabase_analytics.log_interaction(interaction_data)
 
             formatted = response_formatter.format(raw_response)
 

@@ -39,10 +39,15 @@ logger = logging.getLogger(__name__)
 try:
     from langsmith import Client, traceable
     from langsmith.run_helpers import trace
+    from langsmith.wrappers import wrap_openai
     LANGSMITH_AVAILABLE = True
 except ImportError:
     LANGSMITH_AVAILABLE = False
     logger.warning("LangSmith not available. Install with: pip install langsmith")
+
+    # Create no-op wrapper if not available
+    def wrap_openai(client):
+        return client
 
     # Create no-op types and functions if LangSmith not available
     Client = None

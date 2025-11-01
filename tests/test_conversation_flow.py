@@ -5,7 +5,7 @@ import pytest
 
 from src.state.conversation_state import ConversationState
 from src.flows import conversation_nodes as nodes
-from src.flows import action_execution
+from src.flows.node_logic import action_execution
 from src.flows import content_blocks
 from src.flows.conversation_flow import run_conversation_flow
 
@@ -260,9 +260,9 @@ def test_log_and_notify_records_metadata(monkeypatch: pytest.MonkeyPatch, base_s
         def log_retrieval(data):
             logged_payloads.append({"retrieval_logged": True, "grounded": data.grounded})
 
-    # Import and monkeypatch in core_nodes where supabase_analytics is actually used
-    from src.flows import core_nodes
-    monkeypatch.setattr(core_nodes, "supabase_analytics", DummyAnalytics)
+    # Import and monkeypatch in logging_nodes where supabase_analytics is actually used
+    from src.flows.node_logic import logging_nodes
+    monkeypatch.setattr(logging_nodes, "supabase_analytics", DummyAnalytics)
 
     base_state["answer"] = "Career summary"
     base_state["grounding_status"] = "ok"
@@ -294,8 +294,8 @@ def test_run_conversation_flow_happy_path(base_state: ConversationState, dummy_e
                 "scores": data.scores,
             }
 
-    from src.flows import core_nodes
-    monkeypatch.setattr(core_nodes, "supabase_analytics", DummyAnalytics)
+    from src.flows.node_logic import logging_nodes
+    monkeypatch.setattr(logging_nodes, "supabase_analytics", DummyAnalytics)
 
     state = run_conversation_flow(
         state=base_state,
