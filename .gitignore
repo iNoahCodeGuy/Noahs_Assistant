@@ -87,3 +87,4 @@ vector_stores/*/
 faiss_index/
 chroma_db/
 .vercel
+.langgraph_api/
