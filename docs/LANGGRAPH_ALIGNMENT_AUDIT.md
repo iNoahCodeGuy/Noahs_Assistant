@@ -109,21 +109,41 @@ graph.add_node("classify", classify_node)
 # src/flows/conversation_flow.py
 def run_conversation_flow(state, rag_engine, session_id):
     """Custom linear pipeline execution"""
-    pipeline = [
+    pipeline = (
+        initialize_conversation_state,
         lambda s: handle_greeting(s, rag_engine),
-        lambda s: classify_query(s),
-        lambda s: retrieve_chunks(s, rag_engine) if not s.get("is_greeting") else s,
-        lambda s: generate_answer(s, rag_engine) if not s.get("is_greeting") else s,
-        lambda s: plan_actions(s),
-        lambda s: apply_role_context(s),
-        lambda s: execute_actions(s, rag_engine, session_id),
-        lambda s: log_and_notify(s, session_id),
-    ]
+        classify_role_mode,
+        classify_intent,
+        depth_controller,
+        display_controller,
+        detect_hiring_signals,
+        handle_resume_request,
+        extract_entities,
+        assess_clarification_need,
+        ask_clarifying_question,
+        compose_query,
+        lambda s: retrieve_chunks(s, rag_engine),
+        re_rank_and_dedup,
+        validate_grounding,
+        handle_grounding_gap,
+        lambda s: generate_draft(s, rag_engine),
+        hallucination_check,
+        plan_actions,
+        lambda s: format_answer(s, rag_engine),
+        execute_actions,
+        suggest_followups,
+        update_memory,
+    )
 
-    result = state
-    for node_fn in pipeline:
-        result = node_fn(result)
-    return result
+    start = time.time()
+    for node in pipeline:
+        state = node(state)
+        if state.get("pipeline_halt") or state.get("is_greeting"):
+            break
+
+    elapsed_ms = int((time.time() - start) * 1000)
+    state = log_and_notify(state, session_id=session_id, latency_ms=elapsed_ms)
+    return state
 ```
 
 **Issues**:
@@ -328,21 +348,45 @@ result = app.invoke(state)  # Automatic tracing, no decorators needed
 ```
 User Query
     ↓
+[initialize_conversation_state] → Normalize state, hydrate memory, attach analytics metadata
+    ↓
 [handle_greeting] → Check if "hello" → Return greeting (short-circuit)
     ↓ (if not greeting)
-[classify_query] → Detect query type, expand vague queries, check ambiguous
+[classify_role_mode] → Confirm persona defaults
     ↓
-[extract_job_details] → Parse hiring manager queries for job info
+[classify_intent] → Detect query type, teaching moments, code/data affordances
+    ↓
+[depth_controller] / [display_controller] → Calibrate presentation depth + toggles
+    ↓
+[detect_hiring_signals] → Track passive interest
+    ↓
+[handle_resume_request] → Flag explicit resume asks
+    ↓
+[extract_entities] → Capture company, role, timeline hints
+    ↓
+[assess_clarification_need] → Ask follow-up if context is vague
+    ↓
+[compose_query] → Build retrieval-ready prompt
     ↓
 [retrieve_chunks] → pgvector search for relevant context
     ↓
-[generate_answer] → LLM generation with RAG grounding
+[re_rank_and_dedup] → Diversify results
     ↓
-[plan_actions] → Decide what side effects to trigger (email, SMS, analytics)
+[validate_grounding] → Stop if similarity too low
     ↓
-[apply_role_context] → Add role-specific personality and formatting
+[generate_draft] → LLM generation with RAG grounding
     ↓
-[execute_actions] → Run side effects (send emails, log analytics)
+[hallucination_check] → Attach lightweight citations
+    ↓
+[plan_actions] → Decide what side effects to trigger
+    ↓
+[format_answer] → Apply role-specific formatting, inject content blocks, seed follow-ups
+    ↓
+[execute_actions] → Run email/SMS/storage side effects
+    ↓
+[suggest_followups] → Backstop follow-up prompts (usually already populated)
+    ↓
+[update_memory] → Store soft signals for next turns
     ↓
 [log_and_notify] → Final analytics logging
     ↓

@@ -52,8 +52,9 @@ This is a **role-based RAG (Retrieval-Augmented Generation) application** servin
 ### Critical Flow: User Query → Response
 
 ```
-User input → classify_query → retrieve_chunks (pgvector) → generate_answer →
-plan_actions → apply_role_context → execute_actions → log_and_notify
+User input → initialize_conversation_state → handle_greeting → classify_role_mode →
+classify_intent → retrieve_chunks (pgvector) → generate_draft → plan_actions →
+format_answer → execute_actions → log_and_notify
 ```
 
 All conversation state lives in `ConversationState` dataclass (immutable updates via nodes). Never modify `state.chat_history` or `state.answer` directly—use `state.set_answer()` and `state.stash()` helpers.

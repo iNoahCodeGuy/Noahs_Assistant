@@ -116,25 +116,21 @@ plan_actions
   → Creates action plan without executing yet (separation of concerns)
   → Source: src/flows/node_logic/action_planning.py
 
-format_answer
+format_answer (exports legacy alias apply_role_context)
   → Structures the final answer using headings, concise bullet takeaways, and <details> blocks
+  → Applies the role-specific styling directly (alias `apply_role_context` still resolves here)
   → Respects depth/display toggles, injects diagrams/metrics/code without new facts
   → Ends with role-aware follow-ups (engineering, business, mixed variants)
   → Source: src/flows/node_logic/formatting_nodes.py
 
-apply_role_context
-  → Applies role-specific formatting and enrichments to the answer
-  → Adds role-appropriate content blocks, adjusts tone, includes relevant examples
-  → Source: src/flows/node_logic/formatting_nodes.py
-
 execute_actions
-  → Runs planned side effects: email via Resend, SMS via Twilio, analytics logging
+  → Runs planned side effects: email via Resend, SMS via Twilio, storage lookups
   → For HM roles: Sends resume PDF via email, notifies Noah via SMS with job details
   → Handles failures gracefully (degraded mode - logs errors but doesn't crash)
   → Source: src/flows/node_logic/action_execution.py
 
 suggest_followups
-  → Generates curiosity-driven follow-up prompts aligned with invitation culture
+  → Backstop for curiosity-driven follow-up prompts (formatting node usually sets them)
   → Source: src/flows/node_logic/formatting_nodes.py
 
 update_memory

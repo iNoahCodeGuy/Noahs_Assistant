@@ -80,15 +80,15 @@ Transform data analytics responses from simple text to a **professional data ana
 ```
 User Query: "display data analytics"
          ↓
-conversation_nodes.py (detect trigger phrase)
+conversation_nodes.py (classify intent)
          ↓
 plan_actions() → action: "render_live_analytics"
          ↓
-apply_role_context() → fetch from /api/analytics
+format_answer() → fetch from /api/analytics
          ↓
 analytics_renderer.py → format markdown tables
          ↓
-generate_answer() → return formatted response
+log_and_notify() → persist analytics + return formatted response
 ```
 
 ### Key Files
@@ -214,14 +214,14 @@ All analytics stored in **Supabase Postgres** with real-time querying.
                  ↓
 ┌─────────────────────────────────────────────────────────┐
 │  conversation_nodes.py                                   │
-│  - classify_query() → "data_display"                    │
+│  - classify_intent() → state["data_display_requested"]  │
 │  - plan_actions() → ["render_live_analytics"]           │
 └────────────────┬────────────────────────────────────────┘
                  ↓
 ┌─────────────────────────────────────────────────────────┐
-│  apply_role_context()                                    │
-│  - Check role: Technical/Non-technical/Privacy          │
-│  - Fetch from /api/analytics                            │
+│  format_answer()                                         │
+│  - Check role + depth toggles                           │
+│  - Fetch from /api/analytics when action present        │
 └────────────────┬────────────────────────────────────────┘
                  ↓
 ┌─────────────────────────────────────────────────────────┐
@@ -240,9 +240,9 @@ All analytics stored in **Supabase Postgres** with real-time querying.
 └────────────────┬────────────────────────────────────────┘
                  ↓
 ┌─────────────────────────────────────────────────────────┐
-│  generate_answer()                                       │
-│  - Return formatted markdown                             │
-│  - Log to Supabase analytics                            │
+│  log_and_notify()                                        │
+│  - Persist analytics metadata                           │
+│  - Return structured markdown answer                    │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -399,76 +399,90 @@ CREATE TABLE confessions (
 
 ### 1. Trigger Detection
 
-**File**: `src/flows/conversation_nodes.py`
+**File**: `src/flows/node_logic/query_classification.py`
 
-Phrases that trigger analytics display (case-insensitive):
+Keywords that trigger analytics display (case-insensitive):
 ```python
-ANALYTICS_TRIGGERS = [
-    "display data analytics",
-    "show analytics",
-    "show dashboard",
-    "display metrics",
-    "show data tables",
-    "display logs",
-    "display data",
-    "show data",
-    "collected data",
-    "display collected data",
-    "can you display"
+DATA_DISPLAY_KEYWORDS = [
+  "display data",
+  "show data",
+  "show me the data",
+  "display analytics",
+  "data collected",
+  "collected data",
+  "display collected data",
+  "share the data",
+  "show analytics",
+  "can you display",
 ]
 ```
 
+### 1. Query Classification
+
+**File**: `src/flows/node_logic/query_classification.py`
+
 Implementation:
 ```python
-def classify_query(state: ConversationState) -> ConversationState:
-    query_lower = state.query.lower()
+def classify_intent(state: ConversationState) -> ConversationState:
+    lowered = state["query"].lower()
+    update: dict[str, Any] = {}
 
-    # Check for analytics display request
-    if any(trigger in query_lower for trigger in ANALYTICS_TRIGGERS):
-        state.query_type = "data_display"
+    if _is_data_display_request(lowered):
+        update["data_display_requested"] = True
+        update["query_type"] = "data"
 
+    # ... additional classification logic ...
+
+    state.update(update)
     return state
 ```
 
 ### 2. Action Planning
 
-**File**: `src/flows/conversation_nodes.py`
+**File**: `src/flows/node_logic/action_planning.py`
 
 ```python
 def plan_actions(state: ConversationState) -> ConversationState:
-    if state.query_type == "data_display":
-        state.planned_actions.append({
-            "type": "render_live_analytics",
-            "role": state.role
-        })
+    state["pending_actions"] = []
+    lowered = state["query"].lower()
+
+    if _is_data_display_request(lowered):
+        add_action("render_live_analytics")
+        state["data_display_requested"] = True
+
+    # ... additional action planning ...
 
     return state
 ```
 
 ### 3. Data Fetching
+### 3. Data Fetching
 
-**File**: `src/flows/conversation_nodes.py`
+**File**: `src/flows/node_logic/formatting_nodes.py`
 
 ```python
-def apply_role_context(state: ConversationState) -> ConversationState:
-    import requests
+def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, Any]:
+    pending_actions = state.get("pending_actions", [])
+    action_types = {action["type"] for action in pending_actions}
 
-    if "render_live_analytics" in [a["type"] for a in state.planned_actions]:
+    if "render_live_analytics" in action_types:
         try:
-            response = requests.get(
-                "https://noahsaiassistant.vercel.app/api/analytics",
-                timeout=3.0
+            analytics_url = (
+                "https://noahsaiassistant.vercel.app/api/analytics"
+                if supabase_settings.is_vercel
+                else "http://localhost:3000/api/analytics"
             )
+            response = requests.get(analytics_url, timeout=3)
+            response.raise_for_status()
+            analytics_report = render_live_analytics(response.json(), state.get("role"), focus=None)
+            sections.append(content_blocks.render_block("Live Analytics Snapshot", analytics_report, ...))
+        except Exception as exc:
+            logger.error(f"Failed to fetch live analytics: {exc}")
+            sections.append("Live analytics are temporarily unavailable...")
 
-            if response.status_code == 200:
-                analytics_data = response.json()
-                state.stash("analytics_data", analytics_data)
-            else:
-                state.stash("analytics_error", f"HTTP {response.status_code}")
+    # ... remaining formatting logic ...
 
-        except requests.Timeout:
-            state.stash("analytics_error", "timeout")
-
+    state["answer"] = enriched_answer
     return state
 ```
 
@@ -877,24 +891,37 @@ If analytics endpoint fails:
 
 1. **Disable trigger detection** (temporary fix):
    ```python
-   # src/flows/conversation_nodes.py
-   def classify_query(state: ConversationState) -> ConversationState:
-       # Temporarily disable analytics display
-       # if any(trigger in query_lower for trigger in ANALYTICS_TRIGGERS):
-       #     state.query_type = "data_display"
-       pass
+   # src/flows/node_logic/query_classification.py
+   def classify_intent(state: ConversationState) -> ConversationState:
+     lowered = state["query"].lower()
+     update: dict[str, Any] = {}
+
+     # Temporarily disable analytics display
+     # if _is_data_display_request(lowered):
+     #     update["data_display_requested"] = True
+
+     state.update(update)
+     return state
    ```
 
 2. **Return cached content** (graceful degradation):
    ```python
-   # src/flows/conversation_nodes.py
-   def apply_role_context(state: ConversationState) -> ConversationState:
+   # src/flows/node_logic/formatting_nodes.py
+   def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, Any]:
+     pending_actions = state.get("pending_actions", [])
+     action_types = {action["type"] for action in pending_actions}
+
+     if "render_live_analytics" in action_types:
        try:
-           # Attempt live data fetch
-           response = requests.get("/api/analytics", timeout=3.0)
-       except:
-           # Fall back to static content
-           state.stash("use_cached_analytics", True)
+         response = requests.get("/api/analytics", timeout=3)
+         response.raise_for_status()
+         analytics_report = render_live_analytics(response.json(), state.get("role"), focus=None)
+         sections.append(...)
+       except Exception:
+         sections.append("I can walk you through the cached analytics summary instead.")
+
+     # ...
+     return state
    ```
 
 3. **Redeploy previous version**:

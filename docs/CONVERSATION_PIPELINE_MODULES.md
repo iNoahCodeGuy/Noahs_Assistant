@@ -90,12 +90,12 @@ The pipeline used to live in a single 600+ line module. It now spans a set of sm
 - `validate_grounding(state)` / `handle_grounding_gap(state)`
 - `generate_draft(state, rag_engine)`
 - `hallucination_check(state)`
-- `format_answer(state, rag_engine)`
+- `format_answer(state, rag_engine)` *(exports legacy alias `apply_role_context`)*
 - `suggest_followups(state)`
 - `update_memory(state)`
 - `log_and_notify(state, session_id, latency_ms)`
 
-**What it does**: Everything from pgvector retrieval through to Supabase analytics logging, including proactive teaching content blocks.
+**What it does**: Handles pgvector retrieval, drafts the answer, applies role-aware formatting (including follow-up prompts) inside `format_answer`, and finally persists analytics via `log_and_notify`.
 
 ---
 
@@ -109,7 +109,7 @@ The pipeline used to live in a single 600+ line module. It now spans a set of sm
 ---
 
 ### 12. `action_execution.py`
-**Purpose**: Execute side effects such as email, SMS, and analytics logging.
+**Purpose**: Execute side effects such as email, SMS, and storage lookups.
 
 **Key function**: `execute_actions(state) -> state`
 
@@ -168,16 +168,16 @@ User query
      → Decide on resumes, code blocks, analytics, follow-ups
     ↓
 12. format_answer (core_nodes.py)
-     → Apply role-specific framing and insert content blocks
+    → Apply role-specific framing, inject content blocks, and seed follow-up prompts
     ↓
 13. execute_actions (action_execution.py)
-     → Fire side effects (email, SMS, logging) with graceful fallbacks
+    → Fire side effects (email, SMS, storage) with graceful fallbacks
     ↓
 14. suggest_followups → update_memory (core_nodes.py)
-     → Invite next question and store soft signals for later turns
+    → Backstop follow-up prompts and store soft signals for later turns
     ↓
 15. log_and_notify (core_nodes.py)
-     → Persist analytics to Supabase + LangSmith tracing
+    → Persist analytics to Supabase + LangSmith tracing
     ↓
 Final answer returned to user
 ```
