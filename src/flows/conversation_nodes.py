@@ -82,9 +82,10 @@ def handle_greeting(state, rag_engine):
         - Greeting response: <50ms (no LLM calls)
         - Non-greeting: Pass through to next node (~0ms overhead)
     """
-    # Defensive access: chat_history may be optional in some test scenarios
-    if should_show_greeting(state["query"], state.get("chat_history", [])):
-        greeting = get_role_greeting(state["role"])
+    # Defensive access: chat_history and query may be optional in test scenarios
+    query = state.get("query", "")
+    if query and should_show_greeting(query, state.get("chat_history", [])):
+        greeting = get_role_greeting(state.get("role", ""))
         state["answer"] = greeting
         state["is_greeting"] = True
     return state

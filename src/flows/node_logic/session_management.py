@@ -14,14 +14,22 @@ from src.observability.langsmith_tracer import create_custom_span
 def initialize_conversation_state(state: ConversationState) -> ConversationState:
     """Populate the ConversationState with safe defaults.
 
-    The frontend only guarantees ``query``, ``role``, ``session_id`` and
-    ``chat_history``. Downstream nodes expect structured containers to exist,
+    The frontend guarantees ``query``, ``role``, ``session_id`` and
+    ``chat_history``, but Studio testing may provide empty state.
+    Downstream nodes expect structured containers to exist,
     so this initializer normalizes the state and provides empty defaults.
     """
     with create_custom_span(
         name="initialize_state",
         inputs={"session_id": state.get("session_id"), "role": state.get("role")}
     ):
+        # Core fields (required by all nodes)
+        state.setdefault("query", "")
+        state.setdefault("role", "")
+        state.setdefault("session_id", "")
+        state.setdefault("chat_history", [])
+
+        # Structured containers
         state.setdefault("analytics_metadata", {})
         state.setdefault("pending_actions", [])
         state.setdefault("planned_actions", [])
