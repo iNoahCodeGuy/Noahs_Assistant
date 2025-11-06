@@ -46,6 +46,7 @@ from src.flows.conversation_nodes import (
     prompt_for_role_selection,
     handle_greeting,
     classify_role_mode,
+    route_hiring_manager_technical,
     classify_intent,
     depth_controller,
     display_controller,
@@ -128,6 +129,7 @@ def run_conversation_flow(
         prompt_for_role_selection,
         lambda s: handle_greeting(s, rag_engine),
         classify_role_mode,
+    route_hiring_manager_technical,
         classify_intent,
         depth_controller,
         display_controller,
@@ -181,6 +183,7 @@ def _build_langgraph() -> Any:
     workflow.add_node("role_prompt", prompt_for_role_selection)
     workflow.add_node("greeting", lambda s: handle_greeting(s, rag_engine))
     workflow.add_node("classify_role", classify_role_mode)
+    workflow.add_node("role_router", route_hiring_manager_technical)
     workflow.add_node("classify_intent", classify_intent)
     workflow.add_node("depth_control", depth_controller)
     workflow.add_node("display_control", display_controller)
@@ -221,7 +224,12 @@ def _build_langgraph() -> Any:
         {"end": END, "classify_role": "classify_role"}
     )
 
-    workflow.add_edge("classify_role", "classify_intent")
+    workflow.add_edge("classify_role", "role_router")
+    workflow.add_conditional_edges(
+        "role_router",
+        lambda s: "end" if s.get("pipeline_halt") else "classify_intent",
+        {"end": END, "classify_intent": "classify_intent"}
+    )
     workflow.add_edge("classify_intent", "depth_control")
     workflow.add_edge("depth_control", "display_control")
     workflow.add_edge("display_control", "detect_hiring")

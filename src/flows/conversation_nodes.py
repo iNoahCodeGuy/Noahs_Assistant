@@ -61,6 +61,13 @@ from src.flows.node_logic.resume_distribution import (
     get_job_details_prompt,
     extract_job_details_from_query
 )
+from src.flows.node_logic.role_specific import (
+    route_hiring_manager_technical,
+    onboard_hiring_manager_technical,
+    explain_enterprise_adaptation,
+    show_certifications,
+    show_enterprise_pattern_example,
+)
 
 
 def handle_greeting(state, rag_engine):
@@ -103,6 +110,11 @@ __all__ = [
     "classify_query",  # backward-compatible alias
     "depth_controller",
     "display_controller",
+    "route_hiring_manager_technical",
+    "onboard_hiring_manager_technical",
+    "explain_enterprise_adaptation",
+    "show_certifications",
+    "show_enterprise_pattern_example",
     "extract_entities",
     "assess_clarification_need",
     "ask_clarifying_question",

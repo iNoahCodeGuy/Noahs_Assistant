@@ -47,6 +47,7 @@ def initialize_conversation_state(state: ConversationState) -> ConversationState
         state.setdefault("job_details", {})
         state.setdefault("followup_prompts", [])
         state.setdefault("topic_focus", "general")
+        state.setdefault("relate_to_enterprise", False)
         state.setdefault("grounding_status", "unknown")
         state.setdefault("hallucination_safe", True)
         state.setdefault("clarification_needed", False)

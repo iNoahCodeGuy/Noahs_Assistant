@@ -109,6 +109,9 @@ class ConversationState(TypedDict, total=False):
     topic_focus: str
     """Primary topical focus of the query (architecture, data, testing, etc.)."""
 
+    relate_to_enterprise: bool
+    """True when responses should explicitly tie insights back to enterprise value."""
+
     # --- Entity Extraction & Memory ---
     entities: Dict[str, Any]
     """Extracted entities (company, position, timeline, technology, contact preference)."""
