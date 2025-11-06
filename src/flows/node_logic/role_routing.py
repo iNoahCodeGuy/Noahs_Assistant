@@ -48,12 +48,23 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
             return state
 
         # Infer role from query content
-        query = state.get("query", "").lower()
+        query = state.get("query", "").lower().strip()
         inferred_role = None
         confidence = 0.7
 
+        # First check if user explicitly stated their role (exact match)
+        if query in _ROLE_ALIASES:
+            inferred_role = _ROLE_DISPLAY[_ROLE_ALIASES[query]]
+            confidence = 1.0
+        # Also check for close matches (e.g., "I'm a hiring manager (technical)")
+        elif any(role_name in query for role_name in _ROLE_ALIASES.keys()):
+            for role_name, role_key in _ROLE_ALIASES.items():
+                if role_name in query:
+                    inferred_role = _ROLE_DISPLAY[role_key]
+                    confidence = 0.95
+                    break
         # Check for hiring/recruiting signals
-        if any(keyword in query for keyword in ["hire", "hiring", "recruit", "position", "job opening", "candidate"]):
+        elif any(keyword in query for keyword in ["hire", "hiring", "recruit", "position", "job opening", "candidate"]):
             if any(tech_keyword in query for tech_keyword in ["technical", "tech", "engineering", "code", "developer"]):
                 inferred_role = "Hiring Manager (technical)"
             else:
