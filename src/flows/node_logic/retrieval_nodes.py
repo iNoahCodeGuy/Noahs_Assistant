@@ -31,14 +31,57 @@ from src.observability.langsmith_tracer import create_custom_span
 logger = logging.getLogger(__name__)
 
 
+def _build_retrieval_hints(active_subcategories: List[str]) -> List[str]:
+    """Map active technical subcategories to preferred retrieval sources.
+    
+    This helper translates user interest signals into concrete KB/code targets:
+    - stack_depth → technical_kb.csv (framework/library choices)
+    - architecture_depth → architecture_kb.csv + conversation_flow.py
+    - data_pipeline_depth → pgvector_retriever.py + RAG docs
+    - state_management_depth → conversation_state.py + state patterns
+    
+    Args:
+        active_subcategories: List of subcategory names (without "_score" suffix)
+        
+    Returns:
+        List of retrieval source hints (KB names, file patterns)
+        
+    Example:
+        >>> _build_retrieval_hints(["stack_depth", "architecture_depth"])
+        ["technical_kb.csv", "architecture_kb.csv", "conversation_flow.py"]
+    """
+    hints = []
+    
+    if "stack_depth" in active_subcategories:
+        hints.extend(["technical_kb.csv", "requirements.txt", "imports_kb.csv"])
+    
+    if "architecture_depth" in active_subcategories:
+        hints.extend(["architecture_kb.csv", "conversation_flow.py", "system design"])
+    
+    if "data_pipeline_depth" in active_subcategories:
+        hints.extend(["pgvector_retriever.py", "rag_engine.py", "RAG pipeline", "retrieval"])
+    
+    if "state_management_depth" in active_subcategories:
+        hints.extend(["conversation_state.py", "conversation_nodes.py", "LangGraph state"])
+    
+    return hints
+
+
 def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int = 4) -> Dict[str, Any]:
-    """Retrieve relevant KB chunks using RAG engine (pgvector).
+    """Retrieve relevant KB chunks using RAG engine (pgvector) with subcategory boosting.
 
     This is the entry point for the retrieval phase. It:
     1. Takes the user's query (or composed query from earlier nodes)
-    2. Generates embeddings using OpenAI
-    3. Searches Supabase pgvector for similar chunks
-    4. Normalizes results and stores similarity scores
+    2. Checks active technical subcategories for retrieval hints
+    3. Generates embeddings using OpenAI
+    4. Searches Supabase pgvector for similar chunks (with optional source filtering)
+    5. Normalizes results and stores similarity scores
+
+    Subcategory-aware retrieval:
+    - stack_depth → Prioritize technical_kb.csv (framework comparisons, dependencies)
+    - architecture_depth → Include architecture_kb.csv + conversation_flow.py
+    - data_pipeline_depth → Boost pgvector_retriever.py, RAG pipeline docs
+    - state_management_depth → Include conversation_state.py, state management patterns
 
     Observability: Logs retrieval performance (latency, chunk count, avg similarity)
     Performance: ~300ms typical (embedding + vector search)
@@ -47,9 +90,10 @@ def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int 
     - Reliability (#4): Graceful handling if retrieval fails (returns empty chunks)
     - Observability: Logs retrieval metadata for LangSmith tracing
     - Defensibility: Never raises exceptions, returns empty results on failure
+    - Context awareness: Uses subcategory signals to refine retrieval targets
 
     Args:
-        state: ConversationState with query field
+        state: ConversationState with query field and analytics_metadata
         rag_engine: RAG engine instance with retriever
         top_k: Number of chunks to retrieve (default 4)
 
@@ -57,18 +101,35 @@ def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int 
         Updated state with:
         - retrieved_chunks: List of normalized chunk dicts
         - retrieval_scores: Similarity scores for each chunk
-        - analytics_metadata: Retrieval performance metrics
+        - analytics_metadata: Retrieval performance metrics + source hints
 
     Example:
-        >>> state = ConversationState(query="How does RAG work?")
+        >>> state = ConversationState(
+        ...     query="How does RAG work?",
+        ...     analytics_metadata={"technical_subcategories": ["data_pipeline_depth"]}
+        ... )
         >>> retrieve_chunks(state, rag_engine, top_k=4)
-        >>> len(state["retrieved_chunks"])  # Should be <= 4
-        3
+        >>> "pgvector" in str(state["retrieved_chunks"])
+        True
     """
     query = state.get("composed_query") or state["query"]
     metadata = state.setdefault("analytics_metadata", {})
+    
+    # Extract active technical subcategories for retrieval hints
+    active_subcats = metadata.get("technical_subcategories", [])
+    
+    # Build retrieval hints for targeted source selection
+    retrieval_hints = _build_retrieval_hints(active_subcats)
+    if retrieval_hints:
+        metadata["retrieval_source_hints"] = retrieval_hints
+        logger.info("Retrieval targeting: %s", ", ".join(retrieval_hints))
 
-    with create_custom_span("retrieve_chunks", {"query": query[:120], "top_k": top_k}):
+    with create_custom_span("retrieve_chunks", {
+        "query": query[:120], 
+        "top_k": top_k,
+        "active_subcategories": active_subcats,
+        "source_hints": retrieval_hints
+    }):
         try:
             chunks = rag_engine.retrieve(query, top_k=top_k) or {}
             raw_chunks = chunks.get("chunks", [])

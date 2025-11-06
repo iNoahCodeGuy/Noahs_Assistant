@@ -32,6 +32,59 @@ from src.analytics.supabase_analytics import (
 logger = logging.getLogger(__name__)
 
 
+def _build_subcategory_followups(active_subcats: List[str]) -> List[str]:
+    """Generate followup questions based on active technical subcategories.
+    
+    Maps subcategory focus to natural next-step questions that keep
+    users drilling into the technical lane they've signaled interest in.
+    
+    Args:
+        active_subcats: List of active subcategory names
+        
+    Returns:
+        List of 3 contextual followup questions
+        
+    Example:
+        >>> _build_subcategory_followups(["stack_depth", "architecture_depth"])
+        ["Want to compare LangChain vs LlamaIndex trade-offs?", ...]
+    """
+    suggestions = []
+    
+    if "stack_depth" in active_subcats:
+        suggestions.append("Want to compare LangChain vs LlamaIndex trade-offs?")
+        suggestions.append("Should I break down the requirements.txt dependencies?")
+    
+    if "architecture_depth" in active_subcats:
+        suggestions.append("Want the LangGraph node flow diagram?")
+        suggestions.append("Should I map this architecture to your team's stack?")
+    
+    if "data_pipeline_depth" in active_subcats:
+        suggestions.append("Curious about the pgvector RPC implementation?")
+        suggestions.append("Want to see the embedding generation flow?")
+    
+    if "state_management_depth" in active_subcats:
+        suggestions.append("Should I show the ConversationState transitions?")
+        suggestions.append("Want to trace a query through the pipeline?")
+    
+    # If we have multiple categories, prioritize the most recent ones
+    # Default fallback
+    if not suggestions:
+        suggestions = [
+            "Want me to walk through the LangGraph node transitions in detail?",
+            "Curious how the Supabase pgvector query works under load?",
+            "Should we map this architecture to your internal stack?",
+        ]
+    
+    # Return exactly 3 suggestions
+    return suggestions[:3] if len(suggestions) >= 3 else suggestions + [
+        "Ask me anything else about the implementation!",
+        "Want to see how this adapts to your use case?",
+    ][:3 - len(suggestions)]
+
+
+logger = logging.getLogger(__name__)
+
+
 def log_and_notify(
     state: ConversationState,
     session_id: str,
@@ -132,15 +185,21 @@ def log_and_notify(
 
 
 def suggest_followups(state: ConversationState) -> ConversationState:
-    """Generate curiosity-driven follow-up prompts.
+    """Generate curiosity-driven follow-up prompts with subcategory awareness.
 
     This node adds contextual next-question suggestions to the answer based on:
     - Query intent/type (technical, data, career)
     - Role mode (software developer, hiring manager, etc.)
+    - Active technical subcategories (stack, architecture, data pipeline, state mgmt)
     - Conversation context (what topics have been covered)
 
     Followup strategy:
     - Technical queries → Dive deeper into implementation details
+    - With subcategories active → Offer drilling into specific areas:
+      * stack_depth → "Want framework comparison?"
+      * architecture_depth → "Should I show the node flow diagram?"
+      * data_pipeline_depth → "Curious about the pgvector RPC?"
+      * state_management_depth → "Want to see the state transitions?"
     - Data queries → Offer specific metrics and breakdowns
     - Career queries → Explore project stories and outcomes
     - Confession mode → No followups (respects privacy)
@@ -150,11 +209,12 @@ def suggest_followups(state: ConversationState) -> ConversationState:
     Design Principles:
     - SRP: Only generates followups, doesn't modify core answer
     - Role awareness: Different suggestions for technical vs business
+    - Context awareness: Uses subcategory signals for precision
     - Idempotency: Skips if followup_prompts already set
     - UX: Maintains conversational momentum
 
     Args:
-        state: ConversationState with query_intent or query_type
+        state: ConversationState with query_intent, analytics_metadata
 
     Returns:
         Updated state with:
@@ -162,11 +222,13 @@ def suggest_followups(state: ConversationState) -> ConversationState:
         - answer: Original answer with followups appended
 
     Example:
-        >>> state = {"query_type": "technical", "answer": "RAG works by..."}
+        >>> state = {
+        ...     "query_type": "technical",
+        ...     "analytics_metadata": {"technical_subcategories": ["architecture_depth"]},
+        ...     "answer": "RAG works by..."
+        ... }
         >>> suggest_followups(state)
-        >>> len(state["followup_prompts"])
-        3
-        >>> "LangGraph node transitions" in state["followup_prompts"][0]
+        >>> "node flow diagram" in str(state["followup_prompts"])
         True
     """
     if state.get("followup_prompts"):
@@ -174,9 +236,14 @@ def suggest_followups(state: ConversationState) -> ConversationState:
 
     intent = state.get("query_intent") or state.get("query_type") or "general"
     role_mode = state.get("role_mode", "explorer")
+    active_subcats = state.get("analytics_metadata", {}).get("technical_subcategories", [])
 
     suggestions: List[str] = []
-    if intent in {"technical", "engineering", "technical"}:
+    
+    # Subcategory-specific followups take priority for technical queries
+    if intent in {"technical", "engineering", "technical"} and active_subcats:
+        suggestions = _build_subcategory_followups(active_subcats)
+    elif intent in {"technical", "engineering", "technical"}:
         suggestions = [
             "Want me to walk through the LangGraph node transitions in detail?",
             "Curious how the Supabase pgvector query works under load?",

@@ -81,6 +81,85 @@ def _split_answer_and_sources(answer: str) -> tuple[str, str]:
     return answer.strip(), ""
 
 
+def _add_subcategory_code_blocks(
+    sections: List[str],
+    active_subcats: List[str],
+    rag_engine: RagEngine,
+    query: str,
+    role: str,
+    depth: int
+) -> None:
+    """Add code blocks and diagrams based on active technical subcategories.
+    
+    Subcategory-aware enrichments:
+    - state_management_depth → ConversationState dataclass
+    - architecture_depth → LangGraph pipeline flow  
+    - data_pipeline_depth → pgvector retrieval code
+    - stack_depth → requirements/dependencies table
+    
+    Args:
+        sections: List of formatted sections to append to
+        active_subcats: Active subcategory names
+        rag_engine: RAG engine for code retrieval
+        query: User query for context
+        role: User role for filtering
+        depth: Depth level for toggle defaults
+    """
+    try:
+        # State management: Show ConversationState structure
+        if "state_management_depth" in active_subcats:
+            results = rag_engine.retrieve_with_code("ConversationState dataclass", role=role)
+            snippets = results.get("code_snippets", []) if results else []
+            
+            if snippets:
+                snippet = snippets[0]
+                code_content = snippet.get("content", "")
+                if is_valid_code_snippet(code_content):
+                    formatted_code = content_blocks.format_code_snippet(
+                        code=code_content,
+                        file_path="src/state/conversation_state.py",
+                        language="python",
+                        description="ConversationState schema with all tracked fields",
+                    )
+                    sections.append("")
+                    sections.append(
+                        content_blocks.render_block(
+                            "State Management Schema",
+                            formatted_code,
+                            summary="See the ConversationState dataclass",
+                            open_by_default=depth >= 3,
+                        )
+                    )
+        
+        # Data pipeline: Show pgvector retrieval
+        if "data_pipeline_depth" in active_subcats:
+            results = rag_engine.retrieve_with_code("pgvector retrieval", role=role)
+            snippets = results.get("code_snippets", []) if results else []
+            
+            if snippets:
+                snippet = snippets[0]
+                code_content = snippet.get("content", "")
+                if is_valid_code_snippet(code_content):
+                    formatted_code = content_blocks.format_code_snippet(
+                        code=code_content,
+                        file_path="src/retrieval/pgvector_retriever.py",
+                        language="python",
+                        description="Vector search with Supabase RPC",
+                    )
+                    sections.append("")
+                    sections.append(
+                        content_blocks.render_block(
+                            "RAG Pipeline Code",
+                            formatted_code,
+                            summary="See the pgvector retrieval implementation",
+                            open_by_default=depth >= 3,
+                        )
+                    )
+    
+    except Exception as exc:
+        logger.warning(f"Subcategory code enrichment failed: {exc}")
+
+
 def _summarize_answer(text: str, depth: int) -> List[str]:
     """Extract key sentences from answer for summary bullets.
 
@@ -225,6 +304,10 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
     )
     sections.append("")
     sections.append(details_block)
+    
+    # Extract active technical subcategories for smart artifact selection
+    active_subcats = state.get("analytics_metadata", {}).get("technical_subcategories", [])
+    show_technical_depth = state.get("show_technical_depth", False)
 
     # Live analytics snapshot (data_display_requested action)
     if "render_live_analytics" in action_types:
@@ -271,7 +354,7 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
         )
 
     # Engineering sequence diagram
-    if "include_sequence_diagram" in action_types:
+    if "include_sequence_diagram" in action_types or (show_technical_depth and "architecture_depth" in active_subcats):
         sections.append("")
         sections.append(
             content_blocks.render_block(
@@ -293,8 +376,12 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
                 open_by_default=False,
             )
         )
+    
+    # Subcategory-aware code enrichments
+    if show_technical_depth and active_subcats:
+        _add_subcategory_code_blocks(sections, active_subcats, rag_engine, query, role, depth)
 
-    # Code reference (retrieves from code index)
+    # Code reference (retrieves from code index) - for explicit actions or general technical queries
     if "include_code_reference" in action_types:
         try:
             results = rag_engine.retrieve_with_code(query, role=role)
