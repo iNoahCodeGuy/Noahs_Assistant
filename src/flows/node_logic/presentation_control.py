@@ -264,10 +264,98 @@ def update_technical_affinity(state: ConversationState) -> ConversationState:
     # Set flag based on threshold
     state["show_technical_depth"] = current_score >= 2
 
+    # Track technical sub-categories for fine-grained presentation control
+    _update_technical_subcategories(state, query_lower, persona_hints)
+
     # Log decision for analytics (useful for debugging affinity drift)
     state.setdefault("analytics_metadata", {})["technical_affinity_score"] = current_score
 
     return state
+
+
+def _update_technical_subcategories(
+    state: ConversationState,
+    query_lower: str,
+    persona_hints: Dict[str, Any]
+) -> None:
+    """Update fine-grained technical focus scores for specialized presentation.
+
+    Sub-categories allow the system to understand WHAT KIND of technical
+    details the user cares about, enabling:
+    - Smart retrieval source selection (stack KB vs architecture KB)
+    - Contextual code example selection (show relevant snippets)
+    - Diagram prioritization (architecture vs data flow)
+    - Explanation depth tuning (state management intricacies)
+
+    Score ranges: 0-4 per category, threshold ≥2 for active focus
+    Decay: -1 per turn when category not mentioned
+    Boost: +2 when category keywords detected
+
+    Categories:
+    - stack_depth: Technology choices, dependencies, frameworks
+    - architecture_depth: System design, patterns, component relationships
+    - data_pipeline_depth: Data flow, ETL, vector storage, retrieval
+    - state_management_depth: LangGraph state, nodes, conversation flow
+
+    Args:
+        state: ConversationState to annotate with metadata
+        query_lower: Lowercased user query
+        persona_hints: session_memory.persona_hints dict to update
+    """
+    # Category keyword mappings
+    categories = {
+        "stack_depth_score": {
+            "keywords": {
+                "stack", "tech stack", "dependencies", "framework", "library",
+                "python", "langchain", "openai", "supabase", "streamlit",
+                "vercel", "postgres", "pgvector", "requirements", "package"
+            },
+            "examples": ["What's in your tech stack?", "Which frameworks do you use?"]
+        },
+        "architecture_depth_score": {
+            "keywords": {
+                "architecture", "design", "pattern", "component", "module",
+                "system", "structure", "diagram", "flow", "orchestration",
+                "microservices", "monolith", "separation of concerns", "layer"
+            },
+            "examples": ["Show me the architecture", "How is the system designed?"]
+        },
+        "data_pipeline_depth_score": {
+            "keywords": {
+                "data", "pipeline", "etl", "vector", "embedding", "retrieval",
+                "pgvector", "rag", "knowledge base", "chunking", "indexing",
+                "search", "similarity", "ranking", "grounding", "storage"
+            },
+            "examples": ["How does retrieval work?", "Explain the RAG pipeline"]
+        },
+        "state_management_depth_score": {
+            "keywords": {
+                "state", "node", "langgraph", "workflow", "graph", "edge",
+                "conversation state", "memory", "session", "turn", "pipeline",
+                "orchestration", "conversation flow", "state machine"
+            },
+            "examples": ["How does state management work?", "Explain the nodes"]
+        },
+    }
+
+    # Apply decay (-1) to all categories not mentioned this turn
+    for score_key in categories.keys():
+        current = persona_hints.get(score_key, 0)
+        persona_hints[score_key] = max(current - 1, 0)
+
+    # Boost (+2, cap at 4) categories with keyword matches
+    for score_key, config in categories.items():
+        if any(kw in query_lower for kw in config["keywords"]):
+            current = persona_hints.get(score_key, 0)
+            persona_hints[score_key] = min(current + 2, 4)
+
+    # Store active focuses in analytics for retrieval strategy decisions
+    active_focuses = [
+        category.replace("_score", "")
+        for category, score in persona_hints.items()
+        if category.endswith("_score") and score >= 2
+    ]
+    state.setdefault("analytics_metadata", {})["technical_subcategories"] = active_focuses
 
 
 __all__ = ["depth_controller", "display_controller", "update_enterprise_affinity", "update_technical_affinity"]
