@@ -33,6 +33,7 @@ from src.flows.node_logic.presentation_control import (
     depth_controller,
     display_controller,
     update_enterprise_affinity,
+    update_technical_affinity,
 )
 from src.flows.node_logic.core_nodes import (
     retrieve_chunks,
@@ -115,6 +116,7 @@ __all__ = [
     "depth_controller",
     "display_controller",
     "update_enterprise_affinity",
+    "update_technical_affinity",
     "route_hiring_manager_technical",
     "onboard_hiring_manager_technical",
     "explain_enterprise_adaptation",

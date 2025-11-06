@@ -50,6 +50,7 @@ from src.flows.conversation_nodes import (
     classify_intent,
     depth_controller,
     update_enterprise_affinity,
+    update_technical_affinity,
     display_controller,
     detect_hiring_signals,
     handle_resume_request,
@@ -133,6 +134,8 @@ def run_conversation_flow(
     route_hiring_manager_technical,
         classify_intent,
         depth_controller,
+        update_enterprise_affinity,
+        update_technical_affinity,
         display_controller,
         detect_hiring_signals,
         handle_resume_request,
@@ -188,6 +191,7 @@ def _build_langgraph() -> Any:
     workflow.add_node("classify_intent", classify_intent)
     workflow.add_node("depth_control", depth_controller)
     workflow.add_node("enterprise_affinity", update_enterprise_affinity)
+    workflow.add_node("technical_affinity", update_technical_affinity)
     workflow.add_node("display_control", display_controller)
     workflow.add_node("detect_hiring", detect_hiring_signals)
     workflow.add_node("resume_request", handle_resume_request)
@@ -234,7 +238,8 @@ def _build_langgraph() -> Any:
     )
     workflow.add_edge("classify_intent", "depth_control")
     workflow.add_edge("depth_control", "enterprise_affinity")
-    workflow.add_edge("enterprise_affinity", "display_control")
+    workflow.add_edge("enterprise_affinity", "technical_affinity")
+    workflow.add_edge("technical_affinity", "display_control")
     workflow.add_edge("display_control", "detect_hiring")
     workflow.add_edge("detect_hiring", "resume_request")
     workflow.add_edge("resume_request", "extract_entities")

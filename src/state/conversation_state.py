@@ -112,6 +112,9 @@ class ConversationState(TypedDict, total=False):
     relate_to_enterprise: bool
     """True when responses should explicitly tie insights back to enterprise value."""
 
+    show_technical_depth: bool
+    """True when responses should include code, architecture details, and implementation specifics."""
+
     # --- Entity Extraction & Memory ---
     entities: Dict[str, Any]
     """Extracted entities (company, position, timeline, technology, contact preference)."""

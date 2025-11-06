@@ -194,4 +194,80 @@ def update_enterprise_affinity(state: ConversationState) -> ConversationState:
     return state
 
 
-__all__ = ["depth_controller", "display_controller", "update_enterprise_affinity"]
+def update_technical_affinity(state: ConversationState) -> ConversationState:
+    """Adjust technical depth preference based on query focus.
+
+    Uses a relevance score (0-4) that increases with technical keywords
+    and decreases with business/enterprise-only queries. Score ≥2 enables
+    technical deep-dives with code, architecture diagrams, and implementation details.
+
+    This allows business-oriented users to start light, then drill into
+    technical specifics as they become curious, and return to high-level
+    discussion when asking about outcomes or ROI.
+
+    Args:
+        state: ConversationState with query and session_memory
+
+    Returns:
+        Updated state with show_technical_depth flag set based on score
+
+    Score mechanics:
+        - Technical keywords (+2, cap at 4): "code", "implementation", "how does",
+          "architecture", "algorithm", "trace", "debug", "api", "function", "error"
+        - Business keywords (-1, floor at 0): "roi", "value", "outcome", "business",
+          "stakeholder", "budget", "governance", "compliance", "rollout"
+        - Threshold: score ≥2 → show_technical_depth=True
+
+    Example progression:
+        Turn 1: "Tell me about your career" → score=0 → False
+        Turn 2: "How does the RAG pipeline work?" → score=2 (+2) → True
+        Turn 3: "Show me the retrieval code" → score=4 (+2, capped) → True
+        Turn 4: "What's the business value?" → score=3 (-1) → True (still above threshold)
+        Turn 5: "How much does this cost?" → score=2 (-1) → True
+        Turn 6: "Tell me about ROI" → score=1 (-1) → False
+    """
+    query_lower = state.get("query", "").lower()
+
+    # Retrieve current score from session memory
+    persona_hints = state.setdefault("session_memory", {}).setdefault("persona_hints", {})
+    current_score = persona_hints.get("technical_relevance_score", 0)
+
+    # Technical deep-dive keywords (increase affinity)
+    technical_keywords = {
+        "code", "implementation", "how does", "how do", "architecture",
+        "algorithm", "trace", "debug", "api", "function", "error", "bug",
+        "test", "pipeline", "model", "retrieval", "embedding", "vector",
+        "sql", "query", "langgraph", "node", "workflow", "state", "async",
+        "performance", "latency", "optimization", "refactor", "class", "method"
+    }
+
+    # Business/high-level keywords (decrease affinity)
+    business_keywords = {
+        "roi", "value", "outcome", "business", "stakeholder", "budget",
+        "governance", "compliance", "rollout", "why", "what benefit",
+        "customer", "user", "team", "scale", "enterprise", "production",
+        "career", "experience", "background", "tell me about", "overview"
+    }
+
+    # Calculate score adjustment
+    has_technical = any(kw in query_lower for kw in technical_keywords)
+    has_business = any(kw in query_lower for kw in business_keywords)
+
+    if has_technical:
+        current_score = min(current_score + 2, 4)
+    elif has_business:
+        current_score = max(current_score - 1, 0)
+
+    # Store updated score
+    persona_hints["technical_relevance_score"] = current_score
+
+    # Set flag based on threshold
+    state["show_technical_depth"] = current_score >= 2
+
+    # Log decision for analytics (useful for debugging affinity drift)
+    state.setdefault("analytics_metadata", {})["technical_affinity_score"] = current_score
+
+    return state
+
+
+__all__ = ["depth_controller", "display_controller", "update_enterprise_affinity", "update_technical_affinity"]
