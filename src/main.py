@@ -106,7 +106,7 @@ def init_state():
         st.session_state.session_id = str(uuid.uuid4())
 
 def main():
-    """Main application flow: validate config → role selection → chat loop."""
+    """Main application flow: validate config → chat loop (no role selection UI)."""
     init_state()
 
     # Validate Supabase configuration
@@ -119,31 +119,13 @@ def main():
 
     st.title("Portfolia - Noah's AI Assistant")
 
-    # ========== ROLE SELECTION PHASE ==========
-    # User must select role before accessing chat interface.
-    # This ensures we know their context before retrieval.
-    if st.session_state.role is None:
-        st.write("Hello! I'm Portfolia, Noah's AI Assistant.")
-        st.write("To provide you with the best experience, please select the option that best describes you:")
-        selected_role = st.selectbox("Select your role:", ROLE_OPTIONS)
-
-        if st.button("Confirm Role"):
-            # Set role and show warm greeting immediately after role selection
-            st.session_state.role = selected_role
-            greeting = get_role_greeting(st.session_state.role)
-            st.session_state.chat_history.append({
-                "role": "assistant",
-                "content": greeting
-            })
-            st.rerun()  # Refresh to show chat interface with greeting
-        st.stop()  # Stop execution until role is confirmed
-    else:
-        # Role already selected - show it in sidebar with option to change
-        st.sidebar.markdown(f"**Active Role:** {st.session_state.role}")
-        if st.sidebar.button("Change Role"):
-            st.session_state.role = None  # Reset role
-            st.session_state.chat_history = []  # Clear chat history
-            st.rerun()  # Force rerun to show role selection screen
+    # Show current role in sidebar if inferred
+    if st.session_state.role:
+        st.sidebar.markdown(f"**Detected Role:** {st.session_state.role}")
+        if st.sidebar.button("Reset Conversation"):
+            st.session_state.role = None
+            st.session_state.chat_history = []
+            st.rerun()
 
     # Display prior messages
     for m in st.session_state.chat_history:

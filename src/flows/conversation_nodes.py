@@ -20,7 +20,10 @@ See docs/CONVERSATION_PIPELINE_MODULES.md for implementation details.
 from __future__ import annotations
 
 # Import all conversation nodes from the node_logic package
-from src.flows.node_logic.session_management import initialize_conversation_state
+from src.flows.node_logic.session_management import (
+    initialize_conversation_state,
+    prompt_for_role_selection,
+)
 from src.flows.node_logic.role_routing import classify_role_mode
 from src.flows.node_logic.query_classification import classify_intent, classify_query
 from src.flows.node_logic.entity_extraction import extract_entities
@@ -94,6 +97,7 @@ def handle_greeting(state, rag_engine):
 # Export all nodes for use in conversation_flow.py
 __all__ = [
     "initialize_conversation_state",
+    "prompt_for_role_selection",
     "classify_role_mode",
     "classify_intent",
     "classify_query",  # backward-compatible alias

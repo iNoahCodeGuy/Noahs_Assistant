@@ -24,8 +24,52 @@ from src.state.conversation_state import ConversationState
 from src.core.rag_engine import RagEngine
 from src.flows import content_blocks
 from src.flows.node_logic.code_validation import sanitize_generated_answer
+from src.config.supabase_config import supabase_settings
 
 logger = logging.getLogger(__name__)
+
+
+def select_model_for_task(state: ConversationState) -> str:
+    """Select appropriate OpenAI model based on query complexity.
+
+    Uses different models for different reasoning depths:
+    - Reasoning model (o1-preview): Complex architecture, multi-step reasoning, planning
+    - Default model (gpt-4): Most queries requiring balanced quality/speed
+    - Fast model (gpt-3.5-turbo): Simple factual queries, greetings
+
+    Args:
+        state: Current conversation state with query and classification metadata
+
+    Returns:
+        Model name string (e.g., "o1-preview", "gpt-4", "gpt-3.5-turbo")
+    """
+    query = state.get("query", "").lower()
+    role = state.get("role", "")
+
+    # Use reasoning model for complex tasks requiring extended thinking
+    complex_keywords = [
+        "architecture", "design", "how does this work", "explain the system",
+        "compare", "tradeoffs", "why choose", "planning", "strategy",
+        "optimization", "scaling", "enterprise", "evaluate", "recommend"
+    ]
+
+    # Check for complex reasoning needs
+    if any(kw in query for kw in complex_keywords):
+        logger.info(f"Using reasoning model for complex query: {query[:50]}...")
+        return supabase_settings.openai_reasoning_model
+
+    # Use fast model for simple queries
+    simple_keywords = [
+        "hello", "hi", "hey", "thanks", "thank you",
+        "what is", "who is", "when", "where"
+    ]
+
+    if any(kw in query for kw in simple_keywords) and len(query.split()) < 8:
+        logger.info(f"Using fast model for simple query: {query[:50]}...")
+        return supabase_settings.openai_fast_model
+
+    # Default to standard model for most queries
+    return supabase_settings.openai_model
 
 
 def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str, Any]:
@@ -222,6 +266,12 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     # Build the instruction suffix
     instruction_suffix = " ".join(extra_instructions) if extra_instructions else None
 
+    # Select appropriate model for this task
+    selected_model = select_model_for_task(state)
+
+    # Store model selection in state for analytics
+    state.setdefault("analytics_metadata", {})["selected_model"] = selected_model
+
     # Generate response with LLM (Encapsulation - delegates to response generator)
     try:
         answer = rag_engine.response_generator.generate_contextual_response(
@@ -229,7 +279,8 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
             context=retrieved_chunks,
             role=role,
             chat_history=chat_history,
-            extra_instructions=instruction_suffix
+            extra_instructions=instruction_suffix,
+            model_name=selected_model  # Pass selected model
         )
     except Exception as e:
         logger.error(f"LLM generation failed: {e}")

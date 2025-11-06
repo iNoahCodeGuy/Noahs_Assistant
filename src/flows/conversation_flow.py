@@ -43,6 +43,7 @@ from src.core.rag_engine import RagEngine
 from src.state.conversation_state import ConversationState
 from src.flows.conversation_nodes import (
     initialize_conversation_state,
+    prompt_for_role_selection,
     handle_greeting,
     classify_role_mode,
     classify_intent,
@@ -124,6 +125,7 @@ def run_conversation_flow(
     """
     pipeline = nodes or (
         initialize_conversation_state,
+        prompt_for_role_selection,
         lambda s: handle_greeting(s, rag_engine),
         classify_role_mode,
         classify_intent,
@@ -168,12 +170,16 @@ def _build_langgraph() -> Any:
     if not LANGGRAPH_AVAILABLE:
         return None
 
+    # Initialize RAG engine for Studio
+    rag_engine = RagEngine()
+
     # Create StateGraph with ConversationState schema
     workflow = StateGraph(ConversationState)
 
-    # Add all nodes
+    # Add all nodes with RAG engine injected
     workflow.add_node("initialize", initialize_conversation_state)
-    workflow.add_node("greeting", lambda s: handle_greeting(s, None))  # RAG engine injected at runtime
+    workflow.add_node("role_prompt", prompt_for_role_selection)
+    workflow.add_node("greeting", lambda s: handle_greeting(s, rag_engine))
     workflow.add_node("classify_role", classify_role_mode)
     workflow.add_node("classify_intent", classify_intent)
     workflow.add_node("depth_control", depth_controller)
@@ -184,14 +190,14 @@ def _build_langgraph() -> Any:
     workflow.add_node("assess_clarification", assess_clarification_need)
     workflow.add_node("clarify", ask_clarifying_question)
     workflow.add_node("compose_query", compose_query)
-    workflow.add_node("retrieve", lambda s: retrieve_chunks(s, None))
+    workflow.add_node("retrieve", lambda s: retrieve_chunks(s, rag_engine))
     workflow.add_node("re_rank", re_rank_and_dedup)
     workflow.add_node("validate_grounding", validate_grounding)
     workflow.add_node("grounding_gap", handle_grounding_gap)
-    workflow.add_node("generate_draft", lambda s: generate_draft(s, None))
+    workflow.add_node("generate_draft", lambda s: generate_draft(s, rag_engine))
     workflow.add_node("hallucination_check", hallucination_check)
     workflow.add_node("plan_actions", plan_actions)
-    workflow.add_node("format_answer", lambda s: format_answer(s, None))
+    workflow.add_node("format_answer", lambda s: format_answer(s, rag_engine))
     workflow.add_node("execute_actions", execute_actions)
     workflow.add_node("suggest_followups", suggest_followups)
     workflow.add_node("update_memory", update_memory)
@@ -199,7 +205,14 @@ def _build_langgraph() -> Any:
 
     # Build linear pipeline with conditional edges
     workflow.add_edge(START, "initialize")
-    workflow.add_edge("initialize", "greeting")
+    workflow.add_edge("initialize", "role_prompt")
+
+    # Role prompt can short-circuit if we're still waiting on a persona choice
+    workflow.add_conditional_edges(
+        "role_prompt",
+        lambda s: "end" if s.get("pipeline_halt") else "greeting",
+        {"end": END, "greeting": "greeting"}
+    )
 
     # Greeting can short-circuit to end
     workflow.add_conditional_edges(

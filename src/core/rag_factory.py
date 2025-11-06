@@ -42,9 +42,17 @@ class RagEngineFactory:
                     return [float((hash(text) >> i) & 0xFF) / 255.0 for i in range(0, 32)]
             return _FallbackEmb(), True
 
-    def create_llm(self) -> Tuple[Any, bool]:
-        """Create LLM with fallback and LangSmith wrapping. Returns (llm, is_degraded)."""
+    def create_llm(self, model_name: Optional[str] = None) -> Tuple[Any, bool]:
+        """Create LLM with fallback and LangSmith wrapping. Returns (llm, is_degraded).
+
+        Args:
+            model_name: Optional model override (e.g., "o1-preview" for reasoning tasks).
+                       If None, uses settings.openai_model.
+        """
         try:
+            # Use provided model or fall back to settings
+            selected_model = model_name or getattr(self.settings, "openai_model", "gpt-3.5-turbo")
+
             # Import wrap_openai for automatic tracing
             try:
                 from langsmith.wrappers import wrap_openai
@@ -57,20 +65,20 @@ class RagEngineFactory:
                 # Use with ChatOpenAI via openai_client parameter (if supported)
                 llm = ChatOpenAI(
                     openai_api_key=getattr(self.settings, "openai_api_key", None),
-                    model_name=getattr(self.settings, "openai_model", "gpt-3.5-turbo"),
+                    model_name=selected_model,
                     temperature=0.4,
                     max_tokens=4096  # Allow full analytics dashboard (11,772 chars ≈ 3,000 tokens)
                 )
-                logger.debug("LLM initialized with LangSmith wrapping for automatic tracing")
+                logger.debug(f"LLM initialized with model={selected_model} and LangSmith wrapping for automatic tracing")
             except ImportError:
                 # Fallback to unwrapped if langsmith not available
                 llm = ChatOpenAI(
                     openai_api_key=getattr(self.settings, "openai_api_key", None),
-                    model_name=getattr(self.settings, "openai_model", "gpt-3.5-turbo"),
+                    model_name=selected_model,
                     temperature=0.4,
                     max_tokens=4096
                 )
-                logger.debug("LLM initialized without LangSmith wrapping (langsmith not installed)")
+                logger.debug(f"LLM initialized with model={selected_model} without LangSmith wrapping (langsmith not installed)")
 
             return llm, False
         except Exception as e:
@@ -89,7 +97,7 @@ class RagEngineFactory:
 
         try:
             from src.retrieval.career_kb import CareerKnowledgeBase
-            kb_path = getattr(self.settings, "career_kb_path", "data/career_kb.csv")
+            kb_path = getattr(self.settings, "career_kb_path")
             return CareerKnowledgeBase(kb_path)
         except Exception as e:
             logger.warning(f"Failed to create career KB: {e}")
@@ -115,5 +123,5 @@ class RagEngineFactory:
         if provided_career_kb is not None:
             return processor.load_from_career_kb(provided_career_kb)
 
-        kb_path = getattr(self.settings, "career_kb_path", "data/career_kb.csv")
+        kb_path = getattr(self.settings, "career_kb_path")
         return processor.load_from_csv(kb_path, source_column="Question")

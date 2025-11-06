@@ -89,6 +89,8 @@ class SupabaseSettings:
         # OpenAI configuration (strip to prevent "Illegal header value" errors)
         self.openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
         self.openai_model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo").strip()
+        self.openai_reasoning_model = os.getenv("OPENAI_REASONING_MODEL", "o1-preview").strip()
+        self.openai_fast_model = os.getenv("OPENAI_FAST_MODEL", "gpt-3.5-turbo").strip()
         self.embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-ada-002").strip()
 
         # External services (for Next.js API routes)

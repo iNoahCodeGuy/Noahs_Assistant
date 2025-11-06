@@ -84,7 +84,8 @@ Please provide a helpful and accurate answer based on the information provided. 
         context: List[Dict[str, Any]],
         role: str = None,
         chat_history: List[Dict[str, str]] = None,
-        extra_instructions: str = None
+        extra_instructions: str = None,
+        model_name: str = None
     ) -> str:
         """Generate response with explicit context and role awareness.
 
@@ -95,6 +96,7 @@ Please provide a helpful and accurate answer based on the information provided. 
             chat_history: Previous conversation turns
             extra_instructions: Optional guidance for response style/length
                 (e.g., "provide comprehensive explanation", "include code examples")
+            model_name: Optional model override (e.g., "o1-preview" for reasoning)
 
         Returns:
             Generated response text
@@ -112,7 +114,15 @@ Please provide a helpful and accurate answer based on the information provided. 
 
         try:
             if self.qa_chain and not self.degraded_mode:
-                response = self.llm.predict(prompt)
+                # Use provided model or default LLM
+                if model_name and model_name != getattr(self.llm, 'model_name', None):
+                    # Create temporary LLM with specified model
+                    from src.core.rag_factory import RagEngineFactory
+                    factory = RagEngineFactory(self.llm._openai_api_key if hasattr(self.llm, '_openai_api_key') else None)
+                    temp_llm, _ = factory.create_llm(model_name=model_name)
+                    response = temp_llm.predict(prompt)
+                else:
+                    response = self.llm.predict(prompt)
             else:
                 response = self._synthesize_fallback(query, context_str)
 
