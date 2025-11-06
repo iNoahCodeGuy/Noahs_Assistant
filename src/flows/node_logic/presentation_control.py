@@ -125,4 +125,73 @@ def display_controller(state: ConversationState) -> ConversationState:
     return state
 
 
-__all__ = ["depth_controller", "display_controller"]
+def update_enterprise_affinity(state: ConversationState) -> ConversationState:
+    """Adjust enterprise framing based on query focus.
+
+    Uses a relevance score (0-4) that increases with enterprise keywords
+    and decreases with pure technical queries. Score ≥2 enables enterprise tie-ins.
+
+    This allows technical hiring managers to start with enterprise context,
+    then naturally shift to pure technical discussion as they drill deeper,
+    and snap back to enterprise framing if they ask business-oriented questions.
+
+    Args:
+        state: ConversationState with query and session_memory
+
+    Returns:
+        Updated state with relate_to_enterprise flag set based on score
+
+    Score mechanics:
+        - Enterprise keywords (+2, cap at 4): "governance", "scale", "enterprise",
+          "rollout", "value", "roi", "team", "compliance", "production"
+        - Technical keywords (-1, floor at 0): "code", "implementation", "trace",
+          "architecture", "pipeline", "model", "algorithm", "function"
+        - Threshold: score ≥2 → relate_to_enterprise=True
+
+    Example progression:
+        Turn 1: "How does this scale to enterprise?" → score=2 (+2) → True
+        Turn 2: "Show me the retrieval code" → score=1 (-1) → False
+        Turn 3: "What's the governance model?" → score=3 (+2) → True
+    """
+    query_lower = state.get("query", "").lower()
+
+    # Retrieve current score from session memory
+    persona_hints = state.setdefault("session_memory", {}).setdefault("persona_hints", {})
+    current_score = persona_hints.get("enterprise_relevance_score", 0)
+
+    # Enterprise-focused keywords (increase affinity)
+    enterprise_keywords = {
+        "governance", "scale", "enterprise", "rollout", "value", "roi",
+        "team", "compliance", "production", "deployment", "multi-tenant",
+        "audit", "business", "customer", "operational", "reliability"
+    }
+
+    # Technical deep-dive keywords (decrease affinity)
+    technical_keywords = {
+        "code", "implementation", "trace", "architecture", "pipeline",
+        "model", "algorithm", "function", "debug", "error", "bug",
+        "test", "how does", "how do", "explain the", "walk me through"
+    }
+
+    # Calculate score adjustment
+    has_enterprise = any(kw in query_lower for kw in enterprise_keywords)
+    has_technical = any(kw in query_lower for kw in technical_keywords)
+
+    if has_enterprise:
+        current_score = min(current_score + 2, 4)
+    elif has_technical:
+        current_score = max(current_score - 1, 0)
+
+    # Store updated score
+    persona_hints["enterprise_relevance_score"] = current_score
+
+    # Set flag based on threshold
+    state["relate_to_enterprise"] = current_score >= 2
+
+    # Log decision for analytics (useful for debugging affinity drift)
+    state.setdefault("analytics_metadata", {})["enterprise_affinity_score"] = current_score
+
+    return state
+
+
+__all__ = ["depth_controller", "display_controller", "update_enterprise_affinity"]

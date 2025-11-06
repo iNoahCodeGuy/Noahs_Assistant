@@ -30,7 +30,7 @@ from src.flows.node_logic.query_classification import classify_intent, classify_
 from src.flows.node_logic.entity_extraction import extract_entities
 from src.flows.node_logic.clarification import assess_clarification_need, ask_clarifying_question
 from src.flows.node_logic.query_composition import compose_query
-from src.flows.node_logic.presentation_control import depth_controller, display_controller
+from src.flows.node_logic.presentation_control import depth_controller, display_controller, update_enterprise_affinity
 from src.flows.node_logic.retrieval_nodes import (
     retrieve_chunks,
     re_rank_and_dedup,
@@ -89,6 +89,7 @@ __all__ = [
     "compose_query",
     "depth_controller",
     "display_controller",
+    "update_enterprise_affinity",
     "route_hiring_manager_technical",
     "onboard_hiring_manager_technical",
     "explain_enterprise_adaptation",
