@@ -24,6 +24,19 @@ _ROLE_DISPLAY = {
     "confession": "Looking to confess crush",
 }
 
+_ROLE_SELECTION_MAP = {
+    "1": "hiring_manager_nontechnical",
+    "1️⃣": "hiring_manager_nontechnical",
+    "2": "hiring_manager_technical",
+    "2️⃣": "hiring_manager_technical",
+    "3": "software_developer",
+    "3️⃣": "software_developer",
+    "4": "explorer",
+    "4️⃣": "explorer",
+    "5": "confession",
+    "5️⃣": "confession",
+}
+
 
 def classify_role_mode(state: ConversationState) -> ConversationState:
     """Infer the user's persona from their query and conversation context.
@@ -48,23 +61,31 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
             return state
 
         # Infer role from query content
-        query = state.get("query", "").lower().strip()
+        query_raw = state.get("query", "")
+        query = query_raw.lower().strip()
         inferred_role = None
         confidence = 0.7
 
+        # Number-based selections from initial prompt (1-5)
+        selection_key = query if query in _ROLE_SELECTION_MAP else query.replace(" ", "")
+        if selection_key in _ROLE_SELECTION_MAP:
+            normalized = _ROLE_SELECTION_MAP[selection_key]
+            inferred_role = _ROLE_DISPLAY.get(normalized, "Just looking around")
+            confidence = 1.0
+
         # First check if user explicitly stated their role (exact match)
-        if query in _ROLE_ALIASES:
+        if not inferred_role and query in _ROLE_ALIASES:
             inferred_role = _ROLE_DISPLAY[_ROLE_ALIASES[query]]
             confidence = 1.0
         # Also check for close matches (e.g., "I'm a hiring manager (technical)")
-        elif any(role_name in query for role_name in _ROLE_ALIASES.keys()):
+        elif not inferred_role and any(role_name in query for role_name in _ROLE_ALIASES.keys()):
             for role_name, role_key in _ROLE_ALIASES.items():
                 if role_name in query:
                     inferred_role = _ROLE_DISPLAY[role_key]
                     confidence = 0.95
                     break
         # Check for hiring/recruiting signals
-        elif any(keyword in query for keyword in ["hire", "hiring", "recruit", "position", "job opening", "candidate"]):
+        elif not inferred_role and any(keyword in query for keyword in ["hire", "hiring", "recruit", "position", "job opening", "candidate"]):
             if any(tech_keyword in query for tech_keyword in ["technical", "tech", "engineering", "code", "developer"]):
                 inferred_role = "Hiring Manager (technical)"
             else:
@@ -72,17 +93,17 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
             confidence = 0.9
 
         # Check for developer/engineer signals
-        elif any(keyword in query for keyword in ["code", "developer", "engineer", "programming", "technical", "architecture", "api", "database"]):
+        elif not inferred_role and any(keyword in query for keyword in ["code", "developer", "engineer", "programming", "technical", "architecture", "api", "database"]):
             inferred_role = "Software Developer"
             confidence = 0.85
 
         # Check for confession signals
-        elif any(keyword in query for keyword in ["confess", "crush", "secret", "anonymous"]):
+        elif not inferred_role and any(keyword in query for keyword in ["confess", "crush", "secret", "anonymous"]):
             inferred_role = "Looking to confess crush"
             confidence = 0.95
 
         # Default to casual explorer
-        else:
+        if not inferred_role:
             inferred_role = "Just looking around"
             confidence = 0.6
 

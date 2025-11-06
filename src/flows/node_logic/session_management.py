@@ -57,10 +57,14 @@ def initialize_conversation_state(state: ConversationState) -> ConversationState
 
 _INITIAL_GREETING = dedent(
     """\
-    Hello! I'm Noah's AI assistant, Portfolia.
-
-    I'm here to help you understand Noah's work, skills, and experience—or just to chat!
-    What brings you here today?
+    👋 Hi, I'm Portfolia — Noah's AI Assistant!
+    I help people explore how generative AI systems like me are built, how they scale to enterprise use, and how Noah applied full-stack AI engineering principles to make me production-ready.
+    Before we start, what best describes you?
+    1️⃣ Hiring Manager
+    2️⃣ Hiring Manager (Technical)
+    3️⃣ Software Developer
+    4️⃣ Just Looking Around
+    5️⃣ Looking to Confess Crush 💌
     """
 )
 
@@ -88,4 +92,8 @@ def prompt_for_role_selection(state: ConversationState) -> ConversationState:
         return state
 
     # After first response, let role classification infer the persona
+    # Clear any greeting guards so the pipeline can continue normally
+    state.pop("pipeline_halt", None)
+    if state.get("is_greeting"):
+        state["is_greeting"] = False
     return state
