@@ -279,19 +279,23 @@ def suggest_followups(state: ConversationState) -> ConversationState:
 
 
 def update_memory(state: ConversationState) -> ConversationState:
-    """Store soft signals in session memory for future turns.
+    """Store soft signals and affinity scores in session memory for future turns.
 
     This node captures conversation patterns and context that should persist
     across multiple turns in the same session:
     - Topics discussed (for coherence tracking)
     - Entities mentioned (company names, roles, contact info)
     - Last grounding status (for retrieval quality monitoring)
+    - Enterprise affinity score (0-4 scale tracking business focus)
+    - Technical affinity score (0-4 scale tracking technical depth preference)
+    - Technical sub-category scores (stack, architecture, data, state management)
 
     Memory is stored in `session_memory` dict on state and can be used by
     downstream nodes to:
     - Avoid repeating information
     - Maintain conversation continuity
     - Detect patterns (e.g., persistent hiring signals)
+    - Adapt presentation depth based on user's progressive interest
 
     Performance: <1ms (in-memory dict updates)
 
@@ -301,6 +305,11 @@ def update_memory(state: ConversationState) -> ConversationState:
     - Privacy: No PII stored, only business entities and topics
     - Idempotency: Safe to call multiple times
 
+    Affinity Score Mechanics:
+        Enterprise (0-4): +2 for business keywords, -1 for technical → threshold ≥2
+        Technical (0-4): +2 for code/implementation, -1 for business → threshold ≥2
+        Sub-categories: stack_depth, architecture_depth, data_pipeline_depth, state_management_depth
+
     Args:
         state: ConversationState with query_intent and entities
 
@@ -309,25 +318,33 @@ def update_memory(state: ConversationState) -> ConversationState:
         - session_memory.topics: List of discussed topics
         - session_memory.entities: Dict of extracted entities
         - session_memory.last_grounding_status: Latest grounding result
+        - session_memory.persona_hints.enterprise_relevance_score: Enterprise affinity (0-4)
+        - session_memory.persona_hints.technical_relevance_score: Technical affinity (0-4)
+        - relate_to_enterprise: Boolean flag (score ≥2)
+        - show_technical_depth: Boolean flag (score ≥2)
 
     Example:
         >>> state = {
-        ...     "query_intent": "technical",
+        ...     "query": "How does governance work?",
+        ...     "query_intent": "business_value",
         ...     "entities": {"company": "Acme Corp"},
         ...     "grounding_status": "ok"
         ... }
         >>> update_memory(state)
-        >>> state["session_memory"]["topics"]
-        ["technical"]
-        >>> state["session_memory"]["entities"]["company"]
-        "Acme Corp"
+        >>> state["session_memory"]["persona_hints"]["enterprise_relevance_score"]
+        2  # +2 from "governance" keyword
+        >>> state["relate_to_enterprise"]
+        True  # score ≥2
     """
     memory = state.setdefault("session_memory", {})
+    
+    # Store topics
     topics = memory.setdefault("topics", [])
     intent = state.get("query_intent")
     if intent and intent not in topics:
         topics.append(intent)
 
+    # Store entities
     entities = state.get("entities", {})
     if entities:
         stored_entities = memory.setdefault("entities", {})
@@ -337,4 +354,124 @@ def update_memory(state: ConversationState) -> ConversationState:
 
     memory["last_grounding_status"] = state.get("grounding_status")
 
+    # Update enterprise affinity (merged from update_enterprise_affinity)
+    _update_enterprise_affinity(state, memory)
+    
+    # Update technical affinity (merged from update_technical_affinity)
+    _update_technical_affinity(state, memory)
+
     return state
+
+
+def _update_enterprise_affinity(state: ConversationState, memory: dict) -> None:
+    """Adjust enterprise framing based on query focus (internal helper)."""
+    query_lower = state.get("query", "").lower()
+    persona_hints = memory.setdefault("persona_hints", {})
+    current_score = persona_hints.get("enterprise_relevance_score", 0)
+
+    enterprise_keywords = {
+        "governance", "scale", "enterprise", "rollout", "value", "roi",
+        "team", "compliance", "production", "deployment", "multi-tenant",
+        "audit", "business", "customer", "operational", "reliability"
+    }
+
+    technical_keywords = {
+        "code", "implementation", "trace", "architecture", "pipeline",
+        "model", "algorithm", "function", "debug", "error", "bug",
+        "test", "how does", "how do", "explain the", "walk me through"
+    }
+
+    has_enterprise = any(kw in query_lower for kw in enterprise_keywords)
+    has_technical = any(kw in query_lower for kw in technical_keywords)
+
+    if has_enterprise:
+        current_score = min(current_score + 2, 4)
+    elif has_technical:
+        current_score = max(current_score - 1, 0)
+
+    persona_hints["enterprise_relevance_score"] = current_score
+    state["relate_to_enterprise"] = current_score >= 2
+    state.setdefault("analytics_metadata", {})["enterprise_affinity_score"] = current_score
+
+
+def _update_technical_affinity(state: ConversationState, memory: dict) -> None:
+    """Adjust technical depth preference based on query focus (internal helper)."""
+    query_lower = state.get("query", "").lower()
+    persona_hints = memory.setdefault("persona_hints", {})
+    current_score = persona_hints.get("technical_relevance_score", 0)
+
+    technical_keywords = {
+        "code", "implementation", "how does", "how do", "architecture",
+        "algorithm", "trace", "debug", "api", "function", "error", "bug",
+        "test", "pipeline", "model", "retrieval", "embedding", "vector",
+        "sql", "query", "langgraph", "node", "workflow", "state", "async",
+        "performance", "latency", "optimization", "refactor", "class", "method"
+    }
+
+    business_keywords = {
+        "roi", "value", "outcome", "business", "stakeholder", "budget",
+        "governance", "compliance", "rollout", "why", "what benefit",
+        "customer", "user", "team", "scale", "enterprise", "production",
+        "career", "experience", "background", "tell me about", "overview"
+    }
+
+    has_technical = any(kw in query_lower for kw in technical_keywords)
+    has_business = any(kw in query_lower for kw in business_keywords)
+
+    if has_technical:
+        current_score = min(current_score + 2, 4)
+    elif has_business:
+        current_score = max(current_score - 1, 0)
+
+    persona_hints["technical_relevance_score"] = current_score
+    state["show_technical_depth"] = current_score >= 2
+
+    # Update technical sub-categories for specialized presentation
+    _update_technical_subcategories(state, query_lower, persona_hints)
+
+    state.setdefault("analytics_metadata", {})["technical_affinity_score"] = current_score
+
+
+def _update_technical_subcategories(state: ConversationState, query_lower: str, persona_hints: dict) -> None:
+    """Update fine-grained technical focus scores for specialized presentation (internal helper)."""
+    categories = {
+        "stack_depth_score": {
+            "stack", "tech stack", "dependencies", "framework", "library",
+            "python", "langchain", "openai", "supabase", "streamlit",
+            "vercel", "postgres", "pgvector", "requirements", "package"
+        },
+        "architecture_depth_score": {
+            "architecture", "design", "pattern", "component", "module",
+            "system", "structure", "diagram", "flow", "orchestration",
+            "microservices", "monolith", "separation of concerns", "layer"
+        },
+        "data_pipeline_depth_score": {
+            "data", "pipeline", "etl", "vector", "embedding", "retrieval",
+            "pgvector", "rag", "knowledge base", "chunking", "indexing",
+            "search", "similarity", "ranking", "grounding", "storage"
+        },
+        "state_management_depth_score": {
+            "state", "node", "langgraph", "workflow", "graph", "edge",
+            "conversation state", "memory", "session", "turn", "pipeline",
+            "orchestration", "conversation flow", "state machine"
+        },
+    }
+
+    # Apply decay (-1) to all categories not mentioned this turn
+    for score_key in categories.keys():
+        current = persona_hints.get(score_key, 0)
+        persona_hints[score_key] = max(current - 1, 0)
+
+    # Boost (+2, cap at 4) categories with keyword matches
+    for score_key, keywords in categories.items():
+        if any(kw in query_lower for kw in keywords):
+            current = persona_hints.get(score_key, 0)
+            persona_hints[score_key] = min(current + 2, 4)
+
+    # Store active focuses in analytics for retrieval strategy decisions
+    active_focuses = [
+        category.replace("_score", "")
+        for category, score in persona_hints.items()
+        if category.endswith("_score") and score >= 2
+    ]
+    state.setdefault("analytics_metadata", {})["technical_subcategories"] = active_focuses

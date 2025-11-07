@@ -274,8 +274,12 @@ def _build_langgraph() -> Any:
     workflow.add_edge("update_memory", "log_and_notify")
     workflow.add_edge("log_and_notify", END)
 
-    # Compile with increased recursion limit (default 25 insufficient for 26-node pipeline)
-    return workflow.compile(recursion_limit=50)
+    # Compile the workflow (recursion_limit parameter added in LangGraph 0.2.0+)
+    try:
+        return workflow.compile(recursion_limit=50)
+    except TypeError:
+        # Fallback for older LangGraph versions without recursion_limit parameter
+        return workflow.compile()
 
 
 # Export compiled graph for LangGraph Studio
