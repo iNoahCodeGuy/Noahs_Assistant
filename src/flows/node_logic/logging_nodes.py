@@ -1,22 +1,22 @@
-"""Logging pipeline nodes - analytics persistence and session memory.
+"""Session memory and analytics logging nodes.
 
-This module handles the final pipeline steps:
-1. log_and_notify → Save conversation to Supabase analytics
-2. suggest_followups → Generate curiosity-driven next prompts
-3. update_memory → Store soft signals for future turns
+This module handles state persistence and analytics tracking:
+1. log_and_notify → Persist interaction to analytics table, trigger notifications
+2. update_memory → Store soft signals in session_memory for next turn (includes affinity tracking)
+
+Merged suggest_followups logic into formatting_nodes.format_answer for streamlined formatting.
 
 Design Principles:
-- SRP: Each function handles one aspect of post-generation processing
-- Defensibility: Graceful degradation if logging fails (doesn't break pipeline)
-- Observability: Records full conversation context for evaluation
-- Session continuity: Memory tracks topics and entities across turns
+- SRP: Each function handles one logging concern
+- Idempotency: Safe to call multiple times (updates/inserts)
+- Observability: LangSmith tracing for analytics performance
+- Reliability: Graceful degradation if Supabase unavailable
 
 Performance Characteristics:
-- log_and_notify: ~50-100ms (Supabase insert)
-- suggest_followups: <5ms (template-based)
-- update_memory: <1ms (in-memory dict updates)
+- log_and_notify: ~100ms (Supabase insert + optional Resend/Twilio)
+- update_memory: <1ms (in-memory dict update + affinity scoring)
 
-See: docs/context/SYSTEM_ARCHITECTURE_SUMMARY.md for analytics schema
+See: docs/context/SYSTEM_ARCHITECTURE_SUMMARY.md for full pipeline flow
 """
 
 import logging
@@ -185,96 +185,15 @@ def log_and_notify(
 
 
 def suggest_followups(state: ConversationState) -> ConversationState:
-    """Generate curiosity-driven follow-up prompts with subcategory awareness.
-
-    This node adds contextual next-question suggestions to the answer based on:
-    - Query intent/type (technical, data, career)
-    - Role mode (software developer, hiring manager, etc.)
-    - Active technical subcategories (stack, architecture, data pipeline, state mgmt)
-    - Conversation context (what topics have been covered)
-
-    Followup strategy:
-    - Technical queries → Dive deeper into implementation details
-    - With subcategories active → Offer drilling into specific areas:
-      * stack_depth → "Want framework comparison?"
-      * architecture_depth → "Should I show the node flow diagram?"
-      * data_pipeline_depth → "Curious about the pgvector RPC?"
-      * state_management_depth → "Want to see the state transitions?"
-    - Data queries → Offer specific metrics and breakdowns
-    - Career queries → Explore project stories and outcomes
-    - Confession mode → No followups (respects privacy)
-
-    Performance: <5ms (template-based suggestions)
-
-    Design Principles:
-    - SRP: Only generates followups, doesn't modify core answer
-    - Role awareness: Different suggestions for technical vs business
-    - Context awareness: Uses subcategory signals for precision
-    - Idempotency: Skips if followup_prompts already set
-    - UX: Maintains conversational momentum
-
-    Args:
-        state: ConversationState with query_intent, analytics_metadata
-
-    Returns:
-        Updated state with:
-        - followup_prompts: List of 3 suggested questions
-        - answer: Original answer with followups appended
-
-    Example:
-        >>> state = {
-        ...     "query_type": "technical",
-        ...     "analytics_metadata": {"technical_subcategories": ["architecture_depth"]},
-        ...     "answer": "RAG works by..."
-        ... }
-        >>> suggest_followups(state)
-        >>> "node flow diagram" in str(state["followup_prompts"])
-        True
-    """
-    if state.get("followup_prompts"):
-        return state
-
-    intent = state.get("query_intent") or state.get("query_type") or "general"
-    role_mode = state.get("role_mode", "explorer")
-    active_subcats = state.get("analytics_metadata", {}).get("technical_subcategories", [])
-
-    suggestions: List[str] = []
+    """DEPRECATED: No-op for backward compatibility.
     
-    # Subcategory-specific followups take priority for technical queries
-    if intent in {"technical", "engineering", "technical"} and active_subcats:
-        suggestions = _build_subcategory_followups(active_subcats)
-    elif intent in {"technical", "engineering", "technical"}:
-        suggestions = [
-            "Want me to walk through the LangGraph node transitions in detail?",
-            "Curious how the Supabase pgvector query works under load?",
-            "Should we map this architecture to your internal stack?",
-        ]
-    elif intent in {"data", "analytics"}:
-        suggestions = [
-            "Need the retrieval accuracy metrics for last week?",
-            "Want the cost-per-query breakdown?",
-            "Should we compare grounding confidence across roles?",
-        ]
-    elif intent in {"career", "general"}:
-        suggestions = [
-            "Want the story behind building this assistant end to end?",
-            "Should I outline Noah's production launch checklist?",
-            "Curious how this adapts to your team's workflow?",
-        ]
-
-    if role_mode == "confession":
-        suggestions = []  # Confession mode stays focused on the message
-
-    if suggestions:
-        state["followup_prompts"] = suggestions
-        followup_lines = "\n".join(f"- {item}" for item in suggestions)
-        existing_answer = state.get("answer") or ""
-        state["answer"] = (
-            f"{existing_answer}\n\nNext directions I can cover:\n{followup_lines}"
-            if existing_answer
-            else f"Next directions I can cover:\n{followup_lines}"
-        )
-
+    Logic merged into formatting_nodes.format_answer() for streamlined formatting.
+    Followup generation now happens during the final answer structuring phase
+    with full access to active subcategories and presentation context.
+    
+    Kept for import compatibility only. New code should rely on format_answer()
+    to generate followups automatically.
+    """
     return state
 
 

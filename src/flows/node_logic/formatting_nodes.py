@@ -186,19 +186,96 @@ def _summarize_answer(text: str, depth: int) -> List[str]:
     return summary
 
 
-def _build_followups(variant: str) -> List[str]:
-    """Generate role-specific followup prompt suggestions.
+def _build_subcategory_followups(active_subcats: List[str]) -> List[str]:
+    """Generate followup questions based on active technical subcategories.
+    
+    Merged from logging_nodes.suggest_followups for inline followup generation.
+    Maps subcategory focus to natural next-step questions.
+    
+    Args:
+        active_subcats: List of active subcategory names
+        
+    Returns:
+        List of contextual followup questions
+    """
+    suggestions = []
+    
+    if "stack_depth" in active_subcats:
+        suggestions.append("Want to compare LangChain vs LlamaIndex trade-offs?")
+        suggestions.append("Should I break down the requirements.txt dependencies?")
+    
+    if "architecture_depth" in active_subcats:
+        suggestions.append("Want the LangGraph node flow diagram?")
+        suggestions.append("Should I map this architecture to your team's stack?")
+    
+    if "data_pipeline_depth" in active_subcats:
+        suggestions.append("Curious about the pgvector RPC implementation?")
+        suggestions.append("Want to see the embedding generation flow?")
+    
+    if "state_management_depth" in active_subcats:
+        suggestions.append("Should I show the ConversationState transitions?")
+        suggestions.append("Want to trace a query through the pipeline?")
+    
+    # Default fallback if no matches
+    if not suggestions:
+        suggestions = [
+            "Want me to walk through the LangGraph node transitions in detail?",
+            "Curious how the Supabase pgvector query works under load?",
+            "Should we map this architecture to your internal stack?",
+        ]
+    
+    return suggestions[:3]  # Return at most 3
+
+
+def _build_followups(variant: str, intent: str = "general", active_subcats: List[str] = None, role_mode: str = "explorer") -> List[str]:
+    """Generate role-specific followup prompt suggestions with subcategory awareness.
+    
+    Merged logic from logging_nodes.suggest_followups for inline followup generation.
 
     Args:
-        variant: "engineering" | "business" | default (general)
+        variant: "engineering" | "business" | "mixed" (layout variant)
+        intent: Query intent/type (technical, data, career, etc.)
+        active_subcats: Active technical subcategories for precision targeting
+        role_mode: User's role (explorer, software_developer, etc.)
 
     Returns:
         List of 3 followup prompt strings
 
     Example:
-        >>> _build_followups("engineering")
-        ["Walk through the LangGraph node transitions", ...]
+        >>> _build_followups("engineering", "technical", ["architecture_depth"])
+        ["Want the LangGraph node flow diagram?", ...]
     """
+    active_subcats = active_subcats or []
+    
+    # Confession mode gets no followups (privacy)
+    if role_mode == "confession":
+        return []
+    
+    # Subcategory-specific followups take priority for technical queries
+    if intent in {"technical", "engineering"} and active_subcats:
+        return _build_subcategory_followups(active_subcats)
+    
+    # Intent-based followups
+    if intent in {"technical", "engineering"}:
+        return [
+            "Want me to walk through the LangGraph node transitions in detail?",
+            "Curious how the Supabase pgvector query works under load?",
+            "Should we map this architecture to your internal stack?",
+        ]
+    elif intent in {"data", "analytics"}:
+        return [
+            "Need the retrieval accuracy metrics for last week?",
+            "Want the cost-per-query breakdown?",
+            "Should we compare grounding confidence across roles?",
+        ]
+    elif intent in {"career", "general"}:
+        return [
+            "Want the story behind building this assistant end to end?",
+            "Should I outline Noah's production launch checklist?",
+            "Curious how this adapts to your team's workflow?",
+        ]
+    
+    # Variant-based fallback (original logic)
     if variant == "engineering":
         return [
             "Walk through the LangGraph node transitions",
@@ -518,12 +595,24 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
             )
         )
 
-    # Followup prompts (Where next?)
-    followups = _build_followups(state.get("followup_variant", "mixed"))
-    sections.append("")
-    sections.append("**Where next?**")
-    sections.extend(f"- {item}" for item in followups)
-    state["followup_prompts"] = followups
+    # Merged: Generate followup prompts (from suggest_followups node)
+    # Use subcategory-aware logic for precision targeting
+    intent = state.get("query_intent") or state.get("query_type") or "general"
+    role_mode = state.get("role_mode", "explorer")
+    followup_variant = state.get("followup_variant", "mixed")
+    
+    followups = _build_followups(
+        variant=followup_variant,
+        intent=intent,
+        active_subcats=active_subcats,
+        role_mode=role_mode
+    )
+    
+    if followups:
+        sections.append("")
+        sections.append("**Where next?**")
+        sections.extend(f"- {item}" for item in followups)
+        state["followup_prompts"] = followups
 
     enriched_answer = "\n".join(section for section in sections if section is not None)
     state["answer"] = enriched_answer.strip()

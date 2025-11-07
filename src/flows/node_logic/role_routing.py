@@ -1,4 +1,8 @@
-"""Role classification node for the conversation pipeline."""
+"""Role classification and routing logic for the conversation pipeline.
+
+Handles role detection, normalization, and technical hiring manager onboarding.
+Merged route_hiring_manager_technical logic for single-pass routing.
+"""
 
 from __future__ import annotations
 
@@ -119,5 +123,19 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
         # Attach persona hints for downstream nodes (analytics + memory)
         persona_hints: Dict[str, str] = state["session_memory"].setdefault("persona_hints", {})
         persona_hints.setdefault("role_mode", normalized)
+
+        # Merged: Handle technical HM routing (from route_hiring_manager_technical)
+        # If technical HM role detected, check for menu handling or onboarding
+        if normalized == "hiring_manager_technical":
+            from src.flows.node_logic.role_specific import (
+                handle_hm_technical_menu_selection,
+                onboard_hiring_manager_technical,
+            )
+
+            if state.get("awaiting_hm_tech_menu"):
+                return handle_hm_technical_menu_selection(state)
+
+            if not persona_hints.get("hm_technical_onboarded"):
+                return onboard_hiring_manager_technical(state)
 
     return state

@@ -30,10 +30,9 @@ from src.flows.node_logic.entity_extraction import extract_entities
 from src.flows.node_logic.clarification import assess_clarification_need, ask_clarifying_question
 from src.flows.node_logic.query_composition import compose_query
 from src.flows.node_logic.presentation_control import (
-    depth_controller,
-    display_controller,
-    update_enterprise_affinity,
-    update_technical_affinity,
+    presentation_controller,
+    depth_controller,  # Deprecated alias
+    display_controller,  # Deprecated no-op
 )
 from src.flows.node_logic.core_nodes import (
     retrieve_chunks,
@@ -106,53 +105,60 @@ def handle_greeting(state, rag_engine):
     return state
 
 
-# Export all nodes for use in conversation_flow.py
+# Export all nodes for use in conversation_flow.py (18-node consolidated pipeline)
 __all__ = [
+    # Core pipeline nodes (18 active)
     "initialize_conversation_state",
     "prompt_for_role_selection",
-    "classify_role_mode",
+    "classify_role_mode",  # Now includes HM technical routing
     "classify_intent",
-    "classify_query",  # backward-compatible alias
-    "depth_controller",
-    "display_controller",
-    "update_enterprise_affinity",
-    "update_technical_affinity",
-    "route_hiring_manager_technical",
-    "onboard_hiring_manager_technical",
-    "explain_enterprise_adaptation",
-    "show_certifications",
-    "show_enterprise_pattern_example",
+    "presentation_controller",  # NEW: Merged depth + display
     "extract_entities",
     "assess_clarification_need",
     "ask_clarifying_question",
     "compose_query",
-    "retrieve_chunks",
-    "re_rank_and_dedup",
+    "retrieve_chunks",  # Now includes MMR dedup
     "validate_grounding",
     "handle_grounding_gap",
     "generate_draft",
-    "generate_answer",  # backward-compatible alias
     "hallucination_check",
-    "format_answer",
-    "apply_role_context",  # backward-compatible alias
-    "plan_actions",
+    "format_answer",  # Now includes followup generation
+    "plan_actions",  # Now includes hiring detection
     "execute_actions",
+    "update_memory",  # Now includes affinity tracking
     "log_and_notify",
-    "suggest_followups",
-    "update_memory",
+    
+    # Backward-compatible aliases (deprecated but kept for imports)
+    "classify_query",  # alias for classify_intent
+    "depth_controller",  # alias for presentation_controller
+    "display_controller",  # no-op, logic merged
+    "re_rank_and_dedup",  # no-op, logic merged
+    "suggest_followups",  # no-op, logic merged
+    "generate_answer",  # alias for generate_draft
+    "apply_role_context",  # alias for format_answer
+    
+    # Helper functions (still exported for utilities)
     "handle_greeting",
     "get_role_greeting",
     "is_first_turn",
     "should_show_greeting",
     "is_valid_code_snippet",
     "sanitize_generated_answer",
-    # Resume distribution nodes (NEW - Intelligent Resume Distribution System)
-    "detect_hiring_signals",
-    "handle_resume_request",
+    "onboard_hiring_manager_technical",
+    "explain_enterprise_adaptation",
+    "show_certifications",
+    "show_enterprise_pattern_example",
     "should_add_availability_mention",
     "extract_email_from_query",
     "extract_name_from_query",
     "should_gather_job_details",
     "get_job_details_prompt",
     "extract_job_details_from_query",
+    
+    # Removed from pipeline (merged into other nodes)
+    # - route_hiring_manager_technical → classify_role_mode
+    # - update_enterprise_affinity → update_memory
+    # - update_technical_affinity → update_memory
+    # - detect_hiring_signals → plan_actions
+    # - handle_resume_request → plan_actions
 ]

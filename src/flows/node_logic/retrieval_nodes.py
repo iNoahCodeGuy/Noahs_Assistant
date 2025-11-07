@@ -1,10 +1,11 @@
-"""Retrieval pipeline nodes - pgvector search, re-ranking, and grounding validation.
+"""Retrieval pipeline nodes - pgvector search with re-ranking and grounding validation.
 
 This module handles the retrieval phase of the conversation pipeline:
-1. retrieve_chunks → Supabase pgvector search with similarity scoring
-2. re_rank_and_dedup → MMR-style diversification to avoid redundant chunks
-3. validate_grounding → Quality gate ensuring sufficient context before generation
-4. handle_grounding_gap → Graceful fallback when retrieval confidence is low
+1. retrieve_chunks → Supabase pgvector search + MMR diversification in one pass
+2. validate_grounding → Quality gate ensuring sufficient context before generation
+3. handle_grounding_gap → Graceful fallback when retrieval confidence is low
+
+Merged re_rank_and_dedup logic into retrieve_chunks for streamlined retrieval.
 
 Design Principles:
 - SRP: Each function handles one retrieval concern
@@ -13,8 +14,7 @@ Design Principles:
 - Reliability: Never crashes the pipeline, returns empty results on failure
 
 Performance Characteristics:
-- retrieve_chunks: ~300ms typical (embedding + vector search)
-- re_rank_and_dedup: <10ms (in-memory sorting)
+- retrieve_chunks: ~310ms typical (embedding + vector search + MMR dedup)
 - validate_grounding: <1ms (threshold check)
 - handle_grounding_gap: <1ms (template response)
 
@@ -163,6 +163,32 @@ def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int 
                     len(state["retrieved_chunks"]),
                     avg_similarity,
                 )
+
+            # Merged: Apply MMR-style diversification (from re_rank_and_dedup)
+            # Sort by similarity and deduplicate based on (section, content preview)
+            if normalized:
+                sorted_chunks = sorted(
+                    normalized,
+                    key=lambda chunk: chunk.get("similarity", 0.0),
+                    reverse=True,
+                )
+
+                seen_signatures = set()
+                diversified: List[Dict[str, Any]] = []
+                for chunk in sorted_chunks:
+                    signature = (chunk.get("section"), (chunk.get("content") or "")[:200])
+                    if signature in seen_signatures:
+                        continue
+                    seen_signatures.add(signature)
+                    diversified.append(chunk)
+
+                state["retrieved_chunks"] = diversified
+                state["retrieval_scores"] = [c.get("similarity", 0.0) for c in diversified]
+                metadata["post_rank_count"] = len(diversified)
+                
+                if len(diversified) < len(normalized):
+                    logger.info("Deduplicated %d → %d chunks", len(normalized), len(diversified))
+
         except Exception as e:
             logger.error(
                 "Retrieval failed for query '%s...': %s",
@@ -178,63 +204,15 @@ def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int 
 
 
 def re_rank_and_dedup(state: ConversationState) -> ConversationState:
-    """Apply lightweight MMR-style diversification to retrieved chunks.
-
-    Problem: Vector search can return near-duplicate chunks with slightly
-    different similarity scores. This creates redundant context that wastes
-    tokens and degrades answer quality.
-
-    Solution: Sort by similarity (highest first), then deduplicate based on
-    a signature of (section, content_preview). This preserves high-scoring
-    chunks while removing redundancy.
-
-    Performance: <10ms for typical 4-chunk result set (in-memory only)
-
-    Design Principles:
-    - SRP: Only handles diversification, doesn't modify scores or content
-    - Simplicity (KISS): Simple signature-based dedup, no fancy MMR math
-    - Observability: Logs pre/post chunk counts for monitoring
-
-    Args:
-        state: ConversationState with retrieved_chunks and retrieval_scores
-
-    Returns:
-        Updated state with:
-        - retrieved_chunks: Diversified chunk list (sorted, deduplicated)
-        - retrieval_scores: Updated scores matching new chunk order
-        - analytics_metadata: post_rank_count for observability
-
-    Example:
-        Before: [chunk_A (0.9), chunk_A_dup (0.88), chunk_B (0.7)]
-        After:  [chunk_A (0.9), chunk_B (0.7)]
+    """DEPRECATED: No-op for backward compatibility.
+    
+    Logic merged into retrieve_chunks() for streamlined single-pass retrieval.
+    This function now does nothing since MMR diversification happens automatically
+    during chunk retrieval.
+    
+    Kept for import compatibility only. New code should rely on retrieve_chunks()
+    to handle both search and deduplication.
     """
-    with create_custom_span(
-        "re_rank_and_dedup",
-        {"retrieval_count": len(state.get("retrieved_chunks", []))}
-    ):
-        chunks = state.get("retrieved_chunks", [])
-        if not chunks:
-            return state
-
-        sorted_chunks = sorted(
-            chunks,
-            key=lambda chunk: chunk.get("similarity", 0.0),
-            reverse=True,
-        )
-
-        seen_signatures = set()
-        diversified: List[Dict[str, Any]] = []
-        for chunk in sorted_chunks:
-            signature = (chunk.get("section"), (chunk.get("content") or "")[:200])
-            if signature in seen_signatures:
-                continue
-            seen_signatures.add(signature)
-            diversified.append(chunk)
-
-        state["retrieved_chunks"] = diversified
-        state["retrieval_scores"] = [c.get("similarity", 0.0) for c in diversified]
-        state.setdefault("analytics_metadata", {})["post_rank_count"] = len(diversified)
-
     return state
 
 
