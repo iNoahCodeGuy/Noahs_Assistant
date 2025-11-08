@@ -4,12 +4,14 @@ This module handles the initial conversation setup in two stages:
 
 1. initialize_conversation_state (Node 1): Sets up default state structure
    - Ensures all required fields exist with safe defaults
-   - Defensive initialization for collections, booleans, and metadata
+    Before we dive in, which of these feels closest to you?
+    1️⃣ Hiring Manager (Nontechnical)
+    2️⃣ Hiring Manager (Technical)
+    3️⃣ Software Developer
+    4️⃣ Just Looking Around
+    5️⃣ Looking to Confess Crush 💌
 
-2. prompt_for_role_selection (Node 2): Manages Portfolia's first message
-   - Shows conversational greeting on first turn
-   - Halts pipeline to wait for user response
-   - Clears halt flag after user responds, allowing role inference
+    I can go deep on architecture and code, talk through business value and ROI, share career insights about Noah, or just hang out and be a fun demo. What would you like to explore first?
 
 Design: Portfolia messages first, no explicit role selector menu.
 Role is inferred from natural conversation in classify_role_mode (Node 3).
@@ -78,9 +80,14 @@ _INITIAL_GREETING = dedent(
 
     I'm a full-stack generative AI application built to help people understand how production AI systems actually work. Think of me as both a working demo and a teaching tool — every conversation shows you real RAG architecture, vector search, LLM orchestration, and enterprise-grade patterns in action.
 
-    I can walk you through the engineering side (architecture, code, data pipelines), the business value (ROI, team efficiency, enterprise adoption), career insights about Noah and full-stack AI development — or we can just have a conversation and see where it goes!
+    Before we dive in, which of these feels closest to you?
+    1️⃣ Hiring Manager (Nontechnical)
+    2️⃣ Hiring Manager (Technical)
+    3️⃣ Software Developer
+    4️⃣ Just Looking Around
+    5️⃣ Looking to Confess Crush 💌
 
-    What brings you here today?
+    I can go deep on architecture and code, talk through business value and ROI, share career insights about Noah, or just hang out and be a fun demo. What would you like to explore first?
     """
 )
 
