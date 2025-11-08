@@ -126,23 +126,82 @@ def run_conversation_flow(
         >>> print(len(result["retrieved_chunks"]))  # Should be 1-4 chunks
     """
     pipeline = nodes or (
+        # ═══════════════════════════════════════════════════════════════════════════
+        # STAGE 0: INITIALIZATION (Setup)
+        # Purpose: Ensure all 46 state fields exist with safe defaults
+        # State Modified: All containers initialized (lists→[], dicts→{}, flags→False)
+        # Performance: <5ms (no I/O)
+        # ═══════════════════════════════════════════════════════════════════════════
         initialize_conversation_state,
+        
+        # ═══════════════════════════════════════════════════════════════════════════
+        # STAGE 1: GREETING (First Contact)
+        # Purpose: Portfolia messages first, detect simple greetings
+        # State Modified: answer, is_greeting, pipeline_halt, session_memory.persona_hints
+        # Short-Circuit: Exits if is_greeting=True (user said "hi/hello")
+        # Performance: <50ms (no LLM call)
+        # ═══════════════════════════════════════════════════════════════════════════
         prompt_for_role_selection,
         lambda s: handle_greeting(s, rag_engine),
+        
+        # ═══════════════════════════════════════════════════════════════════════════
+        # STAGE 2: CLASSIFICATION (Understanding Intent)
+        # Purpose: Infer role, detect intent, extract entities
+        # State Modified: role, query_type, query_intent, entities, topic_focus
+        # Performance: ~100ms (regex + keyword matching, no LLM)
+        # ═══════════════════════════════════════════════════════════════════════════
         classify_role_mode,  # Now includes HM technical routing
         classify_intent,
-        presentation_controller,  # Merged depth + display
         extract_entities,
+        
+        # ═══════════════════════════════════════════════════════════════════════════
+        # STAGE 3: QUERY PREPARATION (Optimize for Retrieval)
+        # Purpose: Clarify vague queries, compose retrieval prompt, set presentation
+        # State Modified: composed_query, depth_level, display_toggles, clarification_needed
+        # Short-Circuit: Exits if clarification_needed=True (user query too vague)
+        # Performance: ~50ms (no LLM, just string manipulation)
+        # ═══════════════════════════════════════════════════════════════════════════
         assess_clarification_need,
         ask_clarifying_question,
+        presentation_controller,  # Merged depth + display
         compose_query,
+        
+        # ═══════════════════════════════════════════════════════════════════════════
+        # STAGE 4: RETRIEVAL (Find Relevant Knowledge)
+        # Purpose: pgvector search, validate grounding sufficiency
+        # State Modified: retrieved_chunks, retrieval_scores, grounding_status
+        # Short-Circuit: Exits if grounding_status="insufficient" (low similarity scores)
+        # Performance: ~300ms (pgvector RPC + MMR dedup)
+        # ═══════════════════════════════════════════════════════════════════════════
         lambda s: retrieve_chunks(s, rag_engine),  # Now includes MMR dedup
         validate_grounding,
         handle_grounding_gap,
+        
+        # ═══════════════════════════════════════════════════════════════════════════
+        # STAGE 5: GENERATION (Create Answer)
+        # Purpose: LLM generation with hallucination checks
+        # State Modified: draft_answer, answer, hallucination_safe, citations
+        # Performance: ~600ms (OpenAI API call)
+        # ═══════════════════════════════════════════════════════════════════════════
         lambda s: generate_draft(s, rag_engine),
         hallucination_check,
+        
+        # ═══════════════════════════════════════════════════════════════════════════
+        # STAGE 6: ENRICHMENT (Enhance Answer)
+        # Purpose: Plan actions, format with followups/toggles
+        # State Modified: planned_actions, followup_prompts, hiring_signals
+        # Performance: ~200ms (followup generation via pgvector + string formatting)
+        # ═══════════════════════════════════════════════════════════════════════════
         plan_actions,  # Now includes hiring detection
         lambda s: format_answer(s, rag_engine),  # Now includes followup generation
+        
+        # ═══════════════════════════════════════════════════════════════════════════
+        # STAGE 7: FINALIZATION (Side Effects & Logging)
+        # Purpose: Execute actions, update memory, log analytics
+        # State Modified: executed_actions, session_memory, analytics_metadata
+        # Always Executed: log_and_notify runs even on short-circuit
+        # Performance: ~50ms (Supabase inserts)
+        # ═══════════════════════════════════════════════════════════════════════════
         execute_actions,
         update_memory,  # Now includes affinity tracking
     )
