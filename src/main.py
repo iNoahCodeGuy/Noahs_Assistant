@@ -76,7 +76,6 @@ from src.analytics.supabase_analytics import supabase_analytics, UserInteraction
 from src.config.supabase_config import supabase_settings
 from src.state.conversation_state import ConversationState
 from src.flows.conversation_flow import run_conversation_flow
-from src.flows.node_logic.greetings import get_role_greeting
 
 ROLE_OPTIONS = [
     "Hiring Manager (nontechnical)",  # Business-focused, career KB only

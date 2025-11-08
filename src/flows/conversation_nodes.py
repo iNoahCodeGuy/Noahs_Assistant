@@ -54,7 +54,7 @@ from src.flows.node_logic.code_validation import (
     is_valid_code_snippet,
     sanitize_generated_answer
 )
-from src.flows.node_logic.greetings import get_role_greeting, should_show_greeting, is_first_turn
+from src.flows.node_logic.greetings import should_show_greeting, is_first_turn
 from src.flows.node_logic.resume_distribution import (
     detect_hiring_signals,
     handle_resume_request,
@@ -99,8 +99,8 @@ def handle_greeting(state, rag_engine):
     # Defensive access: chat_history and query may be optional in test scenarios
     query = state.get("query", "")
     if query and should_show_greeting(query, state.get("chat_history", [])):
-        greeting = get_role_greeting(state.get("role", ""))
-        state["answer"] = greeting
+        # Simple acknowledgment for mid-conversation greetings
+        state["answer"] = "Hey there! What would you like to explore?"
         state["is_greeting"] = True
     return state
 
@@ -127,7 +127,7 @@ __all__ = [
     "execute_actions",
     "update_memory",  # Now includes affinity tracking
     "log_and_notify",
-    
+
     # Backward-compatible aliases (deprecated but kept for imports)
     "classify_query",  # alias for classify_intent
     "depth_controller",  # alias for presentation_controller
@@ -136,10 +136,9 @@ __all__ = [
     "suggest_followups",  # no-op, logic merged
     "generate_answer",  # alias for generate_draft
     "apply_role_context",  # alias for format_answer
-    
+
     # Helper functions (still exported for utilities)
     "handle_greeting",
-    "get_role_greeting",
     "is_first_turn",
     "should_show_greeting",
     "is_valid_code_snippet",
@@ -154,7 +153,7 @@ __all__ = [
     "should_gather_job_details",
     "get_job_details_prompt",
     "extract_job_details_from_query",
-    
+
     # Removed from pipeline (merged into other nodes)
     # - route_hiring_manager_technical → classify_role_mode
     # - update_enterprise_affinity → update_memory

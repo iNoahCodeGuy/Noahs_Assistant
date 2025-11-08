@@ -31,10 +31,9 @@ from src.flows.node_logic.entity_extraction import extract_entities
 from src.flows.node_logic.clarification import assess_clarification_need, ask_clarifying_question
 from src.flows.node_logic.query_composition import compose_query
 from src.flows.node_logic.presentation_control import (
-    depth_controller,
-    display_controller,
-    update_enterprise_affinity,
-    update_technical_affinity,
+    presentation_controller,
+    depth_controller,  # Deprecated alias
+    display_controller,  # Deprecated no-op
 )
 from src.flows.node_logic.retrieval_nodes import (
     retrieve_chunks,
@@ -64,7 +63,7 @@ from src.flows.node_logic.code_validation import (
     is_valid_code_snippet,
     sanitize_generated_answer
 )
-from src.flows.node_logic.greetings import get_role_greeting, should_show_greeting, is_first_turn
+from src.flows.node_logic.greetings import should_show_greeting, is_first_turn
 from src.flows.node_logic.resume_distribution import (
     detect_hiring_signals,
     handle_resume_request,
@@ -92,10 +91,9 @@ __all__ = [
     "assess_clarification_need",
     "ask_clarifying_question",
     "compose_query",
-    "depth_controller",
-    "display_controller",
-    "update_enterprise_affinity",
-    "update_technical_affinity",
+    "presentation_controller",  # NEW: Unified depth + display
+    "depth_controller",  # DEPRECATED: alias
+    "display_controller",  # DEPRECATED: no-op
     "route_hiring_manager_technical",
     "onboard_hiring_manager_technical",
     "explain_enterprise_adaptation",
@@ -117,7 +115,6 @@ __all__ = [
     "execute_actions",
     "is_valid_code_snippet",
     "sanitize_generated_answer",
-    "get_role_greeting",
     "should_show_greeting",
     "is_first_turn",
     "detect_hiring_signals",
