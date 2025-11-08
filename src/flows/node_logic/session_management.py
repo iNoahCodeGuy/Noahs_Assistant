@@ -1,10 +1,18 @@
 """Session management helpers for the LangGraph pipeline.
 
-This module centralizes default state preparation and onboarding steps
-before any other conversation nodes execute. The helpers keep the
-pipeline defensive by ensuring required collections exist, perf metrics
-reset every turn, and the assistant can guide users through persona
-selection when the UI does not provide it up front.
+This module handles the initial conversation setup in two stages:
+
+1. initialize_conversation_state (Node 1): Sets up default state structure
+   - Ensures all required fields exist with safe defaults
+   - Defensive initialization for collections, booleans, and metadata
+
+2. prompt_for_role_selection (Node 2): Manages Portfolia's first message
+   - Shows conversational greeting on first turn
+   - Halts pipeline to wait for user response
+   - Clears halt flag after user responds, allowing role inference
+
+Design: Portfolia messages first, no explicit role selector menu.
+Role is inferred from natural conversation in classify_role_mode (Node 3).
 """
 
 from __future__ import annotations
@@ -14,6 +22,10 @@ from textwrap import dedent
 from src.state.conversation_state import ConversationState
 from src.observability.langsmith_tracer import create_custom_span
 
+
+# ============================================================================
+# Stage 1: State Initialization
+# ============================================================================
 
 def initialize_conversation_state(state: ConversationState) -> ConversationState:
     """Populate the ConversationState with safe defaults.
@@ -56,6 +68,10 @@ def initialize_conversation_state(state: ConversationState) -> ConversationState
     return state
 
 
+# ============================================================================
+# Stage 2: First Message & Role Selection
+# ============================================================================
+
 _INITIAL_GREETING = dedent(
     """\
     👋 Hey! I'm Portfolia — Noah's AI Assistant, and I'm genuinely excited you're here!
@@ -72,27 +88,30 @@ _INITIAL_GREETING = dedent(
 def prompt_for_role_selection(state: ConversationState) -> ConversationState:
     """Show initial greeting if no role is set yet; infer role from first response.
 
-    This node runs before greeting handling. On the very first turn (no role set),
-    Portfolia introduces herself and asks what brings the user here. The response
-    is analyzed in classify_role_mode to infer the appropriate persona.
+    Flow:
+        1. If role exists → Skip (already classified)
+        2. First turn, no greeting shown → Show _INITIAL_GREETING, halt pipeline
+        3. User responds → Clear halt flag, continue to classify_role_mode
+
+    This ensures Portfolia always messages first with a conversational greeting,
+    then the user's natural response is analyzed for role inference.
     """
     persona_hints = state.setdefault("session_memory", {}).setdefault("persona_hints", {})
 
-    # If role already set, move on
+    # Case 1: Role already set (skip greeting)
     if state.get("role"):
         persona_hints["initial_greeting_shown"] = True
         return state
 
-    # First turn: show initial greeting and wait for user response
+    # Case 2: First turn (show greeting, halt pipeline)
     if not persona_hints.get("initial_greeting_shown"):
         persona_hints["initial_greeting_shown"] = True
         state["answer"] = _INITIAL_GREETING
-        state["pipeline_halt"] = True
+        state["pipeline_halt"] = True  # Wait for user response
         state["is_greeting"] = True
         return state
 
-    # After first response, let role classification infer the persona
-    # Clear any greeting guards so the pipeline can continue normally
+    # Case 3: User responded (clear halt, continue to role classification)
     state.pop("pipeline_halt", None)
     if state.get("is_greeting"):
         state["is_greeting"] = False

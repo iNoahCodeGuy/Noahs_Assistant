@@ -33,23 +33,12 @@ export function ChatHeader({ role, onRoleChange }: ChatHeaderProps) {
           </div>
         </div>
 
-        <div className="relative">
-          <select
-            value={role}
-            onChange={(e) => onRoleChange(e.target.value as Role)}
-            className="appearance-none bg-chat-surface border border-chat-border rounded-lg px-4 py-2 pr-10 text-sm focus:outline-none focus:border-chat-primary transition-colors cursor-pointer"
-          >
-            {ROLES.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-          <ChevronDown
-            size={16}
-            className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400"
-          />
-        </div>
+        {/* Role inference happens automatically - show detected role if available */}
+        {role && role !== '' && (
+          <div className="text-xs text-gray-400 bg-chat-surface border border-chat-border rounded-lg px-3 py-2">
+            Detected: <span className="text-chat-primary font-medium">{role}</span>
+          </div>
+        )}
       </div>
     </header>
   )

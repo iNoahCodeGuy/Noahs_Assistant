@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 export type Role =
   | 'Hiring Manager (nontechnical)'
@@ -22,13 +22,66 @@ export interface Message {
 /**
  * Custom hook for managing chat state and API interactions
  * Separates business logic from UI components
+ *
+ * Design: Portfolia messages first
+ * - On mount, fetch initial greeting with empty role
+ * - Backend detects no role and returns conversational greeting
+ * - User's first response triggers role inference
  */
 export function useChat() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
-  const [selectedRole, setSelectedRole] = useState<Role>('Hiring Manager (nontechnical)')
+  const [selectedRole, setSelectedRole] = useState<Role | ''>('')  // Start with empty role
   const [sessionId] = useState(() => crypto.randomUUID())
+  const [greetingSent, setGreetingSent] = useState(false)
+
+  // Fetch initial greeting on mount (Portfolia messages first)
+  useEffect(() => {
+    if (!greetingSent && messages.length === 0) {
+      fetchInitialGreeting()
+    }
+  }, [greetingSent, messages.length])
+
+  const fetchInitialGreeting = async () => {
+    setGreetingSent(true)
+    setLoading(true)
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: '',  // Empty query triggers initial greeting
+          role: '',   // Empty role triggers greeting flow
+          session_id: sessionId,
+          chat_history: []
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to get initial greeting')
+      }
+
+      const data = await response.json()
+
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: data.answer
+      }
+
+      setMessages([assistantMessage])
+    } catch (error) {
+      console.error('Error fetching initial greeting:', error)
+      // Fallback greeting if API fails
+      setMessages([{
+        role: 'assistant',
+        content: `👋 Hey! I'm Portfolia — Noah's AI Assistant, and I'm genuinely excited you're here!\n\nI'm a full-stack generative AI application built to help people understand how production AI systems actually work. Think of me as both a working demo and a teaching tool — every conversation shows you real RAG architecture, vector search, LLM orchestration, and enterprise-grade patterns in action.\n\nI can walk you through the engineering side (architecture, code, data pipelines), the business value (ROI, team efficiency, enterprise adoption), career insights about Noah and full-stack AI development — or we can just have a conversation and see where it goes!\n\nWhat brings you here today?`
+      }])
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const sendMessage = async (content?: string) => {
     const messageContent = content || input
@@ -60,6 +113,11 @@ export function useChat() {
       }
 
       const data = await response.json()
+
+      // Update role if backend inferred it
+      if (data.role && data.role !== selectedRole) {
+        setSelectedRole(data.role as Role)
+      }
 
       const assistantMessage: Message = {
         role: 'assistant',
