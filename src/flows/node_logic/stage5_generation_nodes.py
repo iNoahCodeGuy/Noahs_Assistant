@@ -23,7 +23,7 @@ from typing import Dict, Any
 from src.state.conversation_state import ConversationState
 from src.core.rag_engine import RagEngine
 from src.flows import content_blocks
-from src.flows.node_logic.code_validation import sanitize_generated_answer
+from src.flows.node_logic.util_code_validation import sanitize_generated_answer
 from src.config.supabase_config import supabase_settings
 
 logger = logging.getLogger(__name__)
@@ -258,7 +258,7 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
 
     # Job details gathering (AFTER resume sent) - Task 9
     # Import here to avoid circular dependency
-    from src.flows.node_logic.resume_distribution import should_gather_job_details, get_job_details_prompt
+    from src.flows.node_logic.util_resume_distribution import should_gather_job_details, get_job_details_prompt
 
     if should_gather_job_details(state):
         extra_instructions.append(get_job_details_prompt())

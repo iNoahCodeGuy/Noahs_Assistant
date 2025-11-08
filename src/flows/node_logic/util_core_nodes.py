@@ -17,20 +17,20 @@ See individual modules for detailed documentation:
 """
 
 # Re-export from new modules for backward compatibility
-from src.flows.node_logic.retrieval_nodes import (
+from src.flows.node_logic.stage4_retrieval_nodes import (
     retrieve_chunks,
     re_rank_and_dedup,
     validate_grounding,
     handle_grounding_gap,
 )
-from src.flows.node_logic.generation_nodes import (
+from src.flows.node_logic.stage5_generation_nodes import (
     generate_draft,
     hallucination_check,
 )
-from src.flows.node_logic.formatting_nodes import (
+from src.flows.node_logic.stage6_formatting_nodes import (
     format_answer,
 )
-from src.flows.node_logic.logging_nodes import (
+from src.flows.node_logic.stage7_logging_nodes import (
     log_and_notify,
     suggest_followups,
     update_memory,

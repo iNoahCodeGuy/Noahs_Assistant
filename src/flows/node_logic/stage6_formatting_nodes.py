@@ -29,7 +29,7 @@ from typing import Dict, Any, List
 from src.state.conversation_state import ConversationState
 from src.core.rag_engine import RagEngine
 from src.flows import content_blocks
-from src.flows.node_logic.code_validation import is_valid_code_snippet
+from src.flows.node_logic.util_code_validation import is_valid_code_snippet
 
 logger = logging.getLogger(__name__)
 
@@ -399,7 +399,7 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
             response = requests.get(analytics_url, timeout=3)
             response.raise_for_status()
             analytics_data = response.json()
-            from src.flows.node_logic.analytics_renderer import render_live_analytics
+            from src.flows.node_logic.util_analytics_renderer import render_live_analytics
 
             analytics_report = render_live_analytics(analytics_data, state.get("role"), focus=None)
             sections.append("")

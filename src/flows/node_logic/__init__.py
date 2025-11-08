@@ -23,48 +23,48 @@ for a stable public API.
 
 from __future__ import annotations
 
-# Re-export all node functions for clean imports
-from src.flows.node_logic.session_management import initialize_conversation_state
-from src.flows.node_logic.role_routing import classify_role_mode
-from src.flows.node_logic.query_classification import classify_intent, classify_query
-from src.flows.node_logic.entity_extraction import extract_entities
-from src.flows.node_logic.clarification import assess_clarification_need, ask_clarifying_question
-from src.flows.node_logic.query_composition import compose_query
-from src.flows.node_logic.presentation_control import (
+# Re-export all node functions for clean imports (stage-prefixed for pipeline visibility)
+from src.flows.node_logic.stage0_session_management import initialize_conversation_state
+from src.flows.node_logic.stage2_role_routing import classify_role_mode
+from src.flows.node_logic.stage2_query_classification import classify_intent, classify_query
+from src.flows.node_logic.stage2_entity_extraction import extract_entities
+from src.flows.node_logic.stage3_clarification import assess_clarification_need, ask_clarifying_question
+from src.flows.node_logic.stage3_query_composition import compose_query
+from src.flows.node_logic.stage3_presentation_control import (
     presentation_controller,
     depth_controller,  # Deprecated alias
     display_controller,  # Deprecated no-op
 )
-from src.flows.node_logic.retrieval_nodes import (
+from src.flows.node_logic.stage4_retrieval_nodes import (
     retrieve_chunks,
     re_rank_and_dedup,
     validate_grounding,
     handle_grounding_gap,
 )
-from src.flows.node_logic.generation_nodes import (
+from src.flows.node_logic.stage5_generation_nodes import (
     generate_draft,
     hallucination_check,
 )
-from src.flows.node_logic.formatting_nodes import (
+from src.flows.node_logic.stage6_formatting_nodes import (
     format_answer,
 )
-from src.flows.node_logic.logging_nodes import (
+from src.flows.node_logic.stage7_logging_nodes import (
     log_and_notify,
     suggest_followups,
     update_memory,
 )
-from src.flows.node_logic.core_nodes import (
+from src.flows.node_logic.util_core_nodes import (
     generate_answer,
     apply_role_context,
 )
-from src.flows.node_logic.action_planning import plan_actions
-from src.flows.node_logic.action_execution import execute_actions
-from src.flows.node_logic.code_validation import (
+from src.flows.node_logic.stage6_action_planning import plan_actions
+from src.flows.node_logic.stage7_action_execution import execute_actions
+from src.flows.node_logic.util_code_validation import (
     is_valid_code_snippet,
     sanitize_generated_answer
 )
-from src.flows.node_logic.greetings import should_show_greeting, is_first_turn
-from src.flows.node_logic.resume_distribution import (
+from src.flows.node_logic.stage1_greetings import should_show_greeting, is_first_turn
+from src.flows.node_logic.util_resume_distribution import (
     detect_hiring_signals,
     handle_resume_request,
     should_add_availability_mention,
@@ -74,7 +74,7 @@ from src.flows.node_logic.resume_distribution import (
     get_job_details_prompt,
     extract_job_details_from_query
 )
-from src.flows.node_logic.role_specific import (
+from src.flows.node_logic.util_role_specific import (
     route_hiring_manager_technical,
     onboard_hiring_manager_technical,
     explain_enterprise_adaptation,

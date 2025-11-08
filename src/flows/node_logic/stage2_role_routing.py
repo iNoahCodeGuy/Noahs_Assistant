@@ -127,7 +127,7 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
         # Merged: Handle technical HM routing (from route_hiring_manager_technical)
         # If technical HM role detected, check for menu handling or onboarding
         if normalized == "hiring_manager_technical":
-            from src.flows.node_logic.role_specific import (
+            from src.flows.node_logic.util_role_specific import (
                 handle_hm_technical_menu_selection,
                 onboard_hiring_manager_technical,
             )
