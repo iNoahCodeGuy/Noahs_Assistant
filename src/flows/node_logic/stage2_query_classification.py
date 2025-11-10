@@ -300,6 +300,24 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
     # Initialize partial update dict (only fields we're modifying)
     update: Dict[str, Any] = {}
 
+    # PRIORITY: Check for menu selection FIRST (explicit navigation choice)
+    # Matches: "1", "2", "3", "4", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "option 1", etc.
+    menu_pattern = r'^\s*(1️⃣|2️⃣|3️⃣|4️⃣|[1-4]|option\s*[1-4])\s*$'
+    menu_match = re.match(menu_pattern, query.strip(), re.IGNORECASE)
+
+    if menu_match:
+        # Extract just the number (remove emoji suffix if present)
+        menu_choice = query.strip().rstrip('️⃣').lower().replace('option', '').strip()
+        update["query_type"] = "menu_selection"
+        update["menu_choice"] = menu_choice
+        update["intent_confidence"] = 1.0
+        update["is_ambiguous"] = False
+        update["clarification_needed"] = False  # Menu selections are explicit
+        logger.info(f"Menu selection detected: '{query}' → option {menu_choice}")
+        # DEBUG: Verify state update will propagate
+        logger.info(f"✅ Menu choice SET in update dict: menu_choice={menu_choice}, query_type={update['query_type']}")
+        return update  # Return partial update - LangGraph will merge into state
+
     chat_history = state.get("chat_history", [])
     user_turns = sum(1 for message in chat_history if message.get("role") == "user")
     if user_turns:
@@ -323,8 +341,7 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         update["query_type"] = "ambiguous"
         logger.info(f"Ambiguous query detected: '{query}' → Ask Mode triggered")
         # Don't expand ambiguous queries - we want user to clarify
-        state.update(update)
-        return state
+        return update  # Return partial update - LangGraph will merge into state
 
     # If not ambiguous, expand vague queries for better retrieval (pure function)
     expanded_query = _expand_vague_query(query)
@@ -461,9 +478,8 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
     update["query_intent"] = intent_label
     update["intent_confidence"] = 0.9
 
-    # Update state in-place (current functional pipeline pattern)
-    state.update(update)
-    return state
+    # Return partial update - LangGraph will merge into state
+    return update
 
 
 def classify_query(state: ConversationState) -> Dict[str, Any]:

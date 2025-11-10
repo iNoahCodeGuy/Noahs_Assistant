@@ -147,11 +147,11 @@ def main():
                 rag_engine,
                 session_id=st.session_state.session_id,
             )
-            
+
             # Update session role if it was inferred by conversation flow
             if state.get("role") and not st.session_state.role:
                 st.session_state.role = state.get("role")
-            
+
             raw_response = {
                 "response": state.answer or "I need a moment to find that info.",
                 "type": state.fetch("query_type", "general"),

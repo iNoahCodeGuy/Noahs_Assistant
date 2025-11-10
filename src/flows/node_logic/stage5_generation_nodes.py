@@ -29,11 +29,66 @@ from src.config.supabase_config import supabase_settings
 logger = logging.getLogger(__name__)
 
 
+def _extract_layer_outline(chunks: list) -> Dict[str, str]:
+    """Extract layer-specific facts from retrieved chunks to guide synthesis.
+
+    Prevents verbatim copying by pre-organizing facts into layer buckets,
+    forcing the LLM to synthesize across sources rather than echo one chunk.
+
+    Args:
+        chunks: Retrieved knowledge base chunks
+
+    Returns:
+        Dict mapping layer names to extracted facts/technologies
+    """
+    outline = {
+        "frontend": [],
+        "backend": [],
+        "data": [],
+        "observability": [],
+        "deployment": []
+    }
+
+    # Keywords to identify layer-specific content
+    layer_keywords = {
+        "frontend": ["streamlit", "next.js", "react", "frontend", "ui", "interface"],
+        "backend": ["langgraph", "langchain", "python", "orchestration", "pipeline", "nodes"],
+        "data": ["supabase", "postgres", "pgvector", "embedding", "vector", "database", "ivfflat"],
+        "observability": ["langsmith", "tracing", "monitoring", "analytics", "observability"],
+        "deployment": ["vercel", "serverless", "deployment", "stateless", "scaling"]
+    }
+
+    for chunk in chunks:
+        content = chunk.get("content", "").lower()
+
+        # Extract sentences mentioning each layer
+        sentences = content.split(". ")
+        for layer, keywords in layer_keywords.items():
+            for sentence in sentences:
+                if any(keyword in sentence for keyword in keywords):
+                    # Store original case sentence
+                    original_sentence = sentence.strip()
+                    if original_sentence and original_sentence not in outline[layer]:
+                        outline[layer].append(original_sentence)
+
+    # Build concise fact strings for each layer
+    layer_facts = {}
+    for layer, facts in outline.items():
+        if facts:
+            # Take top 2-3 facts per layer (avoid overwhelming the prompt)
+            layer_facts[layer] = " | ".join(facts[:3])
+        else:
+            layer_facts[layer] = "(No specific facts found - synthesize from general context)"
+
+    return layer_facts
+
+
 def select_model_for_task(state: ConversationState) -> str:
     """Select appropriate OpenAI model based on query complexity.
 
     Uses different models for different reasoning depths:
     - Reasoning model (o1-preview): Complex architecture, multi-step reasoning, planning
+    - Technical model (gpt-4o-mini): Technical queries for hiring managers/developers
     - Default model (gpt-4): Most queries requiring balanced quality/speed
     - Fast model (gpt-3.5-turbo): Simple factual queries, greetings
 
@@ -41,20 +96,29 @@ def select_model_for_task(state: ConversationState) -> str:
         state: Current conversation state with query and classification metadata
 
     Returns:
-        Model name string (e.g., "o1-preview", "gpt-4", "gpt-3.5-turbo")
+        Model name string (e.g., "o1-preview", "gpt-4o-mini", "gpt-4", "gpt-3.5-turbo")
     """
     query = state.get("query", "").lower()
-    role = state.get("role", "")
+    role_mode = state.get("role_mode", "")
+    query_type = state.get("query_type", "")
+
+    # Use GPT-4o-mini for technical queries from technical audiences
+    # This model provides better comprehension than gpt-3.5-turbo at similar cost
+    technical_query_types = ["menu_selection", "technical", "architecture", "code_related"]
+    technical_roles = ["hiring_manager_technical", "software_developer"]
+
+    if (query_type in technical_query_types or role_mode in technical_roles):
+        logger.info(f"Using gpt-4o-mini for technical query (type={query_type}, role={role_mode})")
+        return "gpt-4o-mini"
 
     # Use reasoning model for complex tasks requiring extended thinking
     complex_keywords = [
-        "architecture", "design", "how does this work", "explain the system",
         "compare", "tradeoffs", "why choose", "planning", "strategy",
         "optimization", "scaling", "enterprise", "evaluate", "recommend"
     ]
 
-    # Check for complex reasoning needs
-    if any(kw in query for kw in complex_keywords):
+    # Check for complex reasoning needs (but not basic architecture explanations)
+    if any(kw in query for kw in complex_keywords) and "architecture" not in query:
         logger.info(f"Using reasoning model for complex query: {query[:50]}...")
         return supabase_settings.openai_reasoning_model
 
@@ -204,8 +268,34 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     # Add display intelligence based on query classification
     extra_instructions = []
 
+    # Special handling for menu option 1 (full tech stack) - ensure comprehensive coverage
+    if (state.get("query_type") == "menu_selection" and
+        state.get("menu_choice") == "1" and
+        state.get("role_mode") == "hiring_manager_technical"):
+
+        # Extract layer-specific facts from chunks to force synthesis
+        retrieved_chunks = state.get("retrieved_chunks", [])
+        layer_outline = _extract_layer_outline(retrieved_chunks)
+
+        extra_instructions.append(
+            "CRITICAL INSTRUCTION - FULL TECH STACK WALKTHROUGH:\n\n"
+            "⚠️ ANTI-PLAGIARISM RULE: DO NOT copy text verbatim from context chunks. "
+            "Synthesize the facts below into a cohesive narrative. Copying = automatic failure.\n\n"
+            "📋 REQUIRED OUTPUT FORMAT (Follow this structure exactly):\n\n"
+            "[Opening paragraph: 2-3 sentences introducing the 5-layer architecture and why it matters]\n\n"
+            "**Frontend Layer:** [2-3 sentences synthesizing these facts: " + layer_outline.get("frontend", "Streamlit UI, Next.js migration planned") + "]\n\n"
+            "**Backend/Orchestration Layer:** [2-3 sentences synthesizing these facts: " + layer_outline.get("backend", "LangGraph StateGraph, Python 3.11+, modular pipeline") + "]\n\n"
+            "**Data Layer:** [2-3 sentences synthesizing these facts: " + layer_outline.get("data", "Supabase PostgreSQL, pgvector extension, OpenAI embeddings") + "]\n\n"
+            "**Observability Layer:** [2-3 sentences synthesizing these facts: " + layer_outline.get("observability", "LangSmith tracing, Supabase analytics") + "]\n\n"
+            "**Deployment Layer:** [2-3 sentences synthesizing these facts: " + layer_outline.get("deployment", "Vercel serverless, stateless design, horizontal scaling") + "]\n\n"
+            "[Closing paragraph: 2-3 sentences on how these 5 layers work together]\n\n"
+            "🎯 TARGET: 300-350 words total | Technical but accessible tone | "
+            "Each layer MUST appear with the exact heading shown above."
+        )
+        logger.info(f"📝 Layer outline extracted for synthesis: {list(layer_outline.keys())}")
+
     # When teaching/explaining, provide comprehensive depth
-    if state.get("needs_longer_response", False) or state.get("teaching_moment", False):
+    elif state.get("needs_longer_response", False) or state.get("teaching_moment", False):
         extra_instructions.append(
             "This is a teaching moment - provide a comprehensive, well-structured explanation. "
             "Break down concepts clearly, connect technical details to business value, and "
@@ -290,13 +380,39 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
             "Please try rephrasing your question or ask something else!"
         )
 
+    # Validate structured output for menu option 1 (full tech stack)
+    if (state.get("query_type") == "menu_selection" and
+        state.get("menu_choice") == "1" and
+        state.get("role_mode") == "hiring_manager_technical"):
+
+        required_layers = [
+            "**Frontend Layer:**",
+            "**Backend/Orchestration Layer:**",
+            "**Data Layer:**",
+            "**Observability Layer:**",
+            "**Deployment Layer:**"
+        ]
+
+        missing_layers = [layer for layer in required_layers if layer not in answer]
+        word_count = len(answer.split())
+
+        if missing_layers:
+            logger.warning(f"⚠️ Generated answer missing {len(missing_layers)} layers: {missing_layers}")
+            logger.warning(f"⚠️ Word count: {word_count} (target: 300-350)")
+            # Flag for retry or append missing layers prompt
+            update["generation_quality_warning"] = f"Missing layers: {', '.join(missing_layers)}"
+        elif word_count < 250:
+            logger.warning(f"⚠️ Generated answer too short: {word_count} words (target: 300-350)")
+            update["generation_quality_warning"] = f"Too short: {word_count} words"
+        else:
+            logger.info(f"✅ Structured output validated: All 5 layers present, {word_count} words")
+
     cleaned_answer = sanitize_generated_answer(answer)
     update["draft_answer"] = cleaned_answer
     update["answer"] = cleaned_answer
 
-    # Update state in-place (current functional pipeline pattern)
-    state.update(update)
-    return state
+    # Return partial update - LangGraph will merge into state
+    return update
 
 
 def hallucination_check(state: ConversationState) -> ConversationState:

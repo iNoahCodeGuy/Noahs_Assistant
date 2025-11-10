@@ -14,6 +14,11 @@ def assess_clarification_need(state: ConversationState) -> ConversationState:
         name="assess_clarification",
         inputs={"ambiguous": state.get("ambiguous_query", False)}
     ):
+        # PRIORITY: Menu selections are explicit - never need clarification
+        if state.get("query_type") == "menu_selection" or state.get("menu_choice"):
+            state["clarification_needed"] = False
+            return state
+
         needs_clarification = bool(state.get("ambiguous_query"))
         state["clarification_needed"] = needs_clarification
 

@@ -6,10 +6,85 @@ Merged route_hiring_manager_technical logic for single-pass routing.
 
 from __future__ import annotations
 
+from textwrap import dedent
 from typing import Dict
 
 from src.state.conversation_state import ConversationState
 from src.observability.langsmith_tracer import create_custom_span
+
+# ============================================================================
+# Role-Specific Welcome Messages
+# ============================================================================
+
+def _get_role_welcome_message(role_mode: str) -> str:
+    """Return role-specific welcome message explaining available knowledge base."""
+
+    messages = {
+        "hiring_manager_nontechnical": dedent("""\
+            Perfect! I'll focus on business value and career insights.
+
+            I have access to Noah's complete professional background including:
+            • Career progression and key achievements
+            • Business impact and leadership examples
+            • Team collaboration and soft skills
+            • Industry experience and domain knowledge
+
+            Where would you like to start?
+        """),
+
+        "hiring_manager_technical": dedent("""\
+            Since you selected 'Technical Hiring Manager', I can focus on the areas most relevant to you:
+
+            • My architecture and full-stack design — LangGraph orchestration, RAG pipeline, Supabase vector storage, and observability through LangSmith
+            • How Noah applied software engineering, AI engineering, and data pipeline best practices to make me production-ready
+            • The business and enterprise value of agentic systems like me — how organizations deploy assistants to improve reliability, scalability, and customer satisfaction
+
+            You can choose where to start:
+            1️⃣ My full tech stack — end-to-end walkthrough (frontend → backend → data pipeline → observability)
+            2️⃣ The orchestration layer — how my nodes, states, and safeguards work together
+            3️⃣ Enterprise adaptation — how assistants like me are customized for large-scale deployments
+            4️⃣ See Noah's technical background — certifications, GitHub projects, and proof of his engineering foundation
+        """),
+
+        "software_developer": dedent("""\
+            Great! Let's dive into the technical details.
+
+            I have access to:
+            • Code samples and architecture patterns
+            • Implementation details of Noah's projects
+            • Technical decision-making and trade-offs
+            • System design and infrastructure choices
+            • This very codebase (I'm built with LangGraph, RAG, pgvector, and Supabase!)
+
+            Want to see code, discuss architecture, or ask about specific technical implementations?
+        """),
+
+        "explorer": dedent("""\
+            Awesome! I'm here to show you whatever interests you.
+
+            I can share:
+            • Career stories and professional highlights
+            • Technical projects and how they work
+            • Behind-the-scenes of how I'm built
+            • Fun facts and personal interests (including MMA!)
+
+            What sounds interesting to you?
+        """),
+
+        "confession": dedent("""\
+            💌 Aww, this is sweet! I'm here to help.
+
+            Your confession will be completely anonymous and sent directly to Noah. I won't judge or analyze it — just pass it along safely.
+
+            When you're ready, go ahead and share what's on your mind!
+        """),
+    }
+
+    return messages.get(role_mode, "")
+
+# ============================================================================
+# Role Mapping & Normalization
+# ============================================================================
 
 _ROLE_ALIASES = {
     "hiring manager (technical)": "hiring_manager_technical",
@@ -123,6 +198,15 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
         # Attach persona hints for downstream nodes (analytics + memory)
         persona_hints: Dict[str, str] = state["session_memory"].setdefault("persona_hints", {})
         persona_hints.setdefault("role_mode", normalized)
+
+        # Show role-specific welcome message on first role detection
+        if not persona_hints.get("role_welcome_shown"):
+            welcome_msg = _get_role_welcome_message(normalized)
+            if welcome_msg:
+                state["answer"] = welcome_msg
+                state["pipeline_halt"] = True  # Wait for user's first real query
+                persona_hints["role_welcome_shown"] = True
+                return state
 
         # Merged: Handle technical HM routing (from route_hiring_manager_technical)
         # If technical HM role detected, check for menu handling or onboarding

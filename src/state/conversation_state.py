@@ -95,7 +95,10 @@ class ConversationState(TypedDict, total=False):
 
     # --- Query Classification ---
     query_type: str
-    """Classified query type: 'technical', 'career', 'analytics', 'greeting', etc."""
+    """Classified query type: 'technical', 'career', 'analytics', 'greeting', 'menu_selection', etc."""
+
+    menu_choice: str
+    """User's menu selection (e.g., '1', '2', '3', '4') when query_type is 'menu_selection'."""
 
     query_intent: str
     """Higher level intent grouping (engineering, business, data, action)."""

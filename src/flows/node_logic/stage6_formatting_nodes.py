@@ -33,6 +33,78 @@ from src.flows.node_logic.util_code_validation import is_valid_code_snippet
 
 logger = logging.getLogger(__name__)
 
+
+def _retry_generation_if_insufficient(state: ConversationState, rag_engine: RagEngine) -> str:
+    """Retry generation with reinforced instructions if answer too short or missing sections.
+
+    This is a guardrail for menu option 1 (full tech stack) to ensure comprehensive coverage.
+    Only triggers if generation_quality_warning is set by generate_draft.
+
+    Args:
+        state: Conversation state with draft_answer and quality warning
+        rag_engine: RAG engine for LLM access
+
+    Returns:
+        Enhanced answer (or original if retry fails)
+    """
+    quality_warning = state.get("generation_quality_warning")
+
+    # Only retry for menu option 1 if quality warning exists
+    if not quality_warning:
+        return state.get("draft_answer", state.get("answer", ""))
+
+    if not (state.get("query_type") == "menu_selection" and
+            state.get("menu_choice") == "1" and
+            state.get("role_mode") == "hiring_manager_technical"):
+        return state.get("draft_answer", state.get("answer", ""))
+
+    logger.info(f"🔄 Retrying generation due to quality issue: {quality_warning}")
+
+    original_answer = state.get("draft_answer", "")
+    retrieved_chunks = state.get("retrieved_chunks", [])
+
+    # Build reinforced prompt
+    retry_instructions = (
+        "RETRY ATTEMPT - Previous response failed quality check.\n\n"
+        f"Issue detected: {quality_warning}\n\n"
+        "YOU MUST include ALL 5 layers with these EXACT headings:\n"
+        "**Frontend Layer:**\n"
+        "**Backend/Orchestration Layer:**\n"
+        "**Data Layer:**\n"
+        "**Observability Layer:**\n"
+        "**Deployment Layer:**\n\n"
+        "Each layer needs 2-3 complete sentences. Total target: 300-350 words.\n"
+        "DO NOT skip any layer. DO NOT copy verbatim from context."
+    )
+
+    try:
+        enhanced_answer = rag_engine.response_generator.generate_contextual_response(
+            query=state.get("query", ""),
+            context=retrieved_chunks,
+            role=state.get("role", ""),
+            chat_history=state.get("chat_history", []),
+            extra_instructions=retry_instructions,
+            model_name=state.get("analytics_metadata", {}).get("selected_model", "gpt-4o-mini")
+        )
+
+        # Validate retry succeeded
+        word_count = len(enhanced_answer.split())
+        required_layers = ["**Frontend Layer:**", "**Backend/Orchestration Layer:**",
+                          "**Data Layer:**", "**Observability Layer:**", "**Deployment Layer:**"]
+        missing = [l for l in required_layers if l not in enhanced_answer]
+
+        if not missing and word_count >= 250:
+            logger.info(f"✅ Retry succeeded: {word_count} words, all 5 layers present")
+            return enhanced_answer
+        else:
+            logger.warning(f"⚠️ Retry still insufficient: {word_count} words, missing {len(missing)} layers")
+            return original_answer  # Fall back to original
+
+    except Exception as e:
+        logger.error(f"Retry generation failed: {e}")
+        return original_answer
+
+
 # Import retriever functions with graceful fallback
 try:
     from src.retrieval.import_retriever import (
@@ -90,13 +162,13 @@ def _add_subcategory_code_blocks(
     depth: int
 ) -> None:
     """Add code blocks and diagrams based on active technical subcategories.
-    
+
     Subcategory-aware enrichments:
     - state_management_depth → ConversationState dataclass
-    - architecture_depth → LangGraph pipeline flow  
+    - architecture_depth → LangGraph pipeline flow
     - data_pipeline_depth → pgvector retrieval code
     - stack_depth → requirements/dependencies table
-    
+
     Args:
         sections: List of formatted sections to append to
         active_subcats: Active subcategory names
@@ -110,7 +182,7 @@ def _add_subcategory_code_blocks(
         if "state_management_depth" in active_subcats:
             results = rag_engine.retrieve_with_code("ConversationState dataclass", role=role)
             snippets = results.get("code_snippets", []) if results else []
-            
+
             if snippets:
                 snippet = snippets[0]
                 code_content = snippet.get("content", "")
@@ -130,12 +202,12 @@ def _add_subcategory_code_blocks(
                             open_by_default=depth >= 3,
                         )
                     )
-        
+
         # Data pipeline: Show pgvector retrieval
         if "data_pipeline_depth" in active_subcats:
             results = rag_engine.retrieve_with_code("pgvector retrieval", role=role)
             snippets = results.get("code_snippets", []) if results else []
-            
+
             if snippets:
                 snippet = snippets[0]
                 code_content = snippet.get("content", "")
@@ -155,13 +227,16 @@ def _add_subcategory_code_blocks(
                             open_by_default=depth >= 3,
                         )
                     )
-    
+
     except Exception as exc:
         logger.warning(f"Subcategory code enrichment failed: {exc}")
 
 
 def _summarize_answer(text: str, depth: int) -> List[str]:
     """Extract key sentences from answer for summary bullets.
+
+    Handles Q&A format cleanup: If LLM generated answer in Q:/A: format,
+    extracts just the answer portions and formats as clean bullets.
 
     Args:
         text: Answer body text
@@ -173,14 +248,33 @@ def _summarize_answer(text: str, depth: int) -> List[str]:
     Example:
         >>> _summarize_answer("First point. Second point. Third point.", depth=1)
         ["- First point.", "- Second point."]
+        >>> _summarize_answer("Q: What is RAG? A: Retrieval-Augmented Generation.", depth=1)
+        ["- Retrieval-Augmented Generation"]
     """
-    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    # Check if answer is in Q&A format and extract just answer portions
+    qa_pattern = r'Q:\s*.*?\s*A:\s*(.*?)(?=Q:|$)'
+    qa_matches = re.findall(qa_pattern, text, re.DOTALL | re.IGNORECASE)
+
+    if qa_matches:
+        # Extract answer portions only, ignore question format
+        sentences = []
+        for answer_text in qa_matches:
+            answer_sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", answer_text.strip()) if s.strip()]
+            sentences.extend(answer_sentences)
+        logger.debug(f"Detected Q&A format, extracted {len(sentences)} answer sentences")
+    else:
+        # Normal sentence splitting
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+
     limit = 2 if depth <= 1 else 3
     summary = []
     for sentence in sentences:
         if sentence.lower().startswith("sources:"):
             continue
-        summary.append(f"- {sentence}")
+        # Remove any remaining "Q:" or "A:" prefixes
+        sentence = re.sub(r'^[QA]:\s*', '', sentence, flags=re.IGNORECASE).strip()
+        if sentence:  # Only add if non-empty after cleanup
+            summary.append(f"- {sentence}")
         if len(summary) >= limit:
             break
     return summary
@@ -188,34 +282,34 @@ def _summarize_answer(text: str, depth: int) -> List[str]:
 
 def _build_subcategory_followups(active_subcats: List[str]) -> List[str]:
     """Generate followup questions based on active technical subcategories.
-    
+
     Merged from logging_nodes.suggest_followups for inline followup generation.
     Maps subcategory focus to natural next-step questions.
-    
+
     Args:
         active_subcats: List of active subcategory names
-        
+
     Returns:
         List of contextual followup questions
     """
     suggestions = []
-    
+
     if "stack_depth" in active_subcats:
         suggestions.append("Want to compare LangChain vs LlamaIndex trade-offs?")
         suggestions.append("Should I break down the requirements.txt dependencies?")
-    
+
     if "architecture_depth" in active_subcats:
         suggestions.append("Want the LangGraph node flow diagram?")
         suggestions.append("Should I map this architecture to your team's stack?")
-    
+
     if "data_pipeline_depth" in active_subcats:
         suggestions.append("Curious about the pgvector RPC implementation?")
         suggestions.append("Want to see the embedding generation flow?")
-    
+
     if "state_management_depth" in active_subcats:
         suggestions.append("Should I show the ConversationState transitions?")
         suggestions.append("Want to trace a query through the pipeline?")
-    
+
     # Default fallback if no matches
     if not suggestions:
         suggestions = [
@@ -223,13 +317,13 @@ def _build_subcategory_followups(active_subcats: List[str]) -> List[str]:
             "Curious how the Supabase pgvector query works under load?",
             "Should we map this architecture to your internal stack?",
         ]
-    
+
     return suggestions[:3]  # Return at most 3
 
 
 def _build_followups(variant: str, intent: str = "general", active_subcats: List[str] = None, role_mode: str = "explorer") -> List[str]:
     """Generate role-specific followup prompt suggestions with subcategory awareness.
-    
+
     Merged logic from logging_nodes.suggest_followups for inline followup generation.
 
     Args:
@@ -246,15 +340,15 @@ def _build_followups(variant: str, intent: str = "general", active_subcats: List
         ["Want the LangGraph node flow diagram?", ...]
     """
     active_subcats = active_subcats or []
-    
+
     # Confession mode gets no followups (privacy)
     if role_mode == "confession":
         return []
-    
+
     # Subcategory-specific followups take priority for technical queries
     if intent in {"technical", "engineering"} and active_subcats:
         return _build_subcategory_followups(active_subcats)
-    
+
     # Intent-based followups
     if intent in {"technical", "engineering"}:
         return [
@@ -274,7 +368,7 @@ def _build_followups(variant: str, intent: str = "general", active_subcats: List
             "Should I outline Noah's production launch checklist?",
             "Curious how this adapts to your team's workflow?",
         ]
-    
+
     # Variant-based fallback (original logic)
     if variant == "engineering":
         return [
@@ -351,13 +445,32 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
         >>> "**Teaching Takeaways**" in state["answer"]
         True
     """
-    base_answer = state.get("draft_answer") or state.get("answer")
+    # GUARDRAIL: Retry generation if quality check failed
+    base_answer = _retry_generation_if_insufficient(state, rag_engine)
+
+    if base_answer is None:
+        # Fallback to original answer
+        base_answer = state.get("draft_answer") or state.get("answer")
+
     if base_answer is None:
         logger.error("format_answer called without draft_answer")
         return state
 
     if not base_answer:
         return {}
+
+    # PRIORITY: Skip enrichments if answer is already a role welcome message
+    # Prevents duplicate content when menu selection shows role-specific welcome
+    welcome_indicators = [
+        "Since you selected",
+        "You can choose where to start:",
+        "Before we dive in, what best describes you?",
+        "I can focus on the areas most relevant to you"
+    ]
+    if any(indicator in base_answer for indicator in welcome_indicators):
+        # This is a welcome/menu message - don't add formatting
+        state["answer"] = base_answer
+        return state
 
     depth = state.get("depth_level", 1)
     layout_variant = state.get("layout_variant", "mixed")
@@ -381,7 +494,7 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
     )
     sections.append("")
     sections.append(details_block)
-    
+
     # Extract active technical subcategories for smart artifact selection
     active_subcats = state.get("analytics_metadata", {}).get("technical_subcategories", [])
     show_technical_depth = state.get("show_technical_depth", False)
@@ -453,44 +566,113 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
                 open_by_default=False,
             )
         )
-    
+
     # Subcategory-aware code enrichments
     if show_technical_depth and active_subcats:
         _add_subcategory_code_blocks(sections, active_subcats, rag_engine, query, role, depth)
 
     # Code reference (retrieves from code index) - for explicit actions or general technical queries
     if "include_code_reference" in action_types:
-        try:
-            results = rag_engine.retrieve_with_code(query, role=role)
-            snippets = results.get("code_snippets", []) if results else []
-        except Exception as exc:
-            logger.warning(f"Code retrieval failed: {exc}")
-            snippets = []
+        # Check if this is an architecture-specific code request
+        code_actions = [a for a in pending_actions if a.get("type") == "include_code_reference"]
+        architecture_context = any(a.get("context") == "architecture" for a in code_actions)
 
-        if snippets:
-            snippet = snippets[0]
-            code_content = snippet.get("content", "")
-            citation = snippet.get("citation", "codebase")
-            if is_valid_code_snippet(code_content):
-                formatted_code = content_blocks.format_code_snippet(
-                    code=code_content,
-                    file_path=citation,
-                    language="python",
-                    description="Core logic referenced in this explanation",
-                )
-                sections.append("")
-                sections.append(
-                    content_blocks.render_block(
-                        "Code Reference",
-                        formatted_code,
-                        summary="Peek at the implementation",
-                        open_by_default=depth >= 3,
-                    )
-                )
-                sections.append(content_blocks.code_display_guardrails())
-        elif "include_code_reference" in action_types:
+        if architecture_context:
+            # Special handling for architecture queries - show conversation flow structure
+            architecture_code = """# LangGraph conversation pipeline (src/flows/conversation_flow.py)
+from langgraph.graph import StateGraph
+from src.state.conversation_state import ConversationState
+
+def build_conversation_graph():
+    \"\"\"Build the conversation flow as a state graph.\"\"\"
+    graph = StateGraph(ConversationState)
+
+    # Stage 0: Session initialization
+    graph.add_node("initialize_conversation_state", initialize_conversation_state)
+
+    # Stage 1: Role classification and greeting
+    graph.add_node("handle_greeting", handle_greeting)
+    graph.add_node("classify_role_mode", classify_role_mode)
+
+    # Stage 2: Query understanding (intent + entities)
+    graph.add_node("classify_intent", classify_intent)
+    graph.add_node("extract_entities", extract_entities)
+
+    # Stage 3: Query refinement (composition + clarification)
+    graph.add_node("assess_clarification_need", assess_clarification_need)
+    graph.add_node("compose_query", compose_query)
+
+    # Stage 4: Retrieval pipeline (pgvector + grounding)
+    graph.add_node("retrieve_chunks", retrieve_chunks)
+    graph.add_node("validate_grounding", validate_grounding)
+
+    # Stage 5: Generation pipeline (LLM response)
+    graph.add_node("generate_draft", generate_draft)
+    graph.add_node("hallucination_check", hallucination_check)
+
+    # Stage 6: Action planning and formatting
+    graph.add_node("plan_actions", plan_actions)
+    graph.add_node("format_answer", format_answer)
+
+    # Stage 7: Logging and followups
+    graph.add_node("log_and_notify", log_and_notify)
+
+    # Define edges (control flow)
+    graph.set_entry_point("initialize_conversation_state")
+    graph.add_edge("initialize_conversation_state", "handle_greeting")
+    # ... (18 nodes total with conditional routing)
+
+    return graph.compile()"""
+
+            formatted_code = content_blocks.format_code_snippet(
+                code=architecture_code,
+                file_path="src/flows/conversation_flow.py",
+                language="python",
+                description="LangGraph StateGraph orchestration with 18 nodes across 7 pipeline stages",
+            )
             sections.append("")
-            sections.append("Code index is refreshing; happy to walk through the architecture instead.")
+            sections.append(
+                content_blocks.render_block(
+                    "Architecture Code Reference",
+                    formatted_code,
+                    summary="View the conversation pipeline structure",
+                    open_by_default=depth >= 3,
+                )
+            )
+            sections.append(content_blocks.code_display_guardrails())
+        else:
+            # Normal code retrieval from code index
+            try:
+                results = rag_engine.retrieve_with_code(query, role=role)
+                snippets = results.get("code_snippets", []) if results else []
+            except Exception as exc:
+                logger.warning(f"Code retrieval failed: {exc}")
+                snippets = []
+
+            if snippets:
+                snippet = snippets[0]
+                code_content = snippet.get("content", "")
+                citation = snippet.get("citation", "codebase")
+                if is_valid_code_snippet(code_content):
+                    formatted_code = content_blocks.format_code_snippet(
+                        code=code_content,
+                        file_path=citation,
+                        language="python",
+                        description="Core logic referenced in this explanation",
+                    )
+                    sections.append("")
+                    sections.append(
+                        content_blocks.render_block(
+                            "Code Reference",
+                            formatted_code,
+                            summary="Peek at the implementation",
+                            open_by_default=depth >= 3,
+                        )
+                    )
+                    sections.append(content_blocks.code_display_guardrails())
+            elif "include_code_reference" in action_types:
+                sections.append("")
+                sections.append("Code index is refreshing; happy to walk through the architecture instead.")
 
     # Import explanations (stack justifications)
     if "explain_imports" in action_types:
@@ -600,14 +782,14 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
     intent = state.get("query_intent") or state.get("query_type") or "general"
     role_mode = state.get("role_mode", "explorer")
     followup_variant = state.get("followup_variant", "mixed")
-    
+
     followups = _build_followups(
         variant=followup_variant,
         intent=intent,
         active_subcats=active_subcats,
         role_mode=role_mode
     )
-    
+
     if followups:
         sections.append("")
         sections.append("**Where next?**")

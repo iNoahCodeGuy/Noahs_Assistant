@@ -76,18 +76,14 @@ def initialize_conversation_state(state: ConversationState) -> ConversationState
 
 _INITIAL_GREETING = dedent(
     """\
-    👋 Hey! I'm Portfolia — Noah's AI Assistant, and I'm genuinely excited you're here!
+    👋 Hey! I'm Portfolia — Noah's AI Assistant,
 
-    I'm a full-stack generative AI application built to help people understand how production AI systems actually work. Think of me as both a working demo and a teaching tool — every conversation shows you real RAG architecture, vector search, LLM orchestration, and enterprise-grade patterns in action.
-
-    Before we dive in, which of these feels closest to you?
+    Before we dive in, what best describes you?
     1️⃣ Hiring Manager (Nontechnical)
     2️⃣ Hiring Manager (Technical)
     3️⃣ Software Developer
     4️⃣ Just Looking Around
     5️⃣ Looking to Confess Crush 💌
-
-    I can go deep on architecture and code, talk through business value and ROI, share career insights about Noah, or just hang out and be a fun demo. What would you like to explore first?
     """
 )
 

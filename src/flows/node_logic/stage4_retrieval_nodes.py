@@ -22,6 +22,7 @@ See: docs/context/SYSTEM_ARCHITECTURE_SUMMARY.md for full pipeline flow
 """
 
 import logging
+import re
 from typing import Dict, Any, List
 
 from src.state.conversation_state import ConversationState
@@ -31,39 +32,69 @@ from src.observability.langsmith_tracer import create_custom_span
 logger = logging.getLogger(__name__)
 
 
+def _clean_chunk_qa_format(content: str) -> str:
+    """Strip Q&A format from retrieved chunks to prevent LLM from echoing format.
+
+    KB chunks often stored as "Q: ...?\nA: ..." which causes LLM to copy this format
+    instead of synthesizing comprehensive answers from multiple chunks.
+
+    This preprocessor extracts just the answer portion and cleans formatting.
+
+    Args:
+        content: Raw chunk content (may contain Q:/A: format)
+
+    Returns:
+        Cleaned content with Q&A format removed
+
+    Example:
+        >>> _clean_chunk_qa_format("Q: What is RAG?\nA: Retrieval-Augmented Generation...")
+        "Retrieval-Augmented Generation..."
+    """
+    # Pattern 1: Extract answer from "Q: ... A: ..." format
+    qa_pattern = r'Q:\s*.*?\s*A:\s*(.*)'
+    match = re.search(qa_pattern, content, re.DOTALL | re.IGNORECASE)
+    if match:
+        cleaned = match.group(1).strip()
+        logger.debug(f"Stripped Q&A format from chunk ({len(content)} → {len(cleaned)} chars)")
+        return cleaned
+
+    # Pattern 2: If no Q&A format, return as-is
+    return content
+
+
 def _build_retrieval_hints(active_subcategories: List[str]) -> List[str]:
     """Map active technical subcategories to preferred retrieval sources.
-    
+
     This helper translates user interest signals into concrete KB/code targets:
     - stack_depth → technical_kb.csv (framework/library choices)
     - architecture_depth → architecture_kb.csv + conversation_flow.py
     - data_pipeline_depth → pgvector_retriever.py + RAG docs
     - state_management_depth → conversation_state.py + state patterns
-    
+
     Args:
         active_subcategories: List of subcategory names (without "_score" suffix)
-        
+
     Returns:
         List of retrieval source hints (KB names, file patterns)
-        
+
     Example:
         >>> _build_retrieval_hints(["stack_depth", "architecture_depth"])
         ["technical_kb.csv", "architecture_kb.csv", "conversation_flow.py"]
     """
     hints = []
-    
+
     if "stack_depth" in active_subcategories:
         hints.extend(["technical_kb.csv", "requirements.txt", "imports_kb.csv"])
-    
+
     if "architecture_depth" in active_subcategories:
         hints.extend(["architecture_kb.csv", "conversation_flow.py", "system design"])
-    
+
     if "data_pipeline_depth" in active_subcategories:
         hints.extend(["pgvector_retriever.py", "rag_engine.py", "RAG pipeline", "retrieval"])
-    
+
     if "state_management_depth" in active_subcategories:
         hints.extend(["conversation_state.py", "conversation_nodes.py", "LangGraph state"])
-    
+
     return hints
 
 
@@ -114,10 +145,10 @@ def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int 
     """
     query = state.get("composed_query") or state["query"]
     metadata = state.setdefault("analytics_metadata", {})
-    
+
     # Extract active technical subcategories for retrieval hints
     active_subcats = metadata.get("technical_subcategories", [])
-    
+
     # Build retrieval hints for targeted source selection
     retrieval_hints = _build_retrieval_hints(active_subcats)
     if retrieval_hints:
@@ -125,7 +156,7 @@ def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int 
         logger.info("Retrieval targeting: %s", ", ".join(retrieval_hints))
 
     with create_custom_span("retrieve_chunks", {
-        "query": query[:120], 
+        "query": query[:120],
         "top_k": top_k,
         "active_subcategories": active_subcats,
         "source_hints": retrieval_hints
@@ -137,9 +168,13 @@ def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int 
 
             for item in raw_chunks:
                 if isinstance(item, dict):
-                    normalized.append(item)
+                    # Clean Q&A format from chunk content before storing
+                    chunk_copy = item.copy()
+                    if "content" in chunk_copy and isinstance(chunk_copy["content"], str):
+                        chunk_copy["content"] = _clean_chunk_qa_format(chunk_copy["content"])
+                    normalized.append(chunk_copy)
                 else:
-                    normalized.append({"content": str(item)})
+                    normalized.append({"content": _clean_chunk_qa_format(str(item))})
 
             state["retrieved_chunks"] = normalized
 
@@ -185,7 +220,7 @@ def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int 
                 state["retrieved_chunks"] = diversified
                 state["retrieval_scores"] = [c.get("similarity", 0.0) for c in diversified]
                 metadata["post_rank_count"] = len(diversified)
-                
+
                 if len(diversified) < len(normalized):
                     logger.info("Deduplicated %d → %d chunks", len(normalized), len(diversified))
 
@@ -205,11 +240,11 @@ def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int 
 
 def re_rank_and_dedup(state: ConversationState) -> ConversationState:
     """DEPRECATED: No-op for backward compatibility.
-    
+
     Logic merged into retrieve_chunks() for streamlined single-pass retrieval.
     This function now does nothing since MMR diversification happens automatically
     during chunk retrieval.
-    
+
     Kept for import compatibility only. New code should rely on retrieve_chunks()
     to handle both search and deduplication.
     """
