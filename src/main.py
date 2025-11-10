@@ -69,10 +69,7 @@ import time
 import uuid
 from datetime import datetime
 from src.core.rag_engine import RagEngine
-from src.core.memory import Memory
-from src.agents.role_router import RoleRouter
 from src.agents.response_formatter import ResponseFormatter
-from src.analytics.supabase_analytics import supabase_analytics, UserInteractionData
 from src.config.supabase_config import supabase_settings
 from src.state.conversation_state import ConversationState
 from src.flows.conversation_flow import run_conversation_flow
@@ -84,8 +81,6 @@ ROLE_OPTIONS = [
     "Just looking around",             # Casual visitor, lightweight retrieval
     "Looking to confess crush"         # Fun mode, guarded PII handling
 ]
-
-USE_LANGGRAPH_FLOW = os.getenv("LANGGRAPH_FLOW_ENABLED", "true").lower() == "true"
 
 def init_state():
     """Initialize Streamlit session state variables.
@@ -111,9 +106,7 @@ def main():
     # Validate Supabase configuration
     supabase_settings.validate_configuration()
 
-    memory = Memory()
     rag_engine = RagEngine(supabase_settings)
-    role_router = RoleRouter()
     response_formatter = ResponseFormatter()
 
     st.title("Portfolia - Noah's AI Assistant")
@@ -143,55 +136,28 @@ def main():
             st.markdown(user_input)
 
         try:
-            if USE_LANGGRAPH_FLOW:
-                state = ConversationState(
-                    role=st.session_state.role,
-                    query=user_input,
-                    chat_history=st.session_state.chat_history.copy(),
-                )
-                state = run_conversation_flow(
-                    state,
-                    rag_engine,
-                    session_id=st.session_state.session_id,
-                )
-                raw_response = {
-                    "response": state.answer or "I need a moment to find that info.",
-                    "type": state.fetch("query_type", "general"),
-                    "context": state.retrieved_chunks,
-                }
-                latency_ms = int((time.time() - start_time) * 1000)
-            else:
-                raw_response = role_router.route(
-                    st.session_state.role,
-                    user_input,
-                    memory,
-                    rag_engine,
-                    chat_history=st.session_state.chat_history
-                )
-                formatted_latency = time.time() - start_time
-                latency_ms = int(formatted_latency * 1000)
-
-                query_type = "general"
-                lowered = user_input.lower()
-                if any(keyword in lowered for keyword in ["code", "implementation", "architecture"]):
-                    query_type = "technical"
-                elif any(keyword in lowered for keyword in ["career", "experience", "background"]):
-                    query_type = "career"
-                elif any(keyword in lowered for keyword in ["mma", "fight", "fighting"]):
-                    query_type = "mma"
-
-                interaction_data = UserInteractionData(
-                    session_id=st.session_state.session_id,
-                    role_mode=st.session_state.role,
-                    query=user_input,
-                    answer=response_formatter.format(raw_response),
-                    query_type=query_type,
-                    latency_ms=latency_ms,
-                    tokens_prompt=None,
-                    tokens_completion=None,
-                    success=True
-                )
-                supabase_analytics.log_interaction(interaction_data)
+            # Run conversation flow (LangGraph pipeline)
+            state = ConversationState(
+                role=st.session_state.role,
+                query=user_input,
+                chat_history=st.session_state.chat_history.copy(),
+            )
+            state = run_conversation_flow(
+                state,
+                rag_engine,
+                session_id=st.session_state.session_id,
+            )
+            
+            # Update session role if it was inferred by conversation flow
+            if state.get("role") and not st.session_state.role:
+                st.session_state.role = state.get("role")
+            
+            raw_response = {
+                "response": state.answer or "I need a moment to find that info.",
+                "type": state.fetch("query_type", "general"),
+                "context": state.retrieved_chunks,
+            }
+            latency_ms = int((time.time() - start_time) * 1000)
 
             formatted = response_formatter.format(raw_response)
 
@@ -201,34 +167,14 @@ def main():
                 st.markdown(formatted)
 
         except Exception as e:
-            # Log failed interaction
-            response_time = time.time() - start_time
-            latency_ms = int(response_time * 1000)
-
-            interaction_data = UserInteractionData(
-                session_id=st.session_state.session_id,
-                role_mode=st.session_state.role,
-                query=user_input,
-                answer=f"Error: {str(e)}",
-                query_type="error",
-                latency_ms=latency_ms,
-                success=False
-            )
-
-            supabase_analytics.log_interaction(interaction_data)
-
+            # Error handling (analytics already logged by conversation flow)
             st.error(f"Sorry, I encountered an error: {str(e)}")
+            st.session_state.chat_history.append({
+                "role": "assistant",
+                "content": f"⚠️ Error: {str(e)}"
+            })
 
-    # Supabase Analytics panel
-    with st.expander("System Health", expanded=False):
-        health_status = supabase_analytics.health_check()
-        if health_status["status"] == "healthy":
-            st.success("✅ Analytics system healthy")
-            st.metric("Total Messages", health_status["total_messages"])
-            st.metric("Recent (24h)", health_status["recent_messages_24h"])
-        else:
-            st.error("❌ Analytics system unhealthy")
-            st.error(health_status.get("error", "Unknown error"))
+    # Analytics handled by conversation flow (log_and_notify node)
 
     # Simple clear chat
     if st.sidebar.button("Clear Chat"):
