@@ -24,140 +24,303 @@ from src.flows.node_logic.stage2_query_classification import _is_data_display_re
 
 
 def plan_actions(state: ConversationState) -> ConversationState:
-    """Decide what follow-up actions to take for this query.
-
-    This looks at:
-    - state.role: Who is the user? (Hiring Manager, Developer, etc.)
-    - query_type: What did they asked about? (technical, career, data, etc.)
-    - user_turns: How many times have they asked questions?
-    - Special flags: Did they explicitly ask for code/resume/analytics?
-    - Hiring signals: Passively detected hiring intent (merged from detect_hiring_signals)
-
-    Then it builds a list of actions to execute, like:
-    - "send_resume": Email Noah's resume
-    - "render_live_analytics": Show data tables
-    - "include_code_reference": Retrieve and display code snippet
-    - "include_metrics_block": Show cost/latency/grounding snapshot
-
+    """Plan follow-up actions based on user role and query context.
+    
+    🎯 PURPOSE: Decide what extra stuff to add to the response (code snippets, 
+    resume offers, analytics, etc.) based on who's asking and what they want.
+    
+    📋 ACTION MATRIX (what you get for asking as each role):
+    ┌─────────────────────────────┬──────────────┬─────────────────────────────┐
+    │ Role                        │ Query Type   │ Actions Added               │
+    ├─────────────────────────────┼──────────────┼─────────────────────────────┤
+    │ Hiring Manager (technical)  │ technical    │ • code snippets             │
+    │                             │              │ • metrics (cost/latency)    │
+    │                             │              │ • architecture diagrams     │
+    │                             │              │ • QA strategy (if asked)    │
+    │                             │ career       │ • resume offer (after 2+    │
+    │                             │              │   turns OR hiring signals)  │
+    ├─────────────────────────────┼──────────────┼─────────────────────────────┤
+    │ Hiring Manager (nontechnical)│ technical   │ • suggest role switch       │
+    │                             │ career       │ • resume offer (same rules) │
+    ├─────────────────────────────┼──────────────┼─────────────────────────────┤
+    │ Software Developer          │ technical    │ • code snippets             │
+    │                             │              │ • architecture diagrams     │
+    │                             │              │ • import explanations       │
+    │                             │              │ • QA strategy (if asked)    │
+    ├─────────────────────────────┼──────────────┼─────────────────────────────┤
+    │ Just looking around         │ mma          │ • MMA fight video link      │
+    │                             │ any other    │ • fun facts about Noah      │
+    ├─────────────────────────────┼──────────────┼─────────────────────────────┤
+    │ Looking to confess crush    │ any          │ • confession collection     │
+    └─────────────────────────────┴──────────────┴─────────────────────────────┘
+    
+    🔄 EXECUTION FLOW (3 phases):
+    1. ALWAYS RUN: Cross-role concerns (hiring signals, explicit requests)
+    2. ROLE-SPECIFIC: Main action planning (different for each role)
+    3. ALWAYS RUN: Resume gating (teach first, sell later)
+    
+    💡 JUNIOR DEV TIP: Think of this as building a shopping list. We decide
+    what to include, then action_execution.py actually does the work.
+    
     Args:
-        state: Current conversation state
-
+        state: Current conversation state with role, query, history
+        
     Returns:
-        Updated state with pending_actions list populated, hiring_signals tracked
-
-    Merged functionality:
-        - Hiring signal detection (Mode 2 enabler)
-        - Explicit resume request detection (Mode 3 trigger)
+        Updated state with pending_actions list populated
     """
-    # MERGED: Detect hiring signals first (from detect_hiring_signals node)
-    _detect_hiring_signals(state)
-    
-    # MERGED: Check for explicit resume requests (from handle_resume_request node)
-    _check_explicit_resume_request(state)
-    
-    # Clear any old actions from previous turns
     state["pending_actions"] = []
+    
+    # ============================================================================
+    # PHASE 1: ALWAYS RUN - Cross-role concerns
+    # ============================================================================
+    # These happen for ALL roles, regardless of who's asking
+    
+    _detect_hiring_signals(state)  # Scan for "we're hiring", "looking for engineers"
+    _check_explicit_resume_request(state)  # Detect "send me your resume"
+    _handle_direct_requests(state)  # Handle resume/LinkedIn/contact requests
+    
+    # ============================================================================
+    # PHASE 2: ROLE-SPECIFIC - Main action planning
+    # ============================================================================
+    # Different logic for each role type
+    
+    if state["role"] == "Hiring Manager (technical)":
+        _plan_hm_technical_actions(state)
+    elif state["role"] == "Hiring Manager (nontechnical)":
+        _plan_hm_nontechnical_actions(state)
+    elif state["role"] == "Software Developer":
+        _plan_developer_actions(state)
+    elif state["role"] == "Just looking around":
+        _plan_explorer_actions(state)
+    elif state["role"] == "Looking to confess crush":
+        _plan_confession_actions(state)
+    
+    # ============================================================================
+    # PHASE 3: ALWAYS RUN - Resume gating
+    # ============================================================================
+    # Offer resume only after we've demonstrated value (teach first, sell later)
+    
+    _maybe_offer_resume(state)
+    
+    return state
 
-    # Get context about the query
-    query_type = state.get("query_type", "general")
+
+# ==============================================================================
+# PHASE 1 HELPERS: Cross-role concerns (run for everyone)
+# ==============================================================================
+
+
+def _handle_direct_requests(state: ConversationState) -> None:
+    """Handle explicit user requests that work for all roles.
+    
+    Junior dev: These are when users directly ask for something specific:
+    - "Can I get your resume?"
+    - "Show me your LinkedIn"
+    - "Can you contact me about this role?"
+    
+    We detect these keywords and add the appropriate actions.
+    """
     lowered = state["query"].lower()
-    user_turns = sum(1 for message in state["chat_history"] if message.get("role") == "user")
-
-    # Presentation metadata from depth/display controllers
-    toggles = state.get("display_toggles", {})
-    layout_variant = state.get("layout_variant", "mixed")
-
-    # Check for special request flags
-    code_display_requested = state.get("code_display_requested", False)
-    import_explanation_requested = state.get("import_explanation_requested", False)
-
-    # Helper to add actions to the list
-    def add_action(action_type: str, **extras: Any) -> None:
-        state["pending_actions"].append({"type": action_type, **extras})
-
-    # Detect specific user requests
+    
+    # Detect what they're asking for
     resume_requested = any(key in lowered for key in ["send resume", "email resume", "resume", "cv"])
     linkedin_requested = any(key in lowered for key in ["linkedin", "link me", "profile"])
     contact_requested = any(key in lowered for key in ["reach out", "contact me", "call me", "follow up"])
-
-    # Handle data display requests (show analytics/metrics)
-    if _is_data_display_request(lowered):
-        add_action("render_live_analytics")
+    data_requested = _is_data_display_request(lowered)
+    
+    # Add actions based on what they asked for
+    if resume_requested:
+        state["pending_actions"].append({"type": "send_resume"})
+        state["pending_actions"].append({"type": "ask_reach_out"})
+        state["pending_actions"].append({"type": "notify_resume_sent"})
+        state["offer_sent"] = True
+    
+    if linkedin_requested:
+        state["pending_actions"].append({"type": "send_linkedin"})
+        if not state.get("offer_sent"):
+            state["pending_actions"].append({"type": "ask_reach_out"})
+            state["offer_sent"] = True
+    
+    if contact_requested:
+        state["pending_actions"].append({"type": "notify_contact_request"})
+        state["contact_requested"] = True
+    
+    if data_requested:
+        state["pending_actions"].append({"type": "render_live_analytics"})
         state["data_display_requested"] = True
 
-    # Handle direct requests for resources
-    if resume_requested:
-        add_action("send_resume")
-        add_action("ask_reach_out")
-        add_action("notify_resume_sent")
-        state["offer_sent"] = True
 
-    if linkedin_requested:
-        add_action("send_linkedin")
-        if not state.get("offer_sent"):
-            add_action("ask_reach_out")
-            state["offer_sent"] = True
+# ==============================================================================
+# PHASE 2 HELPERS: Role-specific action planning
+# ==============================================================================
 
-    if contact_requested:
-        add_action("notify_contact_request")
-        state["contact_requested"] = True
 
-    # Detect product/how-it-works questions
+def _plan_hm_technical_actions(state: ConversationState) -> None:
+    """Plan actions for technical hiring managers.
+    
+    These folks want to see BOTH business value AND technical depth:
+    - Code snippets (to verify technical chops)
+    - Architecture diagrams (to understand system design)
+    - Metrics (to see cost/performance awareness)
+    - QA strategy (if they ask "how does this work?")
+    
+    Junior dev: Think of this as "impress the technical interviewer" mode.
+    """
+    query_type = state.get("query_type", "general")
+    lowered = state["query"].lower()
+    toggles = state.get("display_toggles", {})
+    layout_variant = state.get("layout_variant", "mixed")
+    
+    # Detect if they're asking "how does this work?"
     product_question = any(term in lowered for term in [
-        "how does this work", "how does it work", "how does", "how is this",
-        "what is this", "what does this", "explain this",
-        "how is this built", "tell me about this", "what's this"
-    ]) or ("product" in lowered and any(word in lowered for word in ["how", "what", "explain", "work"]))
-
-    # Handle code and import explanation requests
-    if code_display_requested and state["role"] in ["Hiring Manager (technical)", "Software Developer"]:
-        add_action("include_code_reference")
-
-    if import_explanation_requested:
-        add_action("explain_imports")
-
-    # Use display toggles to drive supporting artifacts
-    if toggles.get("code"):
-        add_action("include_code_reference")
-
+        "how does this work", "how does it work", "how is this built",
+        "tell me about this", "explain this", "what's this"
+    ]) or ("product" in lowered and any(word in lowered for word in ["how", "what", "explain"]))
+    
+    # Always add technical artifacts for technical queries
+    if query_type == "technical" or toggles.get("code"):
+        state["pending_actions"].append({"type": "include_code_reference"})
+    
     if toggles.get("data"):
-        add_action("include_metrics_block")
-
+        state["pending_actions"].append({"type": "include_metrics_block"})
+    
     if toggles.get("diagram"):
-        if layout_variant == "engineering":
-            add_action("include_sequence_diagram")
-        else:
-            add_action("include_adaptation_diagram")
+        diagram_type = "include_sequence_diagram" if layout_variant == "engineering" else "include_adaptation_diagram"
+        state["pending_actions"].append({"type": diagram_type})
+    
+    # Add QA strategy for "how does this work" questions
+    if product_question:
+        state["pending_actions"].append({"type": "include_qa_strategy"})
 
-    # Add QA strategy for product questions (all technical roles)
-    if product_question and state["role"] in ["Hiring Manager (technical)", "Software Developer"]:
-        add_action("include_qa_strategy")
 
-    # Role-specific action planning
-    if state["role"] == "Hiring Manager (nontechnical)":
-        if query_type == "technical" or code_display_requested or import_explanation_requested or product_question:
-            add_action("suggest_technical_role_switch")
+def _plan_hm_nontechnical_actions(state: ConversationState) -> None:
+    """Plan actions for nontechnical hiring managers.
+    
+    These folks are more business-focused. If they ask technical questions,
+    we gently suggest switching to the technical HM role for better answers.
+    
+    Junior dev: This is like "wrong department, let me transfer you" logic.
+    """
+    query_type = state.get("query_type", "general")
+    lowered = state["query"].lower()
+    
+    # Check if they're asking technical stuff
+    code_display_requested = state.get("code_display_requested", False)
+    import_explanation_requested = state.get("import_explanation_requested", False)
+    product_question = any(term in lowered for term in [
+        "how does this work", "how is this built", "architecture"
+    ])
+    
+    # Suggest role switch if they're asking technical questions
+    if query_type == "technical" or code_display_requested or import_explanation_requested or product_question:
+        state["pending_actions"].append({"type": "suggest_technical_role_switch"})
 
-    elif state["role"] == "Just looking around":
-        if query_type == "mma":
-            add_action("share_mma_link")
-        else:
-            add_action("share_fun_facts")
 
-    elif state["role"] == "Looking to confess crush":
-        add_action("collect_confession")
+def _plan_developer_actions(state: ConversationState) -> None:
+    """Plan actions for software developers.
+    
+    These folks want ALL the technical details:
+    - Code snippets (they want to see implementation)
+    - Import explanations (understand dependencies)
+    - Architecture diagrams (see system design)
+    - QA strategy (understand testing approach)
+    
+    Junior dev: This is "show me everything" mode - developers want depth.
+    """
+    query_type = state.get("query_type", "general")
+    lowered = state["query"].lower()
+    toggles = state.get("display_toggles", {})
+    layout_variant = state.get("layout_variant", "mixed")
+    
+    code_display_requested = state.get("code_display_requested", False)
+    import_explanation_requested = state.get("import_explanation_requested", False)
+    
+    # Detect product questions
+    product_question = any(term in lowered for term in [
+        "how does this work", "how is this built", "architecture"
+    ])
+    
+    # Add code and technical artifacts
+    if code_display_requested or toggles.get("code"):
+        state["pending_actions"].append({"type": "include_code_reference"})
+    
+    if import_explanation_requested:
+        state["pending_actions"].append({"type": "explain_imports"})
+    
+    if toggles.get("data"):
+        state["pending_actions"].append({"type": "include_metrics_block"})
+    
+    if toggles.get("diagram"):
+        state["pending_actions"].append({"type": "include_sequence_diagram"})
+    
+    if product_question:
+        state["pending_actions"].append({"type": "include_qa_strategy"})
 
-    # Resume gating (teach first, sell later)
-    resume_gate_open = state.get("hiring_signals_strong", False) or state.get("depth_level", 1) >= 3
-    if (
-        not resume_requested
-        and not linkedin_requested
-        and resume_gate_open
-        and state["role"] in ["Hiring Manager (technical)", "Hiring Manager (nontechnical)"]
-    ):
-        add_action("offer_resume_prompt")
 
-    return state
+def _plan_explorer_actions(state: ConversationState) -> None:
+    """Plan actions for casual visitors ("Just looking around").
+    
+    These folks are here to browse, not hire. Keep it light and fun:
+    - If they mention MMA/fighting → share Noah's MMA fight video
+    - Otherwise → share fun facts about Noah
+    
+    Junior dev: This is "casual conversation" mode - no hard sell.
+    """
+    query_type = state.get("query_type", "general")
+    
+    if query_type == "mma":
+        state["pending_actions"].append({"type": "share_mma_link"})
+    else:
+        state["pending_actions"].append({"type": "share_fun_facts"})
+
+
+def _plan_confession_actions(state: ConversationState) -> None:
+    """Plan actions for confession mode.
+    
+    This is a fun Easter egg mode - user wants to leave an anonymous message.
+    We collect it and store it safely.
+    
+    Junior dev: This is the "fun mode" - just collect the message.
+    """
+    state["pending_actions"].append({"type": "collect_confession"})
+
+
+# ==============================================================================
+# PHASE 3 HELPER: Resume gating
+# ==============================================================================
+
+
+def _maybe_offer_resume(state: ConversationState) -> None:
+    """Offer resume only after demonstrating value (teach first, sell later).
+    
+    Resume gate opens when:
+    1. Strong hiring signals detected (≥2 signals: "we're hiring", "need engineer", etc.)
+    2. Deep engagement (depth_level ≥3, meaning they've asked follow-up questions)
+    
+    Junior dev: This is like "let them try before you sell" - we don't push
+    the resume immediately, we wait until they're engaged.
+    
+    Only applies to hiring managers (technical and nontechnical).
+    """
+    lowered = state["query"].lower()
+    resume_requested = any(key in lowered for key in ["send resume", "email resume"])
+    linkedin_requested = any(key in lowered for key in ["linkedin", "link me"])
+    
+    # Don't offer if they already asked directly (handled in _handle_direct_requests)
+    if resume_requested or linkedin_requested:
+        return
+    
+    # Only offer to hiring managers
+    if state["role"] not in ["Hiring Manager (technical)", "Hiring Manager (nontechnical)"]:
+        return
+    
+    # Check if gate is open (strong signals OR deep engagement)
+    hiring_signals_strong = state.get("hiring_signals_strong", False)
+    depth_level = state.get("depth_level", 1)
+    resume_gate_open = hiring_signals_strong or depth_level >= 3
+    
+    if resume_gate_open:
+        state["pending_actions"].append({"type": "offer_resume_prompt"})
 
 
 # ============================================================================
