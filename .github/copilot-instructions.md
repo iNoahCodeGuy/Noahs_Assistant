@@ -9,6 +9,7 @@ Before implementing features or answering questions, open these master docs:
 3. 🧮 **Data & Schema Reference** → `docs/context/DATA_COLLECTION_AND_SCHEMA_REFERENCE.md` (tables, queries, presentation rules)
 4. 💬 **Conversation Personality** → `docs/context/CONVERSATION_PERSONALITY.md` (warmth, enthusiasm, engagement)
 5. 🔍 **LangSmith Tracing** → `docs/LANGSMITH_TRACING_SETUP.md` (observability, debugging, performance monitoring)
+6. 🐳 **Docker Development Workflow** → `docs/DOCKER_DEVELOPMENT_WORKFLOW.md` (safe restart procedures, preventing "failed to fetch" errors)
 
 These define:
 - What the assistant is and why it exists

@@ -32,7 +32,7 @@ import json
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from openai import OpenAI
-from src.config.supabase_config import get_supabase_client, supabase_settings
+from assistant.config.supabase_config import get_supabase_client, supabase_settings
 
 # Configure logging
 logging.basicConfig(

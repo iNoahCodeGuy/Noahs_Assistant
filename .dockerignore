@@ -1,0 +1,8 @@
+# Exclude everything first
+**
+
+# Then only include what we need
+!assistant/
+!requirements.txt
+!.env
+!langgraph.json

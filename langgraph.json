@@ -1,8 +1,12 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "conversation_flow": "./src/flows/conversation_flow.py:graph"
+    "conversation_flow": "./assistant/flows/conversation_flow.py:graph"
   },
   "env": ".env",
-  "python_version": "3.13"
+  "python_version": "3.12",
+  "dockerfile_lines": [
+    "COPY requirements.txt /deps/__outer_requirements/requirements.txt",
+    "RUN pip install -r /deps/__outer_requirements/requirements.txt"
+  ]
 }

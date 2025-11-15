@@ -88,3 +88,4 @@ faiss_index/
 chroma_db/
 .vercel
 .langgraph_api/
+Docker.dmg

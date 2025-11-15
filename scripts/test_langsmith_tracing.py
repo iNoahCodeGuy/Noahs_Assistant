@@ -52,12 +52,14 @@ from src.state.conversation_state import ConversationState
 rag_engine = RagEngine()
 print(f"[OK] RAG Engine ready (degraded mode: {rag_engine.degraded_mode})")
 
-# Create conversation state
-state = ConversationState(
-    role="hiring_manager_technical",
-    query="What Python frameworks has Noah worked with?",
-    session_id="script-test-001"
-)
+# Create conversation state (initialize as dict, then convert)
+state = {
+    "role": "hiring_manager_technical",
+    "query": "What Python frameworks has Noah worked with?",
+    "session_id": "script-test-001",
+    "chat_history": [],
+    "analytics_metadata": {}
+}
 
 print(f"\n[OK] ConversationState initialized:")
 print(f"   Role: {state['role']}")
@@ -69,9 +71,10 @@ print("\n" + "="*60)
 print("TEST 1: Query Classification")
 print("="*60)
 
-from src.flows.node_logic.query_classification import classify_query
+from src.flows.node_logic.stage2_query_classification import classify_query
 
-state = classify_query(state)
+classification_update = classify_query(state)
+state.update(classification_update)  # Merge the update into original state
 print(f"[OK] Classification complete:")
 print(f"   Query Type: {state.get('query_type', 'unknown')}")
 print(f"   Intent: {state.get('intent', 'unknown')}")
@@ -81,9 +84,10 @@ print("\n" + "="*60)
 print("TEST 2: Retrieval (Traced to LangSmith)")
 print("="*60)
 
-from src.flows.node_logic.retrieval_nodes import retrieve_chunks
+from src.flows.node_logic.stage4_retrieval_nodes import retrieve_chunks
 
-state = retrieve_chunks(state, rag_engine)
+retrieval_update = retrieve_chunks(state, rag_engine)
+state.update(retrieval_update)  # Merge the update into original state
 
 chunks = state.get("retrieved_chunks", [])
 print(f"[OK] Retrieved {len(chunks)} chunks:")
@@ -97,9 +101,10 @@ print("\n" + "="*60)
 print("TEST 3: Generation (Traced to LangSmith)")
 print("="*60)
 
-from src.flows.node_logic.generation_nodes import generate_draft
+from src.flows.node_logic.stage5_generation_nodes import generate_draft
 
-state = generate_draft(state, rag_engine)
+generation_update = generate_draft(state, rag_engine)
+state.update(generation_update)  # Merge the update into original state
 answer = state.get("answer", "")
 
 print(f"[OK] Generated answer ({len(answer)} chars):")
@@ -112,12 +117,12 @@ print("="*60)
 
 from src.flows.conversation_flow import run_conversation_flow
 
-fresh_state = ConversationState(
-    role="developer",
-    query="Show me Noah's error handling implementation",
-    session_id="script-test-full-pipeline",
-    chat_history=[]
-)
+fresh_state = {
+    "role": "developer",
+    "query": "Show me Noah's error handling implementation",
+    "session_id": "script-test-full-pipeline",
+    "chat_history": []
+}
 
 print(f"Running full pipeline for: {fresh_state['query']}")
 result = run_conversation_flow(fresh_state, rag_engine, session_id=fresh_state["session_id"])
