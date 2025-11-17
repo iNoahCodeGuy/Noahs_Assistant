@@ -43,6 +43,7 @@ class handler(BaseHTTPRequestHandler):
             role = data.get('role', 'Just looking around')
             session_id = data.get('session_id', 'default')
             chat_history = data.get('chat_history', [])
+            session_memory = data.get('session_memory', {})  # Restore session state
             user_email = data.get('user_email')
             user_name = data.get('user_name')
             user_phone = data.get('user_phone')
@@ -56,6 +57,7 @@ class handler(BaseHTTPRequestHandler):
                 'query': query,
                 'chat_history': chat_history,
                 'session_id': session_id,
+                'session_memory': session_memory,  # Restore session state from frontend
                 # User context (optional fields)
             }
 
@@ -76,6 +78,7 @@ class handler(BaseHTTPRequestHandler):
                 'answer': result_state.get('answer', ''),
                 'role': result_state.get('role', role),
                 'session_id': result_state.get('session_id', session_id),
+                'session_memory': result_state.get('session_memory', {}),  # Persist session state
                 'analytics': result_state.get('analytics_metadata', {}),
                 'actions_taken': [
                     action.get('type') for action in result_state.get('pending_actions', [])

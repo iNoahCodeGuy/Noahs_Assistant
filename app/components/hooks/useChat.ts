@@ -34,6 +34,7 @@ export function useChat() {
   const [loading, setLoading] = useState(false)
   const [selectedRole, setSelectedRole] = useState<Role | ''>('')  // Start with empty role
   const [sessionId] = useState(() => crypto.randomUUID())
+  const [sessionMemory, setSessionMemory] = useState<Record<string, any>>({})  // Persist session state
   const [greetingSent, setGreetingSent] = useState(false)
 
   // Fetch initial greeting on mount (Portfolia messages first)
@@ -55,7 +56,8 @@ export function useChat() {
           query: '',  // Empty query triggers initial greeting
           role: '',   // Empty role triggers greeting flow
           session_id: sessionId,
-          chat_history: []
+          chat_history: [],
+          session_memory: sessionMemory  // Send session state
         })
       })
 
@@ -64,6 +66,11 @@ export function useChat() {
       }
 
       const data = await response.json()
+
+      // Update session memory from backend
+      if (data.session_memory) {
+        setSessionMemory(data.session_memory)
+      }
 
       const assistantMessage: Message = {
         role: 'assistant',
@@ -101,6 +108,7 @@ export function useChat() {
           query: messageContent,
           role: selectedRole,
           session_id: sessionId,
+          session_memory: sessionMemory,  // Send session state
           chat_history: messages.map(m => ({
             role: m.role,
             content: m.content
@@ -113,6 +121,11 @@ export function useChat() {
       }
 
       const data = await response.json()
+
+      // Update session memory from backend
+      if (data.session_memory) {
+        setSessionMemory(data.session_memory)
+      }
 
       // Update role if backend inferred it
       if (data.role && data.role !== selectedRole) {
