@@ -894,13 +894,13 @@ Please provide a helpful and accurate answer based on the information provided. 
     def _enforce_first_person(self, text: str) -> str:
         """
         Post-processing safety net: Convert any third-person references to first person.
-
+        
         This is a backup mechanism in case the LLM copies third-person source material
         verbatim despite system prompt instructions. Applied after generation.
-
+        
         Args:
             text: Generated response text
-
+            
         Returns:
             Text with third-person patterns replaced with first person
         """
@@ -915,7 +915,7 @@ Please provide a helpful and accurate answer based on the information provided. 
             ("this AI assistant", "I"),
             ("The AI assistant", "I"),
             ("the AI assistant", "I"),
-
+            
             # Product references
             ("The product is", "I'm"),
             ("The product uses", "I use"),
@@ -923,7 +923,7 @@ Please provide a helpful and accurate answer based on the information provided. 
             ("The product implements", "I implement"),
             ("The product", "I"),
             ("the product", "I"),
-
+            
             # System references
             ("The system is", "I'm"),
             ("The system uses", "I use"),
@@ -933,7 +933,7 @@ Please provide a helpful and accurate answer based on the information provided. 
             ("The system tracks", "I track"),
             ("The system", "I"),
             ("the system", "I"),
-
+            
             # Portfolia references (when describing self, not Noah)
             ("Portfolia is", "I'm"),
             ("Portfolia uses", "I use"),
@@ -942,11 +942,11 @@ Please provide a helpful and accurate answer based on the information provided. 
             ("Portfolia was", "I was"),
             ("Portfolia", "I"),
         ]
-
+        
         result = text
         for old, new in replacements:
             result = result.replace(old, new)
-
+        
         return result
 
     def _enforce_third_person(self, text: str) -> str:

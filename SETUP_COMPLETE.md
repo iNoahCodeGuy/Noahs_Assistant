@@ -22,7 +22,7 @@
    - **Server**: 23.0.5, overlay2 storage driver
 
 ### 4. **Environment Configuration**
-   - **LangSmith API Key**: Configured (from .env file)
+   - **LangSmith API Key**: Configured (stored in `.env`)
    - **Project**: noahs-ai-assistant
    - **Tracing**: Enabled (LANGCHAIN_TRACING_V2=true)
    - **OpenAI**: API key configured
