@@ -12,7 +12,7 @@ const ROLES: Role[] = [
 ]
 
 interface ChatHeaderProps {
-  role: Role
+  role: Role | ''
   onRoleChange: (role: Role) => void
 }
 
@@ -34,7 +34,7 @@ export function ChatHeader({ role, onRoleChange }: ChatHeaderProps) {
         </div>
 
         {/* Role inference happens automatically - show detected role if available */}
-        {role && role !== '' && (
+        {role && (
           <div className="text-xs text-gray-400 bg-chat-surface border border-chat-border rounded-lg px-3 py-2">
             Detected: <span className="text-chat-primary font-medium">{role}</span>
           </div>
