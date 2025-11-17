@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 # Import via our compatibility layer
-from src.core.langchain_compat import (
+from assistant.core.langchain_compat import (
     OpenAIEmbeddings,
     ChatOpenAI,
     FAISS,
@@ -227,7 +227,7 @@ class TestRagFactoryWithCurrentImports:
 
     def test_rag_factory_embeddings_creation(self):
         """Test RagEngineFactory can create embeddings."""
-        from src.core.rag_factory import RagEngineFactory
+        from assistant.core.rag_factory import RagEngineFactory
 
         factory = RagEngineFactory()
         embeddings, is_degraded = factory.create_embeddings()
@@ -238,7 +238,7 @@ class TestRagFactoryWithCurrentImports:
 
     def test_rag_factory_llm_creation(self):
         """Test RagEngineFactory can create LLM."""
-        from src.core.rag_factory import RagEngineFactory
+        from assistant.core.rag_factory import RagEngineFactory
 
         factory = RagEngineFactory()
         llm, is_degraded = factory.create_llm()
@@ -249,7 +249,7 @@ class TestRagFactoryWithCurrentImports:
 
     def test_rag_factory_with_mock_settings(self):
         """Test RagEngineFactory with mock settings."""
-        from src.core.rag_factory import RagEngineFactory
+        from assistant.core.rag_factory import RagEngineFactory
 
         # Mock settings object
         class MockSettings:

@@ -5,8 +5,8 @@ import sys
 # Add src to path
 sys.path.insert(0, os.path.dirname(__file__))
 
-from src.retrieval.pgvector_retriever import PgVectorRetriever
-from src.config.supabase_config import supabase_settings
+from assistant.retrieval.pgvector_retriever import PgVectorRetriever
+from assistant.config.supabase_config import supabase_settings
 
 def test_backend_stack_query():
     """Test if 'how does this product work' retrieves technical content."""

@@ -20,10 +20,10 @@ except ImportError:
 # Import modules under test
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'assistant'))
 
 try:
-    from src.ui.components.common_questions import (
+    from assistant.ui.components.common_questions import (
         CommonQuestionsDisplay, display_suggested_questions_sidebar, get_question_suggestions
     )
 except ImportError as e:

@@ -7,9 +7,9 @@ import pytest
 import time
 from unittest.mock import patch, MagicMock
 
-from src.core.rag_engine import RagEngine
-from src.config.settings import Settings
-from src.agents.role_router import RoleRouter
+from assistant.core.rag_engine import RagEngine
+from assistant.config.settings import Settings
+from assistant.agents.role_router import RoleRouter
 
 
 class TestCodeDisplayEdgeCases:

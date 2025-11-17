@@ -8,15 +8,15 @@ This test suite validates:
 """
 
 import pytest
-from src.state.conversation_state import ConversationState
-from src.flows.conversation_nodes import classify_query, plan_actions
-from src.retrieval.import_retriever import (
+from assistant.state.conversation_state import ConversationState
+from assistant.flows.conversation_nodes import classify_query, plan_actions
+from assistant.retrieval.import_retriever import (
     get_import_explanation,
     search_import_explanations,
     detect_import_in_query,
     ROLE_TO_TIER
 )
-from src.flows import content_blocks
+from assistant.flows import content_blocks
 
 
 class TestCodeDisplayTriggers:

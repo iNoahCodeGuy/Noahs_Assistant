@@ -4,8 +4,8 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from src.state.conversation_state import ConversationState
-from src.flows.node_logic.query_classification import classify_query
+from assistant.state.conversation_state import ConversationState
+from assistant.flows.node_logic.query_classification import classify_query
 
 # Test vague query expansion
 def test_vague_queries():

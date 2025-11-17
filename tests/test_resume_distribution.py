@@ -18,8 +18,8 @@ Test Categories:
 """
 
 import pytest
-from src.state.conversation_state import ConversationState
-from src.flows.node_logic.resume_distribution import (
+from assistant.state.conversation_state import ConversationState
+from assistant.flows.node_logic.resume_distribution import (
     detect_hiring_signals,
     handle_resume_request,
     should_add_availability_mention,

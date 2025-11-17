@@ -4,11 +4,11 @@ Tests that all roles get follow-up suggestions after responses.
 """
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'assistant'))
 
-from src.core.response_generator import ResponseGenerator
-from src.core.rag_factory import RagEngineFactory
-from src.config.supabase_config import supabase_settings
+from assistant.core.response_generator import ResponseGenerator
+from assistant.core.rag_factory import RagEngineFactory
+from assistant.config.supabase_config import supabase_settings
 
 def test_followups_for_all_roles():
     """Test that all roles receive follow-up suggestions."""

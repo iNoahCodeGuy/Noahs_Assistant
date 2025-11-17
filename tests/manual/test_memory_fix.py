@@ -8,10 +8,10 @@ sys.path.insert(0, str(project_root))
 from dotenv import load_dotenv
 load_dotenv()
 
-from src.core.rag_engine import RagEngine
-from src.agents.role_router import RoleRouter
-from src.core.memory import Memory
-from src.config.supabase_config import supabase_settings
+from assistant.core.rag_engine import RagEngine
+from assistant.agents.role_router import RoleRouter
+from assistant.core.memory import Memory
+from assistant.config.supabase_config import supabase_settings
 
 print("=" * 70)
 print("TESTING CHAT MEMORY AND RESPONSE GENERATION")

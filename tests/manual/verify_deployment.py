@@ -34,7 +34,7 @@ def test_import_retriever_loads():
     """Verify import_retriever module loads without errors."""
     print("\n✓ Checking import_retriever module...")
     try:
-        from src.retrieval.import_retriever import (
+        from assistant.retrieval.import_retriever import (
             get_import_explanation,
             search_import_explanations,
             detect_import_in_query,
@@ -52,7 +52,7 @@ def test_content_blocks_functions():
     """Verify new content block functions exist."""
     print("\n✓ Checking content_blocks functions...")
     try:
-        from src.flows import content_blocks
+        from assistant.flows import content_blocks
 
         required_functions = [
             'format_code_snippet',
@@ -76,8 +76,8 @@ def test_conversation_nodes_updated():
     """Verify conversation_nodes has new trigger logic."""
     print("\n✓ Checking conversation_nodes updates...")
     try:
-        from src.flows.conversation_nodes import classify_query, plan_actions
-        from src.state.conversation_state import ConversationState
+        from assistant.flows.conversation_nodes import classify_query, plan_actions
+        from assistant.state.conversation_state import ConversationState
 
         # Test code display trigger
         state = ConversationState(role="Software Developer", query="show me the code")
@@ -108,7 +108,7 @@ def test_import_retrieval_works():
     """Verify import retrieval actually returns data."""
     print("\n✓ Checking import retrieval...")
     try:
-        from src.retrieval.import_retriever import (
+        from assistant.retrieval.import_retriever import (
             get_import_explanation,
             detect_import_in_query
         )
@@ -148,8 +148,8 @@ def test_api_integration():
         sys.path.insert(0, str(Path(__file__).parent / "api"))
 
         # Try importing the API handler (without running it)
-        from src.flows.conversation_flow import run_conversation_flow
-        from src.core.rag_engine import RagEngine
+        from assistant.flows.conversation_flow import run_conversation_flow
+        from assistant.core.rag_engine import RagEngine
 
         print("✅ PASS: Vercel API imports work")
         return True

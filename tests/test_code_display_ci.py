@@ -5,8 +5,8 @@ from typing import Any, Dict, List
 
 import pytest
 
-from src.state.conversation_state import ConversationState
-from src.flows import conversation_nodes as nodes
+from assistant.state.conversation_state import ConversationState
+from assistant.flows import conversation_nodes as nodes
 
 
 @dataclass

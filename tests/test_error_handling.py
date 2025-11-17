@@ -18,13 +18,13 @@ from unittest.mock import patch, MagicMock, Mock
 from io import BytesIO
 
 # Import conversation flow components
-from src.flows.conversation_flow import run_conversation_flow
-from src.state.conversation_state import ConversationState
-from src.core.rag_engine import RagEngine
+from assistant.flows.conversation_flow import run_conversation_flow
+from assistant.state.conversation_state import ConversationState
+from assistant.core.rag_engine import RagEngine
 
 # Import services for mocking
-from src.services.twilio_service import get_twilio_service
-from src.services.resend_service import get_resend_service
+from assistant.services.twilio_service import get_twilio_service
+from assistant.services.resend_service import get_resend_service
 
 
 class TestServiceFailureHandling:
@@ -204,7 +204,7 @@ class TestInputValidation:
         # ignoring surrounding malicious content. This is CORRECT behavior!
 
         # Import email validation function from resume_distribution
-        from src.flows.node_logic.resume_distribution import extract_email_from_query
+        from assistant.flows.node_logic.resume_distribution import extract_email_from_query
 
         # Test cases where NO valid email exists (should return empty string)
         invalid_emails = [
@@ -359,7 +359,7 @@ class TestRAGPipelineResilience:
         state["retrieval_scores"] = [0.35, 0.28]  # Both below 0.4 threshold
 
         # Import conversation node directly for precise testing
-        from src.flows.node_logic.core_nodes import generate_answer
+        from assistant.flows.node_logic.core_nodes import generate_answer
 
         # Initialize RAG engine
         rag_engine = RagEngine()

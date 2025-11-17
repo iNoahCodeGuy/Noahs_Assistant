@@ -77,7 +77,7 @@ def test_vercel_config():
     assert 'routes' in config, "Missing routes configuration"
     assert len(config['routes']) >= 4, "Missing API routes"
 
-    route_paths = [route['src'] for route in config['routes']]
+    route_paths = [route['assistant'] for route in config['routes']]
     assert '/api/chat' in route_paths, "Missing /api/chat route"
     assert '/api/email' in route_paths, "Missing /api/email route"
     assert '/api/feedback' in route_paths, "Missing /api/feedback route"

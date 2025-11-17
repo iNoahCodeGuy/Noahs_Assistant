@@ -7,10 +7,10 @@ Tests:
 4. No regressions in quality standards
 """
 
-from src.flows.node_logic.performance_metrics import PerformanceMetrics
-from src.core.response_generator import ResponseGenerator
-from src.core.langchain_compat import ChatOpenAI
-from src.config.supabase_config import supabase_settings
+from assistant.flows.node_logic.performance_metrics import PerformanceMetrics
+from assistant.core.response_generator import ResponseGenerator
+from assistant.core.langchain_compat import ChatOpenAI
+from assistant.config.supabase_config import supabase_settings
 
 def test_warmth_in_prompts():
     """Verify warmth amplifiers were added to all role prompts."""

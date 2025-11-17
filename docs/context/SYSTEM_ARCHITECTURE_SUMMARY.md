@@ -20,82 +20,82 @@ Draft grounded answer → Format, act, and follow up → Log observability signa
 
 ### Actual Implementation (The Code)
 ```python
-# Pipeline defined in src/flows/conversation_flow.py
+# Pipeline defined in assistant/flows/conversation_flow.py
 initialize_conversation_state
   → Loads session memory, normalizes state containers, attaches analytics metadata
-  → Source: src/flows/node_logic/session_management.py
+  → Source: assistant/flows/node_logic/session_management.py
 
 handle_greeting
   → Detects first-turn "hello" and returns greeting without RAG
   → Short-circuits pipeline if user just said hi (efficiency!)
-  → Source: src/flows/node_logic/greetings.py
+  → Source: assistant/flows/node_logic/greetings.py
 
 classify_role_mode
   → Confirms persona selection (developer, hiring manager, etc.) and teaching defaults
   → Splits role adaptation from pure intent detection for clarity
-  → Source: src/flows/node_logic/role_routing.py
+  → Source: assistant/flows/node_logic/role_routing.py
 
 classify_intent (exported as classify_query for legacy compatibility)
   → Analyzes user intent: teaching moment? code request? data request?
   → Sets flags: needs_longer_response, code_would_help, data_would_help
-  → Source: src/flows/node_logic/query_classification.py
+  → Source: assistant/flows/node_logic/query_classification.py
 
 depth_controller
   → Calibrates presentation depth using role, intent, and turn count (teach-first pacing)
   → Stores depth_level + rationale for analytics and downstream layout
-  → Source: src/flows/node_logic/presentation_control.py
+  → Source: assistant/flows/node_logic/presentation_control.py
 
 display_controller
   → Applies heuristics to decide whether to surface code, metrics, or diagrams
   → Uses query phrasing + depth to set display_toggles and layout_variant
-  → Source: src/flows/node_logic/presentation_control.py
+  → Source: assistant/flows/node_logic/presentation_control.py
 
 detect_hiring_signals (Passive Tracking for HM Roles)
   → Scans query for hiring indicators (mentioned_hiring, described_role, team_context)
   → Accumulates signals in state.hiring_signals list (passive tracking)
   → Does NOT trigger proactive offers - only enables subtle availability mentions
-  → Source: src/flows/node_logic/resume_distribution.py
+  → Source: assistant/flows/node_logic/resume_distribution.py
 
 handle_resume_request (Explicit Requests for HM Roles)
   → Detects explicit resume requests ("can I get your resume", "send me your CV")
   → Sets state.resume_explicitly_requested = True (triggers email collection)
   → Immediate response without qualification - user asked, we deliver
-  → Source: src/flows/node_logic/resume_distribution.py
+  → Source: assistant/flows/node_logic/resume_distribution.py
 
 extract_entities
   → Pulls company names, role titles, timelines, and contact hints for later prompts
   → Keeps entity extraction decoupled from retrieval logic
-  → Source: src/flows/node_logic/entity_extraction.py
+  → Source: assistant/flows/node_logic/entity_extraction.py
 
 assess_clarification_need / ask_clarifying_question
   → Detects vague or underspecified queries before spending tokens
   → Either inserts a clarification question or green-lights retrieval
-  → Source: src/flows/node_logic/clarification.py
+  → Source: assistant/flows/node_logic/clarification.py
 
 compose_query
   → Builds retrieval-ready prompt with persona + entity context + clarified details
-  → Source: src/flows/node_logic/query_composition.py
+  → Source: assistant/flows/node_logic/query_composition.py
 
 retrieve_chunks (THIS IS RAG!)
   → Converts composed query to embedding via text-embedding-3-small (768 dims)
   → Searches Supabase kb_chunks using pgvector cosine similarity
   → Returns top-k relevant context chunks with similarity scores
-  → Source: src/flows/node_logic/retrieval_nodes.py → src/retrieval/pgvector_retriever.py
+  → Source: assistant/flows/node_logic/retrieval_nodes.py → assistant/retrieval/pgvector_retriever.py
 
 re_rank_and_dedup
   → Lightweight diversification guard so similar chunks do not crowd the context window
-  → Source: src/flows/node_logic/retrieval_nodes.py
+  → Source: assistant/flows/node_logic/retrieval_nodes.py
 
 validate_grounding / handle_grounding_gap
   → Ensures similarity scores are high enough; otherwise pauses and asks for more detail
-  → Source: src/flows/node_logic/retrieval_nodes.py
+  → Source: assistant/flows/node_logic/retrieval_nodes.py
 
 generate_draft (documented as generate_answer in conceptual flow)
   → Calls OpenAI GPT-4o-mini with retrieved context to create the draft answer
   → Injects dynamic instructions based on query classification and runtime awareness
   → For HM roles: Uses should_add_availability_mention() to add subtle mention if ≥2 hiring signals
   → For HM roles (post-resume): Uses should_gather_job_details() to add job details question
-  → Source: src/flows/node_logic/generation_nodes.py → src/core/response_generator.py
+  → Source: assistant/flows/node_logic/generation_nodes.py → assistant/core/response_generator.py
 
 Helper Functions (Resume Distribution Support):
   • should_add_availability_mention(state) - Returns True if ≥2 hiring signals + not sent yet
@@ -104,43 +104,43 @@ Helper Functions (Resume Distribution Support):
   • extract_email_from_query(query) - Regex-based email extraction
   • extract_name_from_query(query) - Regex-based name extraction
   • extract_job_details_from_query(query) - Pulls company, role, timeline from user follow-up language
-  → Source: src/flows/node_logic/resume_distribution.py
+  → Source: assistant/flows/node_logic/resume_distribution.py
 
 hallucination_check
   → Adds lightweight citations and flags grounding status for observability dashboards
-  → Source: src/flows/node_logic/generation_nodes.py
+  → Source: assistant/flows/node_logic/generation_nodes.py
 
 plan_actions
   → Determines side effects needed: send analytics? offer contact? log feedback?
   → For HM roles: Plans resume_send action if explicitly requested
   → Creates action plan without executing yet (separation of concerns)
-  → Source: src/flows/node_logic/action_planning.py
+  → Source: assistant/flows/node_logic/action_planning.py
 
 format_answer (exports legacy alias apply_role_context)
   → Structures the final answer using headings, concise bullet takeaways, and <details> blocks
   → Applies the role-specific styling directly (alias `apply_role_context` still resolves here)
   → Respects depth/display toggles, injects diagrams/metrics/code without new facts
   → Ends with role-aware follow-ups (engineering, business, mixed variants)
-  → Source: src/flows/node_logic/formatting_nodes.py
+  → Source: assistant/flows/node_logic/formatting_nodes.py
 
 execute_actions
   → Runs planned side effects: email via Resend, SMS via Twilio, storage lookups
   → For HM roles: Sends resume PDF via email, notifies Noah via SMS with job details
   → Handles failures gracefully (degraded mode - logs errors but doesn't crash)
-  → Source: src/flows/node_logic/action_execution.py
+  → Source: assistant/flows/node_logic/action_execution.py
 
 suggest_followups
   → Backstop for curiosity-driven follow-up prompts (formatting node usually sets them)
-  → Source: src/flows/node_logic/formatting_nodes.py
+  → Source: assistant/flows/node_logic/formatting_nodes.py
 
 update_memory
   → Stores soft session signals (preferred modality, hiring signals, follow-ups asked)
-  → Source: src/flows/node_logic/logging_nodes.py
+  → Source: assistant/flows/node_logic/logging_nodes.py
 
 log_and_notify
   → Logs interaction to Supabase messages + retrieval_logs tables
   → Tracks latency, tokens, success/failure for observability
-  → Source: src/flows/node_logic/logging_nodes.py
+  → Source: assistant/flows/node_logic/logging_nodes.py
 ```
 
 **Teaching insights:**

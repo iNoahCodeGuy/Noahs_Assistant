@@ -22,10 +22,10 @@ Status: 🆕 New test suite for Week 1 launch
 """
 
 import pytest
-from src.core.rag_engine import RagEngine
-from src.flows.conversation_flow import run_conversation_flow
+from assistant.core.rag_engine import RagEngine
+from assistant.flows.conversation_flow import run_conversation_flow
 from unittest.mock import patch
-from src.state.conversation_state import ConversationState
+from assistant.state.conversation_state import ConversationState
 
 
 class TestRAGGrounding:

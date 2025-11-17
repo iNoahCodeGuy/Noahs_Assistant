@@ -1,6 +1,6 @@
 import pytest
-from src.retrieval.career_kb import CareerKnowledgeBase
-from src.retrieval.code_index import CodeIndex
+from assistant.retrieval.career_kb import CareerKnowledgeBase
+from assistant.retrieval.code_index import CodeIndex
 
 @pytest.fixture
 def setup_career_kb():

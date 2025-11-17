@@ -101,3 +101,6 @@ test.db
 Docker.dmg
 get-docker.sh
 codebase_structure.txt
+
+# Empty public directory (Next.js API-only setup)
+public/

@@ -10,12 +10,12 @@ This script tests the core functionality of each role to ensure:
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'assistant'))
 
-from src.core.rag_engine import RagEngine
-from src.core.memory import Memory
-from src.agents.role_router import RoleRouter
-from src.config.supabase_config import supabase_settings
+from assistant.core.rag_engine import RagEngine
+from assistant.core.memory import Memory
+from assistant.agents.role_router import RoleRouter
+from assistant.config.supabase_config import supabase_settings
 
 
 def test_role(role_name: str, test_query: str, follow_up_query: str = None):

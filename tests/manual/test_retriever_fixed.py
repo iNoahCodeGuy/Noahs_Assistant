@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from dotenv import load_dotenv
 load_dotenv()
 
-from src.retrieval.pgvector_retriever import PgVectorRetriever
+from assistant.retrieval.pgvector_retriever import PgVectorRetriever
 
 print('Testing pgvector retriever with float conversion fix...')
 retriever = PgVectorRetriever(similarity_threshold=0.3)

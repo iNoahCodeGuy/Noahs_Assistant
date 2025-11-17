@@ -1,7 +1,7 @@
 import pytest
-from src.core.rag_engine import RagEngine
-from src.retrieval.career_kb import CareerKB
-from src.retrieval.code_index import CodeIndex
+from assistant.core.rag_engine import RagEngine
+from assistant.retrieval.career_kb import CareerKB
+from assistant.retrieval.code_index import CodeIndex
 
 @pytest.fixture
 def rag_engine():

@@ -134,7 +134,7 @@ class TestImportUpdatePlan:
     def test_langchain_compat_fallback_strategy(self):
         """Test that our fallback strategy in langchain_compat.py works."""
         # Our compatibility layer should try new imports first, then fall back
-        from src.core.langchain_compat import (
+        from assistant.core.langchain_compat import (
             OpenAIEmbeddings,
             ChatOpenAI,
             FAISS,
@@ -159,7 +159,7 @@ class TestImportUpdatePlan:
 
     def test_rag_factory_compatibility(self):
         """Test RagFactory will work after import updates."""
-        from src.core.rag_factory import RagEngineFactory
+        from assistant.core.rag_factory import RagEngineFactory
 
         # This should work with either old or new imports
         factory = RagEngineFactory()
@@ -184,10 +184,10 @@ class TestPostUpdateValidation:
     def test_end_to_end_after_update(self):
         """Comprehensive test to run after making import changes."""
         # Import our main components
-        from src.core.rag_engine import RagEngine
-        from src.core.rag_factory import RagEngineFactory
-        from src.agents.role_router import RoleRouter
-        from src.config.settings import Settings
+        from assistant.core.rag_engine import RagEngine
+        from assistant.core.rag_factory import RagEngineFactory
+        from assistant.agents.role_router import RoleRouter
+        from assistant.config.settings import Settings
 
         # These should all work after import updates
         settings = Settings()

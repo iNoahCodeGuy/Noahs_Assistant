@@ -25,7 +25,7 @@ class TestConversationFlowAlignment:
             doc_content = f.read()
 
         # Get actual pipeline from code
-        from src.flows.conversation_flow import run_conversation_flow
+        from assistant.flows.conversation_flow import run_conversation_flow
         source = inspect.getsource(run_conversation_flow)
 
         # Expected nodes in actual implementation (core pipeline)
@@ -189,7 +189,7 @@ class TestConfigurationValues:
         documented_temp = float(temp_match.group(1))
 
         # Get actual temperature from code
-        from src.core.rag_factory import RagEngineFactory
+        from assistant.core.rag_factory import RagEngineFactory
         source = inspect.getsource(RagEngineFactory.create_llm)
 
         code_temp_match = re.search(r'temperature=(\d+\.?\d*)', source)
@@ -295,7 +295,7 @@ class TestResumeDistributionAlignment:
         """All resume_distribution.py functions are documented in SYSTEM_ARCHITECTURE."""
 
         # Get actual functions from code
-        from src.flows.node_logic import resume_distribution
+        from assistant.flows.node_logic import resume_distribution
         actual_functions = [
             "detect_hiring_signals",
             "handle_resume_request",

@@ -11,8 +11,8 @@ This is the POC migration test - once this passes, we can migrate remaining node
 """
 
 import pytest
-from src.flows.node_logic.query_classification import classify_query
-from src.state.conversation_state import ConversationState
+from assistant.flows.node_logic.query_classification import classify_query
+from assistant.state.conversation_state import ConversationState
 
 
 class TestClassifyQueryNodeSignature:

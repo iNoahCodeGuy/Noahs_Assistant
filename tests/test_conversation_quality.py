@@ -11,13 +11,13 @@ Run with: pytest tests/test_conversation_quality.py -v
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from src.state.conversation_state import ConversationState
-from src.flows.node_logic.query_classification import classify_query
-from src.flows.node_logic.core_nodes import (
+from assistant.state.conversation_state import ConversationState
+from assistant.flows.node_logic.query_classification import classify_query
+from assistant.flows.node_logic.core_nodes import (
     retrieve_chunks, generate_answer, apply_role_context
 )
-from src.flows.node_logic.code_validation import is_valid_code_snippet
-from src.flows.data_reporting import render_full_data_report
+from assistant.flows.node_logic.code_validation import is_valid_code_snippet
+from assistant.flows.data_reporting import render_full_data_report
 
 
 class TestAnalyticsQuality:
@@ -282,7 +282,7 @@ class TestConversationFlowQuality:
         """LLM should not generate its own 'Would you like to see' prompts in answer body."""
         # This test verifies system prompt guidance, not runtime behavior
         # Just check that we don't have prompt generation in the wrong place
-        from src.core import response_generator
+        from assistant.core import response_generator
         import inspect
 
         source = inspect.getsource(response_generator)
@@ -544,7 +544,7 @@ class TestSpecificRegressions:
     def test_analytics_no_section_iteration(self):
         """Ensure we don't iterate over sections (245 rows bug)."""
         import inspect
-        from src.flows import data_reporting
+        from assistant.flows import data_reporting
 
         # Get source code
         source = inspect.getsource(data_reporting)
@@ -560,7 +560,7 @@ class TestSpecificRegressions:
     def test_response_generator_no_prompts(self):
         """Ensure response_generator doesn't add follow-up prompts."""
         import inspect
-        from src.core import response_generator
+        from assistant.core import response_generator
 
         # Get source code
         source = inspect.getsource(response_generator)
@@ -577,7 +577,7 @@ class TestSpecificRegressions:
     def test_conversation_nodes_single_prompt_location(self):
         """Ensure prompts only generated in apply_role_context, not multiple places."""
         import inspect
-        from src.flows import conversation_nodes
+        from assistant.flows import conversation_nodes
 
         source = inspect.getsource(conversation_nodes)
 
@@ -595,7 +595,7 @@ class TestResponseSynthesis:
     def test_no_qa_verbatim_responses(self):
         """LLM must synthesize KB Q&A pairs into natural conversation, not return them verbatim."""
         import inspect
-        from src.core import response_generator
+        from assistant.core import response_generator
 
         # Check that all role prompts include the synthesis instruction
         source = inspect.getsource(response_generator)
@@ -610,7 +610,7 @@ class TestResponseSynthesis:
 
     def test_response_synthesis_in_prompts(self):
         """Verify all role prompts explicitly instruct to avoid Q&A verbatim responses."""
-        from src.core.response_generator import ResponseGenerator
+        from assistant.core.response_generator import ResponseGenerator
         from unittest.mock import Mock
 
         # Mock the LLM dependency

@@ -21,7 +21,7 @@ import pytest
 from typing import Dict, Any
 from langgraph.graph.message import add_messages
 
-from src.state.conversation_state import (
+from assistant.state.conversation_state import (
     ConversationState,
     validate_required_fields,
     get_safe,

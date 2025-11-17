@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import Mock, MagicMock
-from src.agents.role_router import RoleRouter
-from src.core.memory import Memory
-from src.core.rag_engine import RagEngine
+from assistant.agents.role_router import RoleRouter
+from assistant.core.memory import Memory
+from assistant.core.rag_engine import RagEngine
 
 @pytest.fixture
 def mock_rag_engine():

@@ -1,11 +1,11 @@
 """Test that 'display collected data' query returns the enhanced analytics dashboard."""
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'assistant'))
 
-from src.flows.conversation_flow import run_conversation_flow
-from src.state.conversation_state import ConversationState
-from src.core.rag_engine import RagEngine
+from assistant.flows.conversation_flow import run_conversation_flow
+from assistant.state.conversation_state import ConversationState
+from assistant.core.rag_engine import RagEngine
 
 def test_data_display():
     """Test data display request."""

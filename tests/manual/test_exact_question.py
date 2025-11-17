@@ -1,5 +1,5 @@
 """Test retrieval with exact new question."""
-from src.retrieval.pgvector_retriever import PgVectorRetriever
+from assistant.retrieval.pgvector_retriever import PgVectorRetriever
 
 r = PgVectorRetriever()
 print(f"Default threshold: {r.similarity_threshold}\n")

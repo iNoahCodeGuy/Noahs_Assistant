@@ -2,7 +2,7 @@ import pytest
 import json
 import tempfile
 import os
-from src.core.memory import Memory
+from assistant.core.memory import Memory
 
 @pytest.fixture
 def temp_memory_file():

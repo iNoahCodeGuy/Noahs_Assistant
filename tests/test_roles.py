@@ -1,5 +1,5 @@
 # Tests for role capability configuration
-from src.agents.roles import Role, ROLE_CONFIG, role_include_code
+from assistant.agents.roles import Role, ROLE_CONFIG, role_include_code
 
 def test_all_roles_have_config():
     for r in Role:

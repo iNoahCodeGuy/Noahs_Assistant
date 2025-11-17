@@ -1,6 +1,6 @@
 """Test architecture KB retrieval and source formatting"""
 
-from src.config.supabase_config import get_supabase_client, supabase_settings
+from assistant.config.supabase_config import get_supabase_client, supabase_settings
 from openai import OpenAI
 
 # Initialize
