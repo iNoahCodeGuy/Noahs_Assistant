@@ -7,13 +7,13 @@ import sys
 import os
 from pathlib import Path
 
-# Add src to path
+# Add assistant to path
 project_root = Path(__file__).parent
-sys.path.insert(0, str(project_root / "src"))
+sys.path.insert(0, str(project_root))
 
 # Import the graph
 try:
-    from src.flows.conversation_flow import graph
+    from assistant.flows.conversation_flow import graph
     print("✅ Successfully imported conversation flow graph")
 except ImportError as e:
     print(f"❌ Failed to import graph: {e}")

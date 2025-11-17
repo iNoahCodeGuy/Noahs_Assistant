@@ -15,7 +15,7 @@ In `assistant/flows/node_logic/stage2_role_routing.py`, the `classify_role_mode(
 ```python
 def classify_role_mode(state: ConversationState, rag_engine: Optional[RagEngine] = None) -> ConversationState:
     query = state.get("query", "").strip().lower()
-    
+
     # Check role selection map (digits 1-5)
     if query in _ROLE_SELECTION_MAP:
         return {**state, "role_mode": _ROLE_SELECTION_MAP[query], ...}
@@ -126,7 +126,7 @@ There is precisely **one blocking task** and **three validation tasks** that fol
 
 We must add logic that extracts `chat_history[-1].content` into `state["query"]` before any node attempts to read the query field. There are two architectural approaches:
 
-**Option A: Patch `initialize_conversation_state()`**  
+**Option A: Patch `initialize_conversation_state()`**
 Located in `assistant/flows/node_logic/stage0_session_management.py` (line ~15), this node runs first in the pipeline. We would add:
 
 ```python
@@ -134,19 +134,19 @@ def initialize_conversation_state(state: ConversationState) -> ConversationState
     # Existing initialization logic...
     state.setdefault("session_id", str(uuid.uuid4()))
     state.setdefault("chat_history", [])
-    
+
     # NEW: Extract latest message into query field
     if not state.get("query") and state.get("chat_history"):
         messages = state["chat_history"]
         if messages and hasattr(messages[-1], 'content'):
             state["query"] = messages[-1].content
-    
+
     return state
 ```
 
 This approach is minimally invasive—it occurs in the existing initialization node, handles both Streamlit (which sets query explicitly) and REST API (which needs extraction) pathways gracefully via the `if not state.get("query")` guard.
 
-**Option B: Create Dedicated `extract_query_from_messages()` Node**  
+**Option B: Create Dedicated `extract_query_from_messages()` Node**
 We would add a new module `assistant/flows/node_logic/message_extraction.py`:
 
 ```python
@@ -155,15 +155,15 @@ def extract_query_from_messages(state: ConversationState) -> ConversationState:
     if state.get("query"):
         # Streamlit path already set query explicitly
         return state
-    
+
     messages = state.get("chat_history", [])
     if not messages:
         return state
-    
+
     latest_message = messages[-1]
     if hasattr(latest_message, 'content'):
         return {**state, "query": latest_message.content.strip()}
-    
+
     return state
 ```
 
@@ -196,7 +196,7 @@ We execute the full three-turn sequence:
 # Turn 1: Initialize conversation
 curl -X POST http://127.0.0.1:2024/threads \
   -H "Content-Type: application/json" \
-  -d '{}' 
+  -d '{}'
 # → Returns thread_id
 
 # Turn 2: Select technical hiring manager role
@@ -237,19 +237,19 @@ If the word count is still below 330 or layers are missing, we move to **Phase 4
 Based on Portfolia's personality matrix (warmth, enthusiasm, invitation culture from `docs/context/CONVERSATION_PERSONALITY.md`) and the technical hiring manager persona, we predict the following interaction patterns:
 
 ### Likely Path 1: Immediate Implementation (65% Probability)
-User says: "Let's implement Option B" or "Go ahead with the extraction node."  
+User says: "Let's implement Option B" or "Go ahead with the extraction node."
 → We create `message_extraction.py`, update `conversation_flow.py`, rebuild server, test via REST API.
 
 ### Likely Path 2: Architectural Clarification (20% Probability)
-User asks: "Why can't we just modify the ConversationState schema to auto-extract?" or "What about using a LangGraph preprocessor?"  
+User asks: "Why can't we just modify the ConversationState schema to auto-extract?" or "What about using a LangGraph preprocessor?"
 → We explain that `ConversationState` is a TypedDict (static schema, no methods), and LangGraph's `add_messages` reducer only handles list appending. Extraction requires node logic.
 
 ### Likely Path 3: Scope Expansion (10% Probability)
-User says: "Before we fix this, explain how the retrieval layer ranks chunks" or "Show me the exact prompt template for menu option 1."  
+User says: "Before we fix this, explain how the retrieval layer ranks chunks" or "Show me the exact prompt template for menu option 1."
 → We shift focus to `assistant/flows/node_logic/retrieval_nodes.py` (pgvector search, re-ranking logic) or `assistant/prompts/` directory (template inspection).
 
 ### Likely Path 4: Testing First (5% Probability)
-User requests: "Can we test the current instrumentation with a mock state that has query pre-populated?"  
+User requests: "Can we test the current instrumentation with a mock state that has query pre-populated?"
 → We write a test in `tests/test_stage5_generation.py` that constructs a ConversationState with `query="1"`, `role_mode="hiring_manager_technical"`, calls `generate_answer()`, validates output structure.
 
 ## V. Problem Decomposition: From Macro to Micro
@@ -263,53 +263,53 @@ This is too large to solve atomically. We decompose into:
 
 ### Level 2: Architectural Components
 
-1. **Message Flow Problem** (BLOCKING)  
-   - Status: REST API doesn't populate `state["query"]`  
-   - Solution: Add extraction node  
-   - Dependency: None  
-   - Complexity: Low  
+1. **Message Flow Problem** (BLOCKING)
+   - Status: REST API doesn't populate `state["query"]`
+   - Solution: Add extraction node
+   - Dependency: None
+   - Complexity: Low
 
-2. **Generation Quality Problem** (CONDITIONAL)  
-   - Status: If extraction fix doesn't resolve output length, LLM isn't following instructions  
-   - Solution: Prompt engineering or chunk quality improvement  
-   - Dependency: Problem 1 must be solved first  
-   - Complexity: Medium  
+2. **Generation Quality Problem** (CONDITIONAL)
+   - Status: If extraction fix doesn't resolve output length, LLM isn't following instructions
+   - Solution: Prompt engineering or chunk quality improvement
+   - Dependency: Problem 1 must be solved first
+   - Complexity: Medium
 
-3. **Validation Reliability Problem** (LATENT)  
-   - Status: Regex patterns in `_validate_menu_option_one_answer()` might not match LLM output format variations  
-   - Solution: Test against diverse LLM outputs, adjust patterns  
-   - Dependency: Problem 2 must reveal failures first  
-   - Complexity: Low  
+3. **Validation Reliability Problem** (LATENT)
+   - Status: Regex patterns in `_validate_menu_option_one_answer()` might not match LLM output format variations
+   - Solution: Test against diverse LLM outputs, adjust patterns
+   - Dependency: Problem 2 must reveal failures first
+   - Complexity: Low
 
 ### Level 3: Implementation Units (Problem 1 Decomposition)
 
-**Problem 1.1**: Create extraction function  
-- Input: `ConversationState` with populated `chat_history`  
-- Output: `ConversationState` with populated `query`  
-- Edge cases: Empty history, missing content attribute, Streamlit pre-populated query  
-- Test: `tests/test_message_extraction.py` with 6 test cases  
+**Problem 1.1**: Create extraction function
+- Input: `ConversationState` with populated `chat_history`
+- Output: `ConversationState` with populated `query`
+- Edge cases: Empty history, missing content attribute, Streamlit pre-populated query
+- Test: `tests/test_message_extraction.py` with 6 test cases
 
-**Problem 1.2**: Integrate into pipeline  
-- Insert after `initialize_conversation_state`, before `classify_role_mode`  
-- Export from `node_logic/__init__.py`  
-- Re-export from `conversation_nodes.py`  
-- Update `conversation_flow.py` pipeline list  
+**Problem 1.2**: Integrate into pipeline
+- Insert after `initialize_conversation_state`, before `classify_role_mode`
+- Export from `node_logic/__init__.py`
+- Re-export from `conversation_nodes.py`
+- Update `conversation_flow.py` pipeline list
 
-**Problem 1.3**: Deploy and validate  
-- Run `safe_restart.sh`  
-- Execute Turn 2 test via REST API  
-- Inspect returned state object  
-- Confirm `query="2"` and `role_mode="hiring_manager_technical"`  
+**Problem 1.3**: Deploy and validate
+- Run `safe_restart.sh`
+- Execute Turn 2 test via REST API
+- Inspect returned state object
+- Confirm `query="2"` and `role_mode="hiring_manager_technical"`
 
 ### Level 4: Tactical Execution (Problem 1.1 Breakdown)
 
-**Step 1.1.1**: Create file `assistant/flows/node_logic/message_extraction.py`  
-**Step 1.1.2**: Import dependencies (`ConversationState` from `assistant.state`)  
-**Step 1.1.3**: Define function with type hints and docstring  
-**Step 1.1.4**: Implement guard clause for pre-populated query  
-**Step 1.1.5**: Implement message list extraction with error handling  
-**Step 1.1.6**: Add logging statement for debugging visibility  
-**Step 1.1.7**: Return updated state immutably  
+**Step 1.1.1**: Create file `assistant/flows/node_logic/message_extraction.py`
+**Step 1.1.2**: Import dependencies (`ConversationState` from `assistant.state`)
+**Step 1.1.3**: Define function with type hints and docstring
+**Step 1.1.4**: Implement guard clause for pre-populated query
+**Step 1.1.5**: Implement message list extraction with error handling
+**Step 1.1.6**: Add logging statement for debugging visibility
+**Step 1.1.7**: Return updated state immutably
 
 Each of these steps is **independently verifiable**. Step 1.1.3 can be tested with a dummy state dict. Step 1.1.5 can be unit tested with various message list structures. This granularity ensures that if something fails, the failure surface is small and easily diagnosed.
 
@@ -371,9 +371,9 @@ This means **even if Turn 3 still produces short responses**, we'll have complet
 
 We have completed diagnostic work thoroughly. The problem is precisely scoped. The solution is architecturally sound. The implementation is straightforward. The testing path is clear. The instrumentation is deployed and ready to capture telemetry.
 
-**The blocking issue is narrow:** A single field extraction operation between two nodes.  
-**The fix is low-risk:** Adding a node that only copies string content, with guard clauses preventing interference with existing Streamlit pathway.  
-**The validation is immediate:** REST API Turn 2 test will confirm success or failure within seconds.  
+**The blocking issue is narrow:** A single field extraction operation between two nodes.
+**The fix is low-risk:** Adding a node that only copies string content, with guard clauses preventing interference with existing Streamlit pathway.
+**The validation is immediate:** REST API Turn 2 test will confirm success or failure within seconds.
 
 The question is not whether this will work—it's a mechanical fix for a well-understood gap. The question is whether **downstream issues exist** in the generation layer. But we cannot know until we unblock the flow. And if they exist, we now have the instrumentation to diagnose them systematically.
 

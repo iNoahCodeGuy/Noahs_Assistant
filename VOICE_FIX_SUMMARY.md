@@ -40,7 +40,7 @@ AFTER:  "I'm built on a modern, scalable tech stack..."
 def _enforce_first_person(self, text: str) -> str:
     """
     Post-processing safety net: Convert any third-person references to first person.
-    
+
     This is a backup mechanism in case the LLM copies third-person source material
     verbatim despite system prompt instructions. Applied after generation.
     """
