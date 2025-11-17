@@ -43,19 +43,19 @@ export $(cat .env | grep -v '^#' | xargs) && langgraph up --port 2024
 - Connect to `http://127.0.0.1:2024`
 - You should see your `conversation_flow` graph available
 
-## 📁 What Changed
+## 📁 Configuration
 
-**Directory Rename**: `src/` → `app_src/`
-- **Why**: LangGraph CLI reserves the name "src"
-- **Impact**: All imports now use `app_src` instead of `src`
+**Directory Structure**: Main application code is in `assistant/`
+- LangGraph flow is at `assistant/flows/conversation_flow.py`
+- All imports use `assistant.*` namespace
 
 **Configuration**: `langgraph.json`
 ```json
 {
   "dependencies": ["."],
-  "graphs": {"conversation_flow": "./app_src/flows/conversation_flow.py:graph"},
+  "graphs": {"conversation_flow": "./assistant/flows/conversation_flow.py:graph"},
   "env": ".env",
-  "python_version": "3.12"
+  "python_version": "3.11"
 }
 ```
 
@@ -72,7 +72,7 @@ export $(cat .env | grep -v '^#' | xargs) && langgraph up --port 2024
 - Wait 30 seconds, then verify with `docker info`
 
 ### Server won't start / Module errors
-- Verify `langgraph.json` has correct path: `./app_src/flows/conversation_flow.py:graph`
+- Verify `langgraph.json` has correct path: `./assistant/flows/conversation_flow.py:graph`
 - Check `.env` file exists with required variables:
   - `LANGSMITH_API_KEY`
   - `OPENAI_API_KEY`

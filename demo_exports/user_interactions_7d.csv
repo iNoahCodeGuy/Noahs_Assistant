@@ -1,25 +1,195 @@
-id,session_id,timestamp,user_role,query,query_type,response_time,response_length,code_snippets_shown,citations_provided,success,user_rating,follow_up_query,conversation_turn
-76,7be66d34f7d834a1,2025-09-24T11:06:36.302540,Just looking around,What's interesting about him?,general,6.094537041614511,769,0,8,1,,0,1
-52,f4ae276aa86a7384,2025-09-24T11:18:36.296385,Hiring Manager (technical),How does he approach system design?,technical,2.9282586701757665,719,4,2,1,,1,5
-58,f4ae276aa86a7384,2025-09-24T12:56:36.297794,Software Developer,How does the RAG engine work?,technical,2.532532278556019,987,0,6,0,,1,3
-69,2714dfeca1bf6fed,2025-09-24T16:08:36.300181,Hiring Manager (technical),What technologies does he use?,technical,4.409436591477146,1086,0,5,1,,0,3
-25,b1c907940b7f8cd3,2025-09-25T02:22:36.286317,Software Developer,How does the RAG engine work?,technical,2.7664062409249324,1646,0,6,1,4.0,0,5
-94,e296f01fb00d388d,2025-09-25T09:08:36.307345,Just looking around,Tell me about Noah,general,6.832888600028183,1224,0,4,1,3.0,0,5
-82,7be66d34f7d834a1,2025-09-25T10:09:36.304209,Software Developer,How is the vector store structured?,technical,0.8075184772304851,417,0,7,1,,0,3
-89,7be66d34f7d834a1,2025-09-25T14:03:36.305796,Hiring Manager (nontechnical),How does he work with teams?,career,1.688760187611475,1534,4,5,1,,1,1
-12,b8c836af286eb0d1,2025-09-26T05:58:36.283011,Software Developer,How does the RAG engine work?,technical,6.503906596416618,1824,0,5,1,3.0,1,1
-13,96c9b6b21dd48a96,2025-09-26T18:17:36.283230,Hiring Manager (technical),How does he approach system design?,technical,6.3886998292810295,328,0,4,1,5.0,0,5
-83,9d07af12af2e3b61,2025-09-27T01:12:36.304411,Just looking around,What's interesting about him?,general,7.67652266229582,357,0,2,1,3.0,0,4
-19,e296f01fb00d388d,2025-09-27T04:44:36.285048,Software Developer,Explain the role router logic,technical,2.9714859542386596,509,0,3,1,,1,2
-93,1fd27ab8597b595d,2025-09-27T18:54:36.307003,Hiring Manager (nontechnical),Tell me about his achievements,career,6.71363513595097,574,2,8,1,,1,4
-65,1fd27ab8597b595d,2025-09-28T06:56:36.299298,Just looking around,Tell me about Noah,general,5.305293420510307,1459,0,5,1,,0,1
-45,b8c836af286eb0d1,2025-09-28T14:50:36.291212,Hiring Manager (technical),What technologies does he use?,technical,4.583201409046393,1567,0,4,1,,0,1
-15,1fd27ab8597b595d,2025-09-29T02:21:36.283679,Just looking around,What's interesting about him?,general,1.1625675127355415,1874,0,1,1,,0,5
-17,bb6eb5e491223f04,2025-09-29T06:17:36.284375,Software Developer,What's the memory system implementation?,technical,6.2827863552038545,1353,0,8,1,,0,5
-47,e296f01fb00d388d,2025-09-29T06:35:36.291796,Hiring Manager (technical),How does he approach system design?,technical,6.953970440331062,715,2,2,0,5.0,0,4
-77,96c9b6b21dd48a96,2025-09-29T17:06:36.302761,Just looking around,What does Noah do for fun?,general,1.9578046814140835,964,0,8,1,5.0,1,1
-1,2714dfeca1bf6fed,2025-09-29T22:52:36.279344,Software Developer,Explain the role router logic,technical,7.873216174561735,1663,0,5,1,3.0,1,1
-78,2714dfeca1bf6fed,2025-09-30T03:08:36.302972,Hiring Manager (nontechnical),Tell me about his achievements,career,7.19216884335522,1439,1,7,1,3.0,0,5
-80,9d07af12af2e3b61,2025-09-30T04:21:36.303792,Hiring Manager (technical),Tell me about his development process,technical,7.555187739503995,1906,5,1,1,4.0,0,1
-5,e296f01fb00d388d,2025-09-30T04:29:36.281154,Hiring Manager (technical),Tell me about his development process,technical,0.6079888651693772,1999,0,5,1,4.0,0,2
-49,7be66d34f7d834a1,2025-09-30T05:04:36.295605,Hiring Manager (nontechnical),Tell me about his achievements,career,7.889110351178658,328,2,6,1,4.0,1,1
+{
+  "export_info": {
+    "generated_at": "2025-09-30T22:11:36.336675",
+    "period_start": "2025-08-31T22:11:36.336675",
+    "period_end": "2025-09-30T22:11:36.336675",
+    "period_days": 30
+  },
+  "user_interactions": {
+    "total_interactions": 97,
+    "unique_sessions": 10,
+    "avg_response_time": 3.979237717326688,
+    "success_rate": 0.8144329896907216,
+    "total_code_snippets": 91,
+    "total_citations": 458
+  },
+  "role_distribution": [
+    {
+      "user_role": "Just looking around",
+      "interaction_count": 31,
+      "session_count": 9,
+      "avg_response_time": 3.604729040222525,
+      "success_rate": 0.8709677419354839
+    },
+    {
+      "user_role": "Hiring Manager (technical)",
+      "interaction_count": 28,
+      "session_count": 9,
+      "avg_response_time": 4.249519915352783,
+      "success_rate": 0.7857142857142857
+    },
+    {
+      "user_role": "Software Developer",
+      "interaction_count": 21,
+      "session_count": 9,
+      "avg_response_time": 3.4152228991094455,
+      "success_rate": 0.8571428571428571
+    },
+    {
+      "user_role": "Hiring Manager (nontechnical)",
+      "interaction_count": 17,
+      "session_count": 9,
+      "avg_response_time": 4.913718813094949,
+      "success_rate": 0.7058823529411765
+    }
+  ],
+  "query_patterns": [
+    {
+      "query_type": "technical",
+      "count": 49,
+      "avg_response_time": 3.8919640512484954,
+      "success_rate": 0.8163265306122449
+    },
+    {
+      "query_type": "general",
+      "count": 31,
+      "avg_response_time": 3.604729040222525,
+      "success_rate": 0.8709677419354839
+    },
+    {
+      "query_type": "career",
+      "count": 17,
+      "avg_response_time": 4.913718813094949,
+      "success_rate": 0.7058823529411765
+    }
+  ],
+  "performance_metrics": {
+    "min_response_time": 0.5561761943925498,
+    "max_response_time": 7.889110351178658,
+    "avg_response_time": 3.979237717326688,
+    "avg_response_length": 1148.8556701030927
+  },
+  "content_effectiveness": [],
+  "top_questions": [
+    {
+      "question": "What technologies does he use?",
+      "frequency": 9,
+      "success_rate": 0.8888888888888888,
+      "avg_response_time": 3.2551354300320194
+    },
+    {
+      "question": "Noah MMA fight",
+      "frequency": 8,
+      "success_rate": 0.875,
+      "avg_response_time": 2.791834283501619
+    },
+    {
+      "question": "What's interesting about him?",
+      "frequency": 7,
+      "success_rate": 1.0,
+      "avg_response_time": 4.304973255331965
+    },
+    {
+      "question": "Tell me about Noah",
+      "frequency": 7,
+      "success_rate": 0.8571428571428571,
+      "avg_response_time": 5.191486660981673
+    },
+    {
+      "question": "Tell me about his development process",
+      "frequency": 7,
+      "success_rate": 0.8571428571428571,
+      "avg_response_time": 4.312692591480452
+    },
+    {
+      "question": "How does he approach system design?",
+      "frequency": 7,
+      "success_rate": 0.5714285714285714,
+      "avg_response_time": 4.7789110170968305
+    },
+    {
+      "question": "Fun facts about Noah",
+      "frequency": 7,
+      "success_rate": 0.8571428571428571,
+      "avg_response_time": 2.8169885390036167
+    },
+    {
+      "question": "Why should we hire Noah?",
+      "frequency": 6,
+      "success_rate": 0.3333333333333333,
+      "avg_response_time": 3.412388836823905
+    },
+    {
+      "question": "Explain the role router logic",
+      "frequency": 6,
+      "success_rate": 0.8333333333333334,
+      "avg_response_time": 3.1531534390615232
+    },
+    {
+      "question": "How does the RAG engine work?",
+      "frequency": 5,
+      "success_rate": 0.8,
+      "avg_response_time": 3.9305977657587534
+    },
+    {
+      "question": "What's the memory system implementation?",
+      "frequency": 4,
+      "success_rate": 1.0,
+      "avg_response_time": 3.9568408630882805
+    },
+    {
+      "question": "What's Noah's technical background?",
+      "frequency": 4,
+      "success_rate": 0.75,
+      "avg_response_time": 5.780958414231074
+    },
+    {
+      "question": "What's his career progression?",
+      "frequency": 4,
+      "success_rate": 1.0,
+      "avg_response_time": 6.105198909262305
+    },
+    {
+      "question": "How is the vector store structured?",
+      "frequency": 4,
+      "success_rate": 0.75,
+      "avg_response_time": 3.179203176784687
+    },
+    {
+      "question": "Tell me about his achievements",
+      "frequency": 3,
+      "success_rate": 1.0,
+      "avg_response_time": 7.264971443494949
+    },
+    {
+      "question": "How does he work with teams?",
+      "frequency": 3,
+      "success_rate": 1.0,
+      "avg_response_time": 4.180973416918458
+    },
+    {
+      "question": "What does Noah do for fun?",
+      "frequency": 2,
+      "success_rate": 0.5,
+      "avg_response_time": 1.6088933958322744
+    },
+    {
+      "question": "Show me the code architecture",
+      "frequency": 2,
+      "success_rate": 1.0,
+      "avg_response_time": 2.30179762932179
+    },
+    {
+      "question": "What's Noah's professional background?",
+      "frequency": 1,
+      "success_rate": 0.0,
+      "avg_response_time": 4.300256583381264
+    },
+    {
+      "question": "Show me Noah's code examples",
+      "frequency": 1,
+      "success_rate": 1.0,
+      "avg_response_time": 2.925279842624486
+    }
+  ]
+}

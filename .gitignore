@@ -89,3 +89,15 @@ chroma_db/
 .vercel
 .langgraph_api/
 Docker.dmg
+
+# SQLite databases (use Supabase instead)
+analytics.db
+analytics_example.db
+strategy_demo.db
+test.db
+*.db
+
+# Legacy artifacts
+Docker.dmg
+get-docker.sh
+codebase_structure.txt
