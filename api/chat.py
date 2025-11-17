@@ -14,12 +14,12 @@ from typing import Dict, Any
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Add src to path for imports
+# Add assistant to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from src.flows.conversation_flow import run_conversation_flow
-from src.state.conversation_state import ConversationState
-from src.core.rag_engine import RagEngine
+from assistant.flows.conversation_flow import run_conversation_flow
+from assistant.state.conversation_state import ConversationState
+from assistant.core.rag_engine import RagEngine
 
 
 class handler(BaseHTTPRequestHandler):

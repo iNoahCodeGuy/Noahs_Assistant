@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from src.analytics.supabase_analytics import supabase_analytics
-from src.services.twilio_service import get_twilio_service
+from assistant.analytics.supabase_analytics import supabase_analytics
+from assistant.services.twilio_service import get_twilio_service
 
 
 class handler(BaseHTTPRequestHandler):

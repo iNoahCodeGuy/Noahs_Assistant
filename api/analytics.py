@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from src.config.supabase_config import get_supabase_client
+from assistant.config.supabase_config import get_supabase_client
 
 # Rate limiting (simple in-memory for demo; use Redis in production)
 _rate_limit_store: Dict[str, List[float]] = {}

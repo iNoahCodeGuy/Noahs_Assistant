@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from src.services.resend_service import get_resend_service
-from src.services.storage_service import get_storage_service
-from src.services.twilio_service import get_twilio_service
+from assistant.services.resend_service import get_resend_service
+from assistant.services.storage_service import get_storage_service
+from assistant.services.twilio_service import get_twilio_service
 
 
 class handler(BaseHTTPRequestHandler):
