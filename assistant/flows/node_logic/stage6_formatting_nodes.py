@@ -47,6 +47,12 @@ def _retry_generation_if_insufficient(state: ConversationState, rag_engine: RagE
     Returns:
         Enhanced answer (or original if retry fails)
     """
+    # GUARD: Don't retry if this is the initial greeting
+    if state.get("is_greeting") or state.get("pipeline_halt"):
+        persona_hints = state.get("session_memory", {}).get("persona_hints", {})
+        if persona_hints.get("initial_greeting_shown"):
+            return state.get("answer", "")
+
     quality_warning = state.get("generation_quality_warning")
 
     # Only retry for menu option 1 if quality warning exists
@@ -68,11 +74,11 @@ def _retry_generation_if_insufficient(state: ConversationState, rag_engine: RagE
         "RETRY ATTEMPT - Previous response failed quality check.\n\n"
         f"Issue detected: {quality_warning}\n\n"
         "YOU MUST include ALL 5 layers with these EXACT headings:\n"
-        "**Frontend Layer:**\n"
-        "**Backend/Orchestration Layer:**\n"
-        "**Data Layer:**\n"
-        "**Observability Layer:**\n"
-        "**Deployment Layer:**\n\n"
+        "Frontend Layer:\n"
+        "Backend/Orchestration Layer:\n"
+        "Data Layer:\n"
+        "Observability Layer:\n"
+        "Deployment Layer:\n\n"
         "Each layer needs 2-3 complete sentences. Total target: 300-350 words.\n"
         "DO NOT skip any layer. DO NOT copy verbatim from context."
     )
@@ -89,8 +95,8 @@ def _retry_generation_if_insufficient(state: ConversationState, rag_engine: RagE
 
         # Validate retry succeeded
         word_count = len(enhanced_answer.split())
-        required_layers = ["**Frontend Layer:**", "**Backend/Orchestration Layer:**",
-                          "**Data Layer:**", "**Observability Layer:**", "**Deployment Layer:**"]
+        required_layers = ["Frontend Layer:", "Backend/Orchestration Layer:",
+                          "Data Layer:", "Observability Layer:", "Deployment Layer:"]
         missing = [l for l in required_layers if l not in enhanced_answer]
 
         if not missing and word_count >= 250:
@@ -151,6 +157,40 @@ def _split_answer_and_sources(answer: str) -> tuple[str, str]:
         sources = parts[1].strip()
         return body, sources
     return answer.strip(), ""
+
+
+def _remove_markdown_headers(text: str) -> str:
+    """Remove raw markdown headers and formatting from text.
+
+    Removes documentation-style markdown that shouldn't appear in conversational responses:
+    - Lines starting with ## or ### (markdown headers)
+    - Markdown bold syntax **text** (handled elsewhere but ensure cleanup)
+    - Standalone markdown list markers when they're part of raw documentation
+
+    Args:
+        text: Text that may contain raw markdown
+
+    Returns:
+        Text with markdown headers and formatting removed
+    """
+    lines = text.split('\n')
+    cleaned_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        # Skip lines that are markdown headers (## or ###)
+        if stripped.startswith('##') or stripped.startswith('###'):
+            continue
+        # Keep the line
+        cleaned_lines.append(line)
+
+    result = '\n'.join(cleaned_lines)
+
+    # Remove markdown bold (already done elsewhere, but ensure it's clean)
+    result = re.sub(r'\*\*([^*]+?)\*\*', r'\1', result)
+    result = re.sub(r'\*\*', '', result)
+
+    return result
 
 
 def _add_subcategory_code_blocks(
@@ -321,7 +361,7 @@ def _build_subcategory_followups(active_subcats: List[str]) -> List[str]:
     return suggestions[:3]  # Return at most 3
 
 
-def _build_followups(variant: str, intent: str = "general", active_subcats: List[str] = None, role_mode: str = "explorer") -> List[str]:
+def _build_followups(variant: str, intent: str = "general", active_subcats: List[str] = None, role_mode: str = "explorer", chart_would_help: bool = False) -> List[str]:
     """Generate role-specific followup prompt suggestions with subcategory awareness.
 
     Merged logic from logging_nodes.suggest_followups for inline followup generation.
@@ -331,6 +371,7 @@ def _build_followups(variant: str, intent: str = "general", active_subcats: List
         intent: Query intent/type (technical, data, career, etc.)
         active_subcats: Active technical subcategories for precision targeting
         role_mode: User's role (explorer, software_developer, etc.)
+        chart_would_help: Whether a chart/graph would enhance understanding
 
     Returns:
         List of 3 followup prompt strings
@@ -357,11 +398,29 @@ def _build_followups(variant: str, intent: str = "general", active_subcats: List
             "Should we map this architecture to your internal stack?",
         ]
     elif intent in {"data", "analytics"}:
-        return [
-            "Need the retrieval accuracy metrics for last week?",
-            "Want the cost-per-query breakdown?",
-            "Should we compare grounding confidence across roles?",
-        ]
+        suggestions = []
+
+        # Add chart offer if chart would help (contextual and role-aware)
+        if chart_would_help:
+            if role_mode in ["software_developer", "hiring_manager_technical"]:
+                # Technical users: performance/technical charts
+                suggestions.append("Would you like to see a chart visualizing this data?")
+            elif role_mode == "hiring_manager_nontechnical":
+                # Business users: business value charts
+                suggestions.append("Would you like to see a chart showing these trends?")
+            else:
+                # General users: accessible charts
+                suggestions.append("Would you like to see a chart of this data?")
+
+        # Add other data followups
+        if len(suggestions) < 3:
+            suggestions.extend([
+                "Need the retrieval accuracy metrics for last week?",
+                "Want the cost-per-query breakdown?",
+                "Should we compare grounding confidence across roles?",
+            ])
+
+        return suggestions[:3]
     elif intent in {"career", "general"}:
         return [
             "Want the story behind building this assistant end to end?",
@@ -445,6 +504,20 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
         >>> "**Teaching Takeaways**" in state["answer"]
         True
     """
+    # GUARD: Skip formatting if initial greeting is being shown
+    # Return immediately if this is the initial greeting - don't process it at all
+    if state.get("is_greeting") or state.get("pipeline_halt"):
+        persona_hints = state.get("session_memory", {}).get("persona_hints", {})
+        if persona_hints.get("initial_greeting_shown"):
+            logger.info("format_answer: Skipping - initial greeting shown, preserving answer")
+            return state
+
+    # CRITICAL GUARD: Never process if answer already contains initial greeting
+    current_answer = state.get("answer", "")
+    if current_answer and "1️⃣ Hiring Manager" in current_answer:
+        logger.warning("format_answer: Initial greeting detected - skipping all processing")
+        return state
+
     # GUARDRAIL: Retry generation if quality check failed
     base_answer = _retry_generation_if_insufficient(state, rag_engine)
 
@@ -459,17 +532,37 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
     if not base_answer:
         return {}
 
+    # Strip markdown bold formatting from base answer before processing
+    base_answer = re.sub(r'\*\*([^*]+?)\*\*', r'\1', base_answer)
+    base_answer = re.sub(r'\*\*', '', base_answer)
+
     # PRIORITY: Skip enrichments if answer is already a role welcome message
     # Prevents duplicate content when menu selection shows role-specific welcome
     welcome_indicators = [
         "Since you selected",
         "You can choose where to start:",
         "Before we dive in, what best describes you?",
-        "I can focus on the areas most relevant to you"
+        "I can focus on the areas most relevant to you",
+        "1️⃣ Hiring Manager",  # Initial greeting indicator
+        "Looking to Confess Crush 💌"  # Initial greeting indicator
     ]
     if any(indicator in base_answer for indicator in welcome_indicators):
         # This is a welcome/menu message - don't add formatting
+        logger.info("format_answer: Detected welcome message, skipping formatting")
         state["answer"] = base_answer
+        return state
+
+    # Skip formatting for menu option 1 (brief overview only, no Teaching Takeaways or expandable sections)
+    if (state.get("query_type") == "menu_selection" and
+        state.get("menu_choice") == "1"):
+        logger.info("format_answer: Detected menu option 1, skipping formatting - returning brief overview only")
+        # Strip any remaining markdown, sources, and return clean answer
+        clean_answer = re.sub(r'\*\*([^*]+?)\*\*', r'\1', base_answer)
+        clean_answer = re.sub(r'\*\*', '', clean_answer)
+        # Remove Sources section if present
+        clean_answer = re.sub(r'\nSources:.*$', '', clean_answer, flags=re.DOTALL)
+        clean_answer = re.sub(r'\nSources\s*:.*$', '', clean_answer, flags=re.DOTALL)
+        state["answer"] = clean_answer.strip()
         return state
 
     depth = state.get("depth_level", 1)
@@ -480,10 +573,40 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
     role = state.get("role", "Just looking around")
 
     body_text, sources_text = _split_answer_and_sources(base_answer)
+
+    # Remove markdown headers from body text (documentation cleanup)
+    body_text = _remove_markdown_headers(body_text)
+
     summary_lines = _summarize_answer(body_text, depth)
 
     sections: List[str] = []
-    sections.append("**Teaching Takeaways**")
+
+    # Layer 3: File Content Display in Formatting
+    # Show file content prominently when explicitly requested
+    if state.get("file_request") and state.get("file_content", {}).get("success"):
+        file_data = state["file_content"]
+        file_path = file_data.get("file_path", "unknown")
+        file_content_text = file_data.get("content", "")
+
+        # Determine file language for syntax highlighting
+        if file_path.endswith(".py"):
+            lang = "python"
+        elif file_path.endswith((".ts", ".tsx")):
+            lang = "typescript"
+        elif file_path.endswith((".js", ".jsx")):
+            lang = "javascript"
+        elif file_path.endswith(".md"):
+            lang = "markdown"
+        else:
+            lang = "text"
+
+        # Format file section with code block
+        file_section = f"## File: `{file_path}`\n\n```{lang}\n{file_content_text}\n```"
+        sections.append(file_section)
+        sections.append("")  # Empty line for spacing
+        logger.info(f"File content displayed in response: {file_path}")
+
+    sections.append("Teaching Takeaways")
     sections.extend(summary_lines or ["- I pulled the relevant context and kept the answer grounded."])
 
     details_block = content_blocks.render_block(
@@ -639,7 +762,6 @@ def build_conversation_graph():
                     open_by_default=depth >= 3,
                 )
             )
-            sections.append(content_blocks.code_display_guardrails())
         else:
             # Normal code retrieval from code index
             try:
@@ -669,7 +791,6 @@ def build_conversation_graph():
                             open_by_default=depth >= 3,
                         )
                     )
-                    sections.append(content_blocks.code_display_guardrails())
             elif "include_code_reference" in action_types:
                 sections.append("")
                 sections.append("Code index is refreshing; happy to walk through the architecture instead.")
@@ -782,20 +903,32 @@ def build_conversation_graph():
     intent = state.get("query_intent") or state.get("query_type") or "general"
     role_mode = state.get("role_mode", "explorer")
     followup_variant = state.get("followup_variant", "mixed")
+    chart_would_help = state.get("chart_would_help", False)
 
     followups = _build_followups(
         variant=followup_variant,
         intent=intent,
         active_subcats=active_subcats,
-        role_mode=role_mode
+        role_mode=role_mode,
+        chart_would_help=chart_would_help
     )
 
     if followups:
         sections.append("")
-        sections.append("**Where next?**")
+        sections.append("Where next?")
         sections.extend(f"- {item}" for item in followups)
         state["followup_prompts"] = followups
 
     enriched_answer = "\n".join(section for section in sections if section is not None)
+
+    # Strip all markdown bold formatting (**text**) from the final answer
+    # Handle multiple occurrences, edge cases, and nested formatting
+    enriched_answer = re.sub(r'\*\*([^*]+?)\*\*', r'\1', enriched_answer)
+    # Also remove any remaining single asterisks that might be left over
+    enriched_answer = re.sub(r'\*\*', '', enriched_answer)
+    # Remove any standalone asterisks used for emphasis
+    enriched_answer = re.sub(r'\s+\*\s+', ' ', enriched_answer)
+    enriched_answer = re.sub(r'\*\s+', '', enriched_answer)
+
     state["answer"] = enriched_answer.strip()
     return state

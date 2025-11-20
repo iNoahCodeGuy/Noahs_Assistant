@@ -195,7 +195,9 @@ def _plan_hm_technical_actions(state: ConversationState) -> None:
         logger.debug(f"Architecture code NOT added: query_type={query_type}, menu_choice={menu_choice}")
 
     # Always add technical artifacts for technical queries
-    if query_type == "technical" or toggles.get("code"):
+    # Check query type, proactive detection, or display toggles
+    code_would_help = state.get("code_would_help", False)
+    if query_type == "technical" or code_would_help or toggles.get("code"):
         state["pending_actions"].append({"type": "include_code_reference"})
 
     if toggles.get("data"):
@@ -258,7 +260,9 @@ def _plan_developer_actions(state: ConversationState) -> None:
     ])
 
     # Add code and technical artifacts
-    if code_display_requested or toggles.get("code"):
+    # Check explicit requests, proactive detection, or display toggles
+    code_would_help = state.get("code_would_help", False)
+    if code_display_requested or code_would_help or toggles.get("code"):
         state["pending_actions"].append({"type": "include_code_reference"})
 
     if import_explanation_requested:

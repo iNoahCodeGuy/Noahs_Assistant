@@ -9,6 +9,10 @@ resend>=2.0.0
 twilio>=9.0.0
 requests>=2.31.0
 
+# Optional: Typo handling features (gracefully degrades if not installed)
+pyspellchecker>=0.8.0  # Optional: Spell checking for query preprocessing
+python-Levenshtein>=0.21.0  # Optional: Fuzzy matching for retrieval fallback
+
 # Note: langchain, openai, httpx, pydantic, numpy will be installed as dependencies
 # pandas is required by src/retrieval/career_kb.py
 # requests is required for fetching live analytics from /api/analytics endpoint

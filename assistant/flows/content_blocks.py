@@ -278,7 +278,7 @@ The dual interface serves two audiences. Streamlit gives Noah rapid prototyping 
 Python serverless functions on Vercel eliminate infrastructure management — no EC2 instances to patch, no load balancers to configure. LangGraph provides the orchestration layer, routing queries through modular nodes (classify → retrieve → generate → log) with clean separation of concerns. When Noah needs to add a new capability — say, sentiment analysis or language detection — he adds a new node without touching existing logic.
 
 📊 Retrieval & Data (Supabase Postgres + pgvector)
-This is the controversial choice. Most AI startups use dedicated vector databases like Pinecone or Weaviate. Noah went with pgvector because it centralizes everything in Postgres — embeddings, analytics, user data, all queryable with SQL. This simplifies auditing, enables complex joins (e.g., "show me all queries from technical hiring managers with >0.9 similarity scores"), and costs way less at current scale. When the system hits 100k+ daily users, migrating to a dedicated vector DB is a one-week project because the retrieval interface is abstracted.
+This is the controversial choice. Most AI startups use dedicated vector databases like Pinecone or Weaviate. Noah went with pgvector because it centralizes everything in Postgres — embeddings, analytics, user data, all queryable with SQL. This simplifies auditing, enables complex joins (e.g., "show me all queries from technical hiring managers with >0.9 similarity scores"), and costs way less at current scale. When I hit 100k+ daily users, migrating to a dedicated vector DB is a one-week project because the retrieval interface is abstracted.
 
 🔍 Observability & Models (LangSmith + compat layer)
 LangSmith traces every LLM call — prompt, response, latency, tokens, cost. This is critical for debugging ("Why did the system say X?") and optimization ("Which prompts perform best?"). The langchain_compat layer abstracts model providers, so swapping OpenAI for Anthropic or Llama is a config change, not a codebase rewrite.
@@ -304,27 +304,29 @@ def format_code_snippet(
     description: str = "",
     branch: str = "main"
 ) -> str:
-    """Format a code snippet with file path, description, and enterprise prompt.
+    """Format a code snippet in clean ChatGPT/Claude style.
+
+    Returns minimal formatting: just code block with small file path label.
+    Similar to how modern AI assistants display code - clean and minimal.
 
     Args:
         code: The actual code content
         file_path: Relative path to the file (e.g., "src/core/retriever.py")
         language: Programming language for syntax highlighting
-        description: Optional description of what the code does
-        branch: Git branch name
+        description: Optional description (currently unused for cleaner display)
+        branch: Git branch name (currently unused for cleaner display)
 
     Returns:
-        Formatted markdown code block with metadata
+        Formatted markdown code block with minimal metadata
     """
-    header_lines = [f"File: `{file_path}` @ `{branch}`"]
-    if description:
-        header_lines.append(f"Purpose: {description}")
+    # Small, subtle file path label (like ChatGPT/Claude do)
+    file_label = f"`{file_path}`"
 
+    # Clean code block
     code_block = f"```{language}\n{code}\n```"
 
-    footer = "Would you like to see the enterprise variant, test coverage, or the full file?"
-
-    return "\n".join(header_lines + ["", code_block, "", footer])
+    # Minimal format: file path on its own line, then code
+    return f"{file_label}\n\n{code_block}"
 
 
 def format_import_explanation(
@@ -761,7 +763,7 @@ Optimization strategies that could save even more:
 - Edge caching for static content → $15/mo savings
 - HNSW indexing gives 4x faster retrieval at the same cost
 
-For enterprise ROI: A human support ticket costs $15 on average. This AI assistant costs $0.0003 per interaction. Break-even is after just 50 interactions. Typical ROI is 5000x cost reduction.
+For enterprise ROI: A human support ticket costs $15 on average. I cost $0.0003 per interaction. Break-even is after just 50 interactions. Typical ROI is 5000x cost reduction.
 
 Curious about the scaling strategy, or want to see how caching is implemented?"""
 

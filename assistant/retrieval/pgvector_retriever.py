@@ -25,6 +25,7 @@ Architecture:
 """
 
 import logging
+import os
 from typing import List, Dict, Any, Optional
 from openai import OpenAI
 
@@ -32,6 +33,27 @@ from assistant.config.supabase_config import get_supabase_client, supabase_setti
 from assistant.analytics.supabase_analytics import supabase_analytics, RetrievalLogData
 
 logger = logging.getLogger(__name__)
+
+# Try to import fuzzy matching library, but don't fail if unavailable
+try:
+    from Levenshtein import distance as levenshtein_distance
+    FUZZY_MATCHING_AVAILABLE = True
+except ImportError:
+    FUZZY_MATCHING_AVAILABLE = False
+    logger.debug("python-Levenshtein not installed - fuzzy matching will be disabled")
+
+
+def _is_feature_enabled(feature_name: str) -> bool:
+    """Check if a feature is enabled via environment variable.
+
+    Args:
+        feature_name: Name of the feature flag (e.g., 'ENABLE_HYBRID_SEARCH')
+
+    Returns:
+        True if feature is enabled, False otherwise (default)
+    """
+    value = os.getenv(feature_name, "false").lower()
+    return value in ("true", "1", "yes", "on")
 
 
 class PgVectorRetriever:
@@ -431,6 +453,211 @@ class PgVectorRetriever:
 
         scored.sort(key=lambda c: c['_boosted_similarity'], reverse=True)
         return scored
+
+    def retrieve_hybrid(
+        self,
+        query: str,
+        top_k: int = 3,
+        threshold: Optional[float] = None,
+        use_keyword_fallback: bool = True
+    ) -> List[Dict[str, Any]]:
+        """Hybrid retrieval: semantic search + keyword fallback.
+
+        Strategy:
+        1. Try semantic search first (normal flow)
+        2. If scores are low (< 0.4), try keyword matching
+        3. Combine and re-rank results
+
+        Args:
+            query: Search query text
+            top_k: Number of results to return
+            threshold: Optional similarity threshold override
+            use_keyword_fallback: Whether to use keyword search if semantic scores are low
+
+        Returns:
+            List of chunk dicts (same format as retrieve())
+        """
+        # Step 1: Semantic search (existing logic)
+        semantic_results = self.retrieve(query, top_k * 2, threshold)
+
+        # Step 2: Check if we need keyword fallback
+        if use_keyword_fallback and semantic_results:
+            avg_score = sum(c['similarity'] for c in semantic_results) / len(semantic_results)
+            if avg_score < 0.4:
+                logger.info(f"Low semantic scores (avg={avg_score:.2f}), trying keyword fallback")
+                keyword_results = self._keyword_search(query, top_k)
+
+                # Merge and deduplicate
+                combined = self._merge_results(semantic_results, keyword_results)
+                return combined[:top_k]
+
+        return semantic_results[:top_k]
+
+    def _keyword_search(self, query: str, top_k: int) -> List[Dict[str, Any]]:
+        """Keyword-based search as fallback for typos.
+
+        Uses PostgreSQL ILIKE pattern matching for case-insensitive search.
+        This helps when semantic search fails due to typos or out-of-domain queries.
+
+        Args:
+            query: Search query text
+            top_k: Number of results to return
+
+        Returns:
+            List of chunk dicts with similarity scores (capped at 0.6)
+        """
+        try:
+            # Extract keywords (remove stop words and short words)
+            stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were'}
+            keywords = [w.lower().strip() for w in query.split()
+                       if len(w) > 3 and w.lower() not in stop_words]
+
+            if not keywords:
+                logger.debug("No keywords extracted for keyword search")
+                return []
+
+            # Fetch all chunks for keyword matching
+            result = self.supabase_client.table('kb_chunks')\
+                .select('id, doc_id, section, content, embedding')\
+                .limit(500)\
+                .execute()
+
+            if not result.data:
+                return []
+
+            # Score chunks by keyword matches
+            keyword_chunks = []
+            for chunk in result.data:
+                content_lower = chunk['content'].lower()
+                matches = sum(1 for kw in keywords if kw in content_lower)
+
+                if matches > 0:
+                    # Calculate simple keyword match score (capped at 0.6 to indicate it's below semantic threshold)
+                    score = min(0.6, (matches / len(keywords)) * 0.5)
+
+                    keyword_chunks.append({
+                        'id': chunk['id'],
+                        'doc_id': chunk.get('doc_id'),
+                        'section': chunk.get('section'),
+                        'content': chunk['content'],
+                        'similarity': score,
+                        'source': 'keyword'  # Flag for debugging
+                    })
+
+            # Sort by match score
+            keyword_chunks.sort(key=lambda x: x['similarity'], reverse=True)
+            logger.info(f"Keyword search found {len(keyword_chunks)} matching chunks")
+            return keyword_chunks[:top_k]
+
+        except Exception as e:
+            logger.error(f"Keyword search failed: {e}")
+            return []
+
+    def _merge_results(
+        self,
+        semantic: List[Dict],
+        keyword: List[Dict]
+    ) -> List[Dict]:
+        """Merge semantic and keyword results, deduplicate by chunk ID.
+
+        Args:
+            semantic: Results from semantic search
+            keyword: Results from keyword search
+
+        Returns:
+            Merged and deduplicated list, sorted by similarity
+        """
+        seen_ids = set()
+        merged = []
+
+        # Add semantic first (higher priority)
+        for chunk in semantic:
+            chunk_id = chunk.get('id')
+            if chunk_id and chunk_id not in seen_ids:
+                seen_ids.add(chunk_id)
+                merged.append(chunk)
+
+        # Add keyword results that aren't duplicates
+        for chunk in keyword:
+            chunk_id = chunk.get('id')
+            if chunk_id and chunk_id not in seen_ids:
+                seen_ids.add(chunk_id)
+                merged.append(chunk)
+
+        # Re-sort by similarity
+        merged.sort(key=lambda x: x.get('similarity', 0.0), reverse=True)
+        logger.debug(f"Merged {len(semantic)} semantic + {len(keyword)} keyword → {len(merged)} unique results")
+        return merged
+
+    def _fuzzy_match_chunks(
+        self,
+        query: str,
+        chunks: List[Dict],
+        threshold: float = 0.7
+    ) -> List[Dict]:
+        """Fuzzy match query against chunk content.
+
+        Only used when semantic + keyword search both fail.
+        Uses Jaccard similarity and Levenshtein distance.
+
+        Args:
+            query: Search query text
+            chunks: Chunks to match against
+            threshold: Minimum similarity threshold (0-1)
+
+        Returns:
+            List of chunks with fuzzy match scores
+        """
+        if not FUZZY_MATCHING_AVAILABLE:
+            logger.debug("Fuzzy matching unavailable, skipping")
+            return []
+
+        try:
+            query_words = set(query.lower().split())
+            scored_chunks = []
+
+            for chunk in chunks:
+                content = chunk.get('content', '')
+                if not content:
+                    continue
+
+                content_words = set(content.lower().split())
+
+                # Calculate Jaccard similarity
+                intersection = query_words & content_words
+                union = query_words | content_words
+                jaccard = len(intersection) / len(union) if union else 0
+
+                # Calculate Levenshtein similarity for key terms
+                max_levenshtein = 0
+                for q_word in query_words:
+                    if len(q_word) > 3:  # Skip short words
+                        for c_word in content_words:
+                            if len(c_word) > 3:
+                                # Normalize by max length
+                                max_len = max(len(q_word), len(c_word))
+                                if max_len > 0:
+                                    distance = levenshtein_distance(q_word, c_word)
+                                    similarity = 1 - (distance / max_len)
+                                    max_levenshtein = max(max_levenshtein, similarity)
+
+                # Combine scores
+                fuzzy_score = (jaccard * 0.6) + (max_levenshtein * 0.4)
+
+                if fuzzy_score >= threshold:
+                    # Cap fuzzy score at 0.5 (below semantic threshold)
+                    chunk['similarity'] = max(chunk.get('similarity', 0), fuzzy_score * 0.5)
+                    chunk['source'] = 'fuzzy'
+                    scored_chunks.append(chunk)
+
+            # Sort by similarity
+            scored_chunks.sort(key=lambda x: x.get('similarity', 0.0), reverse=True)
+            logger.info(f"Fuzzy matching found {len(scored_chunks)} chunks above threshold {threshold}")
+            return scored_chunks
+
+        except Exception as e:
+            logger.error(f"Fuzzy matching failed: {e}")
+            return []
 
     def health_check(self) -> Dict[str, Any]:
         """Check if retrieval service is operational.

@@ -68,38 +68,61 @@ def presentation_controller(state: ConversationState) -> ConversationState:
     lowered_query = state.get("query", "").lower()
 
     # ========== DEPTH SELECTION ==========
-    rules: Tuple[DepthRule, ...] = (
-        DepthRule("default", 1, "Opening overview"),
-        DepthRule("technical_role", 2, "Technical persona expects guided detail"),
-        DepthRule("teaching_moment", 3, "User explicitly asked for a deep explanation"),
-        DepthRule("multi_turn", 2, "Conversation has progressed beyond the opener"),
-        DepthRule("business_depth", 2, "Business questions need context + outcomes"),
-    )
+    # PRIORITY: Check for explicit detail preference first (overrides role-based inference)
+    detail_preference = state.get("detail_preference")
+    session_memory = state.get("session_memory", {})
+    if not detail_preference:
+        detail_preference = session_memory.get("detail_preference")
 
-    depth = 1
-    reason = "default"
+    if detail_preference:
+        # Map preference to depth level
+        if detail_preference == "brief":
+            depth = 1
+            reason = f"User requested brief overview"
+        elif detail_preference == "moderate":
+            depth = 2
+            reason = f"User requested moderate detail"
+        elif detail_preference == "comprehensive":
+            depth = 3
+            reason = f"User requested comprehensive walkthrough"
+        else:
+            # Fallback to role-based inference if preference is invalid
+            depth = 1
+            reason = "Invalid preference, defaulting to overview"
+    else:
+        # No explicit preference - use role-based inference
+        rules: Tuple[DepthRule, ...] = (
+            DepthRule("default", 1, "Opening overview"),
+            DepthRule("technical_role", 2, "Technical persona expects guided detail"),
+            DepthRule("teaching_moment", 3, "User explicitly asked for a deep explanation"),
+            DepthRule("multi_turn", 2, "Conversation has progressed beyond the opener"),
+            DepthRule("business_depth", 2, "Business questions need context + outcomes"),
+        )
 
-    for rule in rules:
-        if rule.name == "technical_role" and role_mode in {
-            "software developer",
-            "hiring manager (technical)",
-            "hiring_manager_technical",
-        }:
-            depth = max(depth, rule.level)
-            reason = rule.reason
-        elif rule.name == "teaching_moment" and state.get("teaching_moment"):
-            depth = max(depth, rule.level)
-            reason = rule.reason
-        elif rule.name == "multi_turn" and conversation_turn >= 2:
-            depth = max(depth, rule.level)
-            reason = rule.reason
-        elif rule.name == "business_depth" and intent in BUSINESS_INTENTS:
-            depth = max(depth, rule.level)
-            reason = rule.reason
+        depth = 1
+        reason = "default"
 
-    if intent in ENGINEERING_INTENTS and state.get("needs_longer_response"):
-        depth = 3
-        reason = "Engineering deep dive requested"
+        for rule in rules:
+            if rule.name == "technical_role" and role_mode in {
+                "software developer",
+                "hiring manager (technical)",
+                "hiring_manager_technical",
+            }:
+                depth = max(depth, rule.level)
+                reason = rule.reason
+            elif rule.name == "teaching_moment" and state.get("teaching_moment"):
+                depth = max(depth, rule.level)
+                reason = rule.reason
+            elif rule.name == "multi_turn" and conversation_turn >= 2:
+                depth = max(depth, rule.level)
+                reason = rule.reason
+            elif rule.name == "business_depth" and intent in BUSINESS_INTENTS:
+                depth = max(depth, rule.level)
+                reason = rule.reason
+
+        if intent in ENGINEERING_INTENTS and state.get("needs_longer_response"):
+            depth = 3
+            reason = "Engineering deep dive requested"
 
     state["depth_level"] = min(depth, 3)
     state["detail_strategy"] = reason

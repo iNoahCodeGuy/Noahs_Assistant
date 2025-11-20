@@ -23,7 +23,7 @@ Design Principles Applied:
 
 import re
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # Import NEW TypedDict state (Phase 3A migration)
 from assistant.state.conversation_state import ConversationState
@@ -192,6 +192,59 @@ def _is_data_display_request(lowered_query: str) -> bool:
     return any(keyword in lowered_query for keyword in DATA_DISPLAY_KEYWORDS)
 
 
+def _detect_file_request(query: str) -> Optional[str]:
+    """Detect if query requests a specific file to be read.
+
+    Purpose: Enable on-demand file reading when users ask to see specific files.
+    Detects patterns like "show me file X", "read X.py", "open X", etc.
+
+    Args:
+        query: User's query text
+
+    Returns:
+        File path if detected, None otherwise
+
+    Examples:
+        >>> _detect_file_request("show me assistant/core/rag_engine.py")
+        "assistant/core/rag_engine.py"
+        >>> _detect_file_request("read the pgvector_retriever file")
+        None  # Too vague, no specific path
+    """
+    lowered = query.lower()
+
+    # Patterns that indicate file requests
+    file_patterns = [
+        r'show\s+me\s+(?:the\s+)?(?:file\s+)?([a-zA-Z0-9_/\.\-]+\.(?:py|tsx?|jsx?|md))',
+        r'read\s+(?:the\s+)?(?:file\s+)?([a-zA-Z0-9_/\.\-]+\.(?:py|tsx?|jsx?|md))',
+        r'open\s+(?:the\s+)?(?:file\s+)?([a-zA-Z0-9_/\.\-]+\.(?:py|tsx?|jsx?|md))',
+        r'display\s+(?:the\s+)?(?:file\s+)?([a-zA-Z0-9_/\.\-]+\.(?:py|tsx?|jsx?|md))',
+        r'view\s+(?:the\s+)?(?:file\s+)?([a-zA-Z0-9_/\.\-]+\.(?:py|tsx?|jsx?|md))',
+        r'see\s+(?:the\s+)?(?:file\s+)?([a-zA-Z0-9_/\.\-]+\.(?:py|tsx?|jsx?|md))',
+    ]
+
+    for pattern in file_patterns:
+        match = re.search(pattern, lowered)
+        if match:
+            file_path = match.group(1)
+            # Clean up common prefixes
+            file_path = file_path.lstrip('./')
+            return file_path
+
+    # Also check for file paths that might be mentioned directly
+    # Pattern: path/to/file.py or assistant/core/file.py
+    direct_path_pattern = r'([a-zA-Z0-9_/]+/[a-zA-Z0-9_/]+\.(?:py|tsx?|jsx?|md))'
+    match = re.search(direct_path_pattern, query)
+    if match:
+        file_path = match.group(1)
+        # Check if it's in a context that suggests file reading
+        context_keywords = ['show', 'read', 'open', 'display', 'view', 'see', 'file']
+        query_before = query[:match.start()].lower()
+        if any(keyword in query_before for keyword in context_keywords):
+            return file_path
+
+    return None
+
+
 def _is_ambiguous_query(query: str) -> tuple[bool, dict | None]:
     """Check if query is ambiguous and should trigger Ask Mode.
 
@@ -249,6 +302,136 @@ def _expand_vague_query(query: str) -> str:
     return query
 
 
+def _should_ask_detail_preference(state: ConversationState) -> bool:
+    """Determine if we should ask about detail level before responding.
+
+    Returns False if:
+    - Query has explicit detail signals ("brief", "quick", "detailed", "deep dive", etc.)
+    - Role strongly indicates preference (Software Developer → detailed, Nontechnical HM → brief)
+    - session_memory has established detail_preference
+    - Query is menu selection
+
+    Returns True if:
+    - Query is broad ("tell me about", "explain", "how does", "what is")
+    - No specific indicators in query (no "code", "sql", "implementation")
+    - Early conversation (conversation_turn < 2) OR no established preference
+    - Role is ambiguous ("Just Looking Around")
+
+    Args:
+        state: Current conversation state
+
+    Returns:
+        True if we should ask about detail preference, False otherwise
+    """
+    # Don't ask if menu selection
+    if state.get("query_type") == "menu_selection" or state.get("menu_choice"):
+        return False
+
+    query = state.get("query", "").lower()
+
+    # Check for explicit detail signals in query
+    explicit_signals = [
+        "brief", "quick", "summary", "overview", "short",
+        "detailed", "comprehensive", "deep dive", "full", "in depth",
+        "explain in detail", "walk me through", "step by step"
+    ]
+    if any(signal in query for signal in explicit_signals):
+        return False
+
+    # Check if role strongly indicates preference
+    role_mode = state.get("role_mode", "").lower()
+    if role_mode in ["software_developer", "hiring_manager_technical"]:
+        # Technical roles default to detailed - don't ask
+        return False
+    elif role_mode in ["hiring_manager_nontechnical", "hiring_manager"]:
+        # Non-technical roles default to brief - don't ask
+        return False
+
+    # Check if preference already established (in state or session memory)
+    if state.get("detail_preference"):
+        return False
+    session_memory = state.get("session_memory", {})
+    if session_memory.get("detail_preference"):
+        return False
+
+    # Check if query is broad enough to warrant asking
+    broad_queries = [
+        "tell me about", "explain", "how does", "what is", "what are",
+        "show me", "walk me through", "describe", "help me understand"
+    ]
+
+    if not any(broad in query for broad in broad_queries):
+        return False
+
+    # Check if query has specific indicators that suggest detail level
+    specific_indicators = [
+        "code", "sql", "implementation", "architecture diagram",
+        "show code", "display code", "source code"
+    ]
+    if any(indicator in query for indicator in specific_indicators):
+        return False  # Query is specific enough to infer detail level
+
+    # Check conversation turn - ask more in early conversation
+    conversation_turn = state.get("conversation_turn", 0)
+    if conversation_turn >= 2 and session_memory.get("detail_preference"):
+        return False  # Preference should be established by now
+
+    # Role is ambiguous or early conversation - ask about preference
+    if role_mode in ["just_looking_around", "explorer", ""] or conversation_turn < 2:
+        return True
+
+    return False
+
+
+def _parse_detail_preference(query: str) -> str | None:
+    """Parse detail preference from user response.
+
+    Detects patterns indicating user's detail preference:
+    - "brief", "quick", "summary", "1" → "brief"
+    - "moderate", "medium", "some detail", "2" → "moderate"
+    - "detailed", "comprehensive", "deep dive", "full", "3" → "comprehensive"
+
+    Handles both pure preference responses ("brief") and combined responses
+    ("brief overview of RAG").
+
+    Args:
+        query: User's query text
+
+    Returns:
+        Preference string ("brief", "moderate", "comprehensive") or None if not detected
+    """
+    lowered = query.lower().strip()
+
+    # Check for exact matches first (pure preference responses)
+    if lowered in ["1", "brief", "quick", "summary", "overview"]:
+        return "brief"
+    if lowered in ["2", "moderate", "medium"]:
+        return "moderate"
+    if lowered in ["3", "detailed", "comprehensive", "full"]:
+        return "comprehensive"
+
+    # Check for preference patterns in longer queries
+    # Brief indicators (check word boundaries to avoid false positives)
+    brief_patterns = [r"\bbrief\b", r"\bquick\b", r"\bsummary\b", r"\boverview\b", r"\bshort\b", r"\bhigh level\b"]
+    if any(re.search(pattern, lowered) for pattern in brief_patterns):
+        return "brief"
+
+    # Moderate indicators
+    moderate_patterns = [r"\bmoderate\b", r"\bmedium\b", r"\bsome detail\b"]
+    if any(re.search(pattern, lowered) for pattern in moderate_patterns):
+        return "moderate"
+
+    # Comprehensive indicators
+    comprehensive_patterns = [
+        r"\bdetailed\b", r"\bcomprehensive\b", r"\bdeep dive\b", r"\bfull\b",
+        r"\bin depth\b", r"\bcomplete\b", r"\bthorough\b", r"\bextensive\b"
+    ]
+    if any(re.search(pattern, lowered) for pattern in comprehensive_patterns):
+        return "comprehensive"
+
+    return None
+
+
 def classify_intent(state: ConversationState) -> Dict[str, Any]:
     """Classify the incoming query intent and return an updated state.
 
@@ -300,7 +483,22 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
     # Initialize partial update dict (only fields we're modifying)
     update: Dict[str, Any] = {}
 
-    # PRIORITY: Check for menu selection FIRST (explicit navigation choice)
+    # PRIORITY: Check for detail preference response FIRST (user responding to clarification)
+    # This handles cases where user is responding to a detail preference question
+    detail_pref = _parse_detail_preference(query)
+    if detail_pref:
+        # User is responding with detail preference
+        update["detail_preference"] = detail_pref
+        update["detail_preference_needed"] = False
+        # Store in session memory for persistence
+        session_memory = state.get("session_memory", {})
+        session_memory["detail_preference"] = detail_pref
+        update["session_memory"] = session_memory
+        logger.info(f"Detail preference detected: '{query}' → {detail_pref}")
+        # Continue with normal classification after preference is set
+        # Note: We'll skip asking for detail preference again since it's now set
+
+    # PRIORITY: Check for menu selection (explicit navigation choice)
     # Matches: "1", "2", "3", "4", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "option 1", etc.
     menu_pattern = r'^\s*(1️⃣|2️⃣|3️⃣|4️⃣|[1-4]|option\s*[1-4])\s*$'
     menu_match = re.match(menu_pattern, query.strip(), re.IGNORECASE)
@@ -313,6 +511,7 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         update["intent_confidence"] = 1.0
         update["is_ambiguous"] = False
         update["clarification_needed"] = False  # Menu selections are explicit
+        update["detail_preference_needed"] = False  # Menu selections don't need detail preference
         logger.info(f"Menu selection detected: '{query}' → option {menu_choice}")
         # DEBUG: Verify state update will propagate
         logger.info(f"✅ Menu choice SET in update dict: menu_choice={menu_choice}, query_type={update['query_type']}")
@@ -328,6 +527,17 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         update["emotional_pacing"] = "surge"
 
     update["topic_focus"] = detect_topic_focus(query)
+
+    # Check if we should ask about detail preference (before checking topic ambiguity)
+    # Only check if not already responding to a detail preference question
+    # Also check if preference wasn't just set in this turn
+    if not detail_pref and "detail_preference" not in update:
+        # Create a temporary state with the update merged to check if preference exists
+        temp_state = {**state, **update}
+        should_ask_detail = _should_ask_detail_preference(temp_state)
+        if should_ask_detail:
+            update["detail_preference_needed"] = True
+            logger.info(f"Detail preference needed for query: '{query}'")
 
     # First, check if query is ambiguous (should trigger Ask Mode)
     is_ambiguous, ambiguity_config = _is_ambiguous_query(query)
@@ -352,6 +562,32 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         logger.info(f"Expanded vague query: '{query}' → '{expanded_query}'")
 
     lowered = query.lower()
+
+    # Detect file reading requests (Layer 1: File Reading Infrastructure)
+    file_path = _detect_file_request(query)
+    if file_path:
+        update["file_request"] = file_path
+        update["query_type"] = "file_request"
+        update["intent_confidence"] = 0.9
+        logger.info(f"File request detected: '{query}' → {file_path}")
+        # Continue with other classifications but mark as file request
+
+    # Detect self-referential queries (Layer 5: Query Classification Enhancement)
+    # Distinguish questions about Portfolia from questions about Noah
+    self_referential_keywords = [
+        "how do you", "how does this work", "show me your code", "how are you built",
+        "your architecture", "your implementation", "how are you", "how do you work",
+        "how does this system work", "show me how you", "explain how you",
+        "what is your", "what are your", "your code", "your system",
+        "how does your", "how do your", "your retrieval", "your pipeline",
+        "how are you built", "how were you built", "explain yourself"
+    ]
+    is_self_referential = any(keyword in lowered for keyword in self_referential_keywords)
+
+    if is_self_referential:
+        update["is_self_referential"] = True
+        update["query_type"] = "self_referential"
+        logger.info(f"Self-referential query detected: '{query}'")
 
     # Detect when a longer teaching-focused response is needed
     # These queries require depth, explanation, and educational context
@@ -455,6 +691,30 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
             update["data_would_help"] = True
             update["query_type"] = "data"
             logger.info(f"Proactive data detection: query '{query}' would benefit from analytics")
+
+        # PROACTIVE chart detection - when a chart/graph would be clearer than a table
+        # Charts are most valuable for trends, comparisons, distributions, and relationships
+        # More specific than data detection - only when visualization adds clear value
+        proactive_chart_topics = [
+            # Time-based trends (line charts)
+            "trend", "over time", "growth", "change over", "evolution", "how has",
+            "increased", "decreased", "fluctuated", "varied",
+            # Comparisons (bar charts)
+            "compare", "vs", "versus", "difference between", "contrast",
+            # Distributions (pie/donut charts, bar charts)
+            "breakdown", "distribution", "percentage", "proportion", "split",
+            "most common", "least common", "break down by",
+            # Relationships (scatter plots, correlation)
+            "correlation", "relationship between", "how does x relate to y",
+            "connection between", "association"
+        ]
+
+        if any(topic in lowered for topic in proactive_chart_topics):
+            update["chart_would_help"] = True
+            # Don't override query_type if already set to data
+            if "query_type" not in update:
+                update["query_type"] = "data"
+            logger.info(f"Proactive chart detection: query '{query}' would benefit from visualization")
 
     # Detect "how does [product/system/chatbot] work" queries as technical
     if any(term in lowered for term in ["code", "technical", "stack", "architecture", "implementation", "retrieval"]) \

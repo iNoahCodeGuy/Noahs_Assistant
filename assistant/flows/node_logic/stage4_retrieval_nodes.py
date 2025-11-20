@@ -22,6 +22,7 @@ See: docs/context/SYSTEM_ARCHITECTURE_SUMMARY.md for full pipeline flow
 """
 
 import logging
+import os
 import re
 from typing import Dict, Any, List
 
@@ -30,6 +31,19 @@ from assistant.core.rag_engine import RagEngine
 from assistant.observability.langsmith_tracer import create_custom_span
 
 logger = logging.getLogger(__name__)
+
+
+def _is_feature_enabled(feature_name: str) -> bool:
+    """Check if a feature is enabled via environment variable.
+
+    Args:
+        feature_name: Name of the feature flag (e.g., 'ENABLE_HYBRID_SEARCH')
+
+    Returns:
+        True if feature is enabled, False otherwise (default)
+    """
+    value = os.getenv(feature_name, "false").lower()
+    return value in ("true", "1", "yes", "on")
 
 
 def _clean_chunk_qa_format(content: str) -> str:
@@ -146,23 +160,109 @@ def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int 
     query = state.get("composed_query") or state["query"]
     metadata = state.setdefault("analytics_metadata", {})
 
-    # Extract active technical subcategories for retrieval hints
-    active_subcats = metadata.get("technical_subcategories", [])
+    # Fallback file path detection in retrieve_chunks (if not already detected in classify_intent)
+    # This provides redundancy in case file_request wasn't set earlier in the pipeline
+    if not state.get("file_request"):
+        from assistant.flows.node_logic.stage2_query_classification import _detect_file_request
+        detected_file = _detect_file_request(query)
+        if detected_file:
+            state["file_request"] = detected_file
+            state["query_type"] = "file_request"
+            logger.info(f"File path detected in retrieve_chunks (fallback): {detected_file}")
 
-    # Build retrieval hints for targeted source selection
-    retrieval_hints = _build_retrieval_hints(active_subcats)
-    if retrieval_hints:
-        metadata["retrieval_source_hints"] = retrieval_hints
-        logger.info("Retrieval targeting: %s", ", ".join(retrieval_hints))
+    # Layer 4: Full Codebase Semantic Search - Prioritize codebase/documentation for self-referential queries
+    is_self_referential = state.get("is_self_referential", False)
+
+    # Extract active technical subcategories for retrieval hints (needed for logging)
+    active_subcats = metadata.get("technical_subcategories", [])
+    retrieval_hints = []  # Initialize for logging
+
+    if is_self_referential:
+        # For self-referential queries, prioritize codebase and documentation chunks
+        # This ensures Portfolia answers questions about herself using actual code/docs
+        preferred_doc_ids = ["codebase", "documentation"]
+        metadata["retrieval_source_hints"] = preferred_doc_ids
+        metadata["self_referential_retrieval"] = True
+        retrieval_hints = preferred_doc_ids  # For logging
+        logger.info(f"Self-referential query detected, prioritizing doc_ids: {preferred_doc_ids}")
+    else:
+        # Build retrieval hints for targeted source selection
+        retrieval_hints = _build_retrieval_hints(active_subcats)
+        if retrieval_hints:
+            metadata["retrieval_source_hints"] = retrieval_hints
+            logger.info("Retrieval targeting: %s", ", ".join(retrieval_hints))
+
+    # Check if hybrid search is enabled
+    use_hybrid_search = _is_feature_enabled("ENABLE_HYBRID_SEARCH")
 
     with create_custom_span("retrieve_chunks", {
         "query": query[:120],
         "top_k": top_k,
         "active_subcategories": active_subcats,
-        "source_hints": retrieval_hints
+        "source_hints": retrieval_hints,
+        "hybrid_search_enabled": use_hybrid_search
     }):
         try:
-            chunks = rag_engine.retrieve(query, top_k=top_k) or {}
+            # Layer 4: Prioritize codebase/documentation for self-referential queries
+            # Try to retrieve from preferred doc_ids first, then fall back to all sources
+            preferred_doc_ids = metadata.get("retrieval_source_hints", [])
+            if is_self_referential and preferred_doc_ids and hasattr(rag_engine, 'pgvector_retriever') and rag_engine.pgvector_retriever:
+                # For self-referential queries, use lower threshold to ensure we get results
+                # Codebase/documentation chunks may have lower similarity scores than KB chunks
+                self_ref_threshold = 0.1  # Lower threshold for self-referential queries
+
+                # For self-referential queries, try each preferred doc_id
+                all_chunks = []
+                for doc_id in preferred_doc_ids:
+                    try:
+                        doc_chunks = rag_engine.pgvector_retriever.retrieve(
+                            query,
+                            top_k=top_k * 2,  # Get more chunks, then filter to top_k
+                            doc_id=doc_id,
+                            threshold=self_ref_threshold  # Use lower threshold
+                        )
+                        all_chunks.extend(doc_chunks)
+                        logger.info(f"Retrieved {len(doc_chunks)} chunks from {doc_id} (threshold={self_ref_threshold})")
+                    except Exception as e:
+                        logger.warning(f"Failed to retrieve from {doc_id}: {e}")
+
+                # If we got chunks from preferred sources, use them
+                if all_chunks:
+                    # Sort by similarity and take top_k
+                    all_chunks.sort(key=lambda x: x.get("similarity", 0.0), reverse=True)
+                    raw_chunks = all_chunks[:top_k]
+                    chunks = {"chunks": raw_chunks, "scores": [c.get("similarity", 0.0) for c in raw_chunks]}
+                    metadata["preferred_source_used"] = True
+                    logger.info(f"Using {len(raw_chunks)} chunks from preferred sources (codebase/documentation)")
+                else:
+                    # Fall back to standard retrieval if preferred sources returned nothing
+                    logger.info("No chunks from preferred sources, falling back to standard retrieval")
+                    chunks = rag_engine.retrieve(query, top_k=top_k) or {}
+                    metadata["preferred_source_used"] = False
+            # Try hybrid search if enabled, otherwise use standard retrieval
+            elif use_hybrid_search and hasattr(rag_engine, 'pgvector_retriever') and rag_engine.pgvector_retriever:
+                try:
+                    # Use hybrid retrieval
+                    raw_chunks = rag_engine.pgvector_retriever.retrieve_hybrid(
+                        query,
+                        top_k=top_k,
+                        use_keyword_fallback=True
+                    )
+                    # Convert to expected format
+                    chunks = {"chunks": raw_chunks, "scores": [c.get("similarity", 0.0) for c in raw_chunks]}
+                    metadata["hybrid_search_used"] = True
+                    logger.debug("Used hybrid search for retrieval")
+                except Exception as hybrid_error:
+                    logger.warning(f"Hybrid search failed, falling back to standard: {hybrid_error}")
+                    # Fallback to standard retrieval
+                    chunks = rag_engine.retrieve(query, top_k=top_k) or {}
+                    metadata["hybrid_search_used"] = False
+                    metadata["hybrid_search_error"] = str(hybrid_error)
+            else:
+                # Standard retrieval (existing behavior)
+                chunks = rag_engine.retrieve(query, top_k=top_k) or {}
+                metadata["hybrid_search_used"] = False
+
             raw_chunks = chunks.get("chunks", [])
             normalized: List[Dict[str, Any]] = []
 
@@ -224,6 +324,24 @@ def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int 
                 if len(diversified) < len(normalized):
                     logger.info("Deduplicated %d → %d chunks", len(normalized), len(diversified))
 
+            # If scores are still low and fuzzy matching is enabled, try fuzzy matching
+            if scores and all(s < 0.4 for s in scores) and _is_feature_enabled("ENABLE_FUZZY_MATCHING"):
+                if hasattr(rag_engine, 'pgvector_retriever') and rag_engine.pgvector_retriever:
+                    try:
+                        logger.info("Low retrieval scores, trying fuzzy matching")
+                        fuzzy_chunks = rag_engine.pgvector_retriever._fuzzy_match_chunks(
+                            query, normalized, threshold=0.6
+                        )
+                        if fuzzy_chunks:
+                            # Replace with fuzzy results if they're better
+                            state["retrieved_chunks"] = fuzzy_chunks[:top_k]
+                            state["retrieval_scores"] = [c.get("similarity", 0.0) for c in fuzzy_chunks[:top_k]]
+                            metadata["fuzzy_matching_used"] = True
+                            logger.info(f"Fuzzy matching found {len(fuzzy_chunks)} chunks")
+                    except Exception as fuzzy_error:
+                        logger.warning(f"Fuzzy matching failed: {fuzzy_error}")
+                        metadata["fuzzy_matching_error"] = str(fuzzy_error)
+
         except Exception as e:
             logger.error(
                 "Retrieval failed for query '%s...': %s",
@@ -249,6 +367,68 @@ def re_rank_and_dedup(state: ConversationState) -> ConversationState:
     to handle both search and deduplication.
     """
     return state
+
+
+def retrieve_file_content(state: ConversationState, rag_engine: RagEngine) -> Dict[str, Any]:
+    """Retrieve file content when user explicitly requests a specific file.
+
+    Purpose: Enable on-demand access to current source files during conversation.
+    This allows Portfolia to show actual implementation when asked about specific files.
+
+    Layer 1: File Reading Infrastructure
+
+    Args:
+        state: ConversationState with file_request field set
+        rag_engine: RAG engine instance (contains code_index)
+
+    Returns:
+        Updated state with file_content field containing file data
+    """
+    file_path = state.get("file_request")
+    if not file_path:
+        return state
+
+    with create_custom_span("retrieve_file_content", {"file_path": file_path}):
+        try:
+            # Get code_index from rag_engine
+            code_index = getattr(rag_engine, 'code_index', None)
+            if not code_index:
+                logger.warning("CodeIndex not available for file reading")
+                return {
+                    **state,
+                    "file_content": None,
+                    "file_read_error": "CodeIndex not available"
+                }
+
+            # Read file content
+            file_data = code_index.read_file_content(file_path)
+
+            if file_data.get("success"):
+                logger.info(f"Successfully read file: {file_path} ({file_data['line_count']} lines)")
+                return {
+                    **state,
+                    "file_content": file_data,
+                    "file_read_success": True
+                }
+            else:
+                logger.warning(f"Failed to read file: {file_path} - {file_data.get('content', 'Unknown error')}")
+                return {
+                    **state,
+                    "file_content": file_data,
+                    "file_read_success": False
+                }
+
+        except Exception as e:
+            logger.error(f"Error reading file {file_path}: {e}", exc_info=True)
+            return {
+                **state,
+                "file_content": {
+                    "content": f"# Error reading file: {str(e)}",
+                    "file_path": file_path,
+                    "success": False
+                },
+                "file_read_success": False
+            }
 
 
 def validate_grounding(state: ConversationState, threshold: float = 0.45) -> ConversationState:

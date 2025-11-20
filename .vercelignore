@@ -1,0 +1,72 @@
+# Exclude archive directories
+archive/
+archive/**/*
+
+# Exclude test files
+tests/
+tests/**/*
+test_*.py
+*_test.py
+
+# Exclude documentation (not needed in production)
+docs/
+docs/**/*
+*.md
+!README.md
+
+# Exclude development scripts
+scripts/
+scripts/**/*
+*.sh
+!scripts/deploy_vercel.sh
+
+# Exclude notebooks
+*.ipynb
+notebooks/
+notebooks/**/*
+
+# Exclude old data
+data/old_*
+data/backups/
+data/demo_exports/
+
+# Exclude Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Exclude virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Exclude IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Exclude large data files
+*.csv
+!data/technical_kb.csv
+!data/career_kb.csv
+!data/architecture_kb.csv
+
+# Exclude logs
+*.log
+logs/
+
+# Exclude old prototypes
+old_*.html
+prototypes/
+
+# Exclude evaluation data
+data/evaluation/
+
+# Exclude backup files
+*.backup
+*.bak
+*.gz

@@ -309,7 +309,9 @@ def extract_job_details_from_query(state: ConversationState) -> ConversationStat
     Returns:
         Updated state with job_details populated if extracted
     """
-    query = state["query"]
+    query = state.get("query", "")
+    if not query:
+        return state  # No query to extract from
     job_details = state.get("job_details", {})
 
     # Extract company name (case-insensitive)

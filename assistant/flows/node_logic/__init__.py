@@ -30,6 +30,7 @@ from assistant.flows.node_logic.stage2_query_classification import classify_inte
 from assistant.flows.node_logic.stage2_entity_extraction import extract_entities
 from assistant.flows.node_logic.stage3_clarification import assess_clarification_need, ask_clarifying_question
 from assistant.flows.node_logic.stage3_query_composition import compose_query
+from assistant.flows.node_logic.query_preprocessing import preprocess_query
 from assistant.flows.node_logic.stage3_presentation_control import (
     presentation_controller,
     depth_controller,  # Deprecated alias
@@ -91,6 +92,7 @@ __all__ = [
     "assess_clarification_need",
     "ask_clarifying_question",
     "compose_query",
+    "preprocess_query",  # Typo correction + normalization
     "presentation_controller",  # NEW: Unified depth + display
     "depth_controller",  # DEPRECATED: alias
     "display_controller",  # DEPRECATED: no-op

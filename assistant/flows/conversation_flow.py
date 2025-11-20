@@ -40,8 +40,11 @@ Performance characteristics remain consistent with Week 1 launch targets:
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Callable, Optional, Sequence, TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from langgraph.graph import CompiledGraph
@@ -59,6 +62,7 @@ from assistant.flows.conversation_nodes import (
     assess_clarification_need,
     ask_clarifying_question,
     compose_query,
+    preprocess_query,  # Typo correction + normalization (if enabled)
     retrieve_chunks,  # Now includes re_rank_and_dedup logic
     validate_grounding,
     handle_grounding_gap,
@@ -70,6 +74,7 @@ from assistant.flows.conversation_nodes import (
     update_memory,  # Now includes affinity tracking
     log_and_notify,
 )
+from assistant.flows.node_logic.stage4_retrieval_nodes import retrieve_file_content
 
 # LangGraph Studio support
 try:
@@ -165,6 +170,7 @@ def run_conversation_flow(
         ask_clarifying_question,
         presentation_controller,  # Merged depth + display
         compose_query,
+        preprocess_query,  # Typo correction + normalization (if enabled)
 
         # ═══════════════════════════════════════════════════════════════════════════
         # STAGE 4: RETRIEVAL (Find Relevant Knowledge)
@@ -174,6 +180,7 @@ def run_conversation_flow(
         # Performance: ~300ms (pgvector RPC + MMR dedup)
         # ═══════════════════════════════════════════════════════════════════════════
         lambda s: retrieve_chunks(s, rag_engine),  # Now includes MMR dedup
+        lambda s: retrieve_file_content(s, rag_engine) if s.get("file_request") else {},  # Conditional file reading
         validate_grounding,
         handle_grounding_gap,
 
@@ -208,8 +215,34 @@ def run_conversation_flow(
 
     start = time.time()
     for node in pipeline:
-        state = node(state)
+        node_name = getattr(node, "__name__", str(node))
+        answer_before = state.get("answer", "")
+        node_result = node(state)
+
+        # Merge partial updates: if node returns a dict that's missing required fields,
+        # merge it with existing state. Otherwise, assume it returns the full state.
+        # Check if it's a partial update by seeing if it has fewer keys than the full state
+        if isinstance(node_result, dict):
+            # Check if this looks like a partial update (has 'query' field means it's likely full state)
+            # Partial updates from generate_draft, etc. typically don't include 'query'
+            if "query" not in node_result and len(node_result) < len(state):
+                # Partial update - merge with existing state
+                state.update(node_result)
+            else:
+                # Full state update
+                state = node_result
+        else:
+            # Not a dict, assume it's the full state
+            state = node_result
+
+        answer_after = state.get("answer", "")
+
+        # Log if answer was modified
+        if answer_before != answer_after:
+            logger.info(f"Node {node_name}: answer modified (before: {answer_before[:50]}..., after: {answer_after[:50]}...)")
+
         if state.get("pipeline_halt") or state.get("is_greeting"):
+            logger.info(f"Pipeline short-circuited after {node_name} (pipeline_halt={state.get('pipeline_halt')}, is_greeting={state.get('is_greeting')})")
             break
 
     elapsed_ms = int((time.time() - start) * 1000)
@@ -244,6 +277,7 @@ def _build_langgraph() -> Any:
     workflow.add_node("clarify", ask_clarifying_question)
     workflow.add_node("compose_query", compose_query)
     workflow.add_node("retrieve", lambda s: retrieve_chunks(s, rag_engine))  # Now includes MMR dedup
+    workflow.add_node("retrieve_file", lambda s: retrieve_file_content(s, rag_engine) if s.get("file_request") else {})  # Conditional file reading
     workflow.add_node("validate_grounding", validate_grounding)
     workflow.add_node("grounding_gap", handle_grounding_gap)
     workflow.add_node("generate_draft", lambda s: generate_draft(s, rag_engine))
@@ -259,9 +293,18 @@ def _build_langgraph() -> Any:
     workflow.add_edge("initialize", "role_prompt")
 
     # Role prompt can short-circuit if we're still waiting on a persona choice
+    def route_after_role_prompt(state: ConversationState) -> str:
+        """Route after role_prompt: end if pipeline halted, otherwise continue to greeting."""
+        if state.get("pipeline_halt") or state.get("is_greeting"):
+            logger.info("route_after_role_prompt: Routing to END (pipeline_halt=%s, is_greeting=%s)",
+                       state.get("pipeline_halt"), state.get("is_greeting"))
+            return "end"
+        logger.info("route_after_role_prompt: Routing to greeting")
+        return "greeting"
+
     workflow.add_conditional_edges(
         "role_prompt",
-        lambda s: "end" if s.get("pipeline_halt") else "greeting",
+        route_after_role_prompt,
         {"end": END, "greeting": "greeting"}
     )
 
@@ -291,7 +334,8 @@ def _build_langgraph() -> Any:
     workflow.add_edge("clarify", END)  # Clarification questions end the flow
 
     workflow.add_edge("compose_query", "retrieve")
-    workflow.add_edge("retrieve", "validate_grounding")  # MMR dedup now in retrieve
+    workflow.add_edge("retrieve", "retrieve_file")  # Conditional file reading
+    workflow.add_edge("retrieve_file", "validate_grounding")  # MMR dedup now in retrieve
 
     # Grounding validation conditional
     workflow.add_conditional_edges(

@@ -59,15 +59,87 @@ class CodeIndex:
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:max_results]
 
-    def get_file_snippet(self, file_path: str, line_start: int, line_end: int) -> str:
-        """Get specific lines from a file."""
+    def get_file_snippet(self, file_path: str, line_start: int, line_end: int, context_before: int = 20, context_after: int = 20) -> str:
+        """Get specific lines from a file with surrounding context.
+
+        Purpose: Show code snippets with surrounding context to enable understanding
+        of relationships between functions, imports, and module-level code.
+
+        Args:
+            file_path: Relative path to file from repo root
+            line_start: Starting line number (1-indexed)
+            line_end: Ending line number (1-indexed)
+            context_before: Number of lines to include before line_start (default 20)
+            context_after: Number of lines to include after line_end (default 20)
+
+        Returns:
+            Code snippet with context, or error message if file not found
+        """
         try:
             full_path = self.repo_path / file_path
             with open(full_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
-                return ''.join(lines[line_start-1:line_end])
-        except Exception:
-            return "# Code snippet not available"
+
+            # Calculate context boundaries
+            start_idx = max(0, line_start - 1 - context_before)
+            end_idx = min(len(lines), line_end + context_after)
+
+            # Extract snippet with context
+            snippet_lines = lines[start_idx:end_idx]
+            return ''.join(snippet_lines)
+        except Exception as e:
+            return f"# Code snippet not available: {str(e)}"
+
+    def read_file_content(self, file_path: str, context_lines: int = 20) -> Dict[str, Any]:
+        """Read entire file content with metadata.
+
+        Purpose: Enable on-demand access to current source files during conversation.
+        This allows Portfolia to show actual implementation when asked about specific files.
+
+        Args:
+            file_path: Relative path to file from repo root (e.g., "assistant/core/rag_engine.py")
+            context_lines: Unused parameter (kept for API compatibility)
+
+        Returns:
+            Dict with:
+            - content: Full file content as string
+            - file_path: Original file path
+            - line_count: Total number of lines
+            - last_modified: File modification timestamp (if available)
+            - success: Boolean indicating if read was successful
+        """
+        try:
+            full_path = self.repo_path / file_path
+            if not full_path.exists():
+                return {
+                    "content": f"# File not found: {file_path}",
+                    "file_path": file_path,
+                    "line_count": 0,
+                    "success": False
+                }
+
+            with open(full_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                lines = content.split('\n')
+
+            # Get file stats
+            stat = full_path.stat()
+            last_modified = stat.st_mtime if hasattr(stat, 'st_mtime') else None
+
+            return {
+                "content": content,
+                "file_path": file_path,
+                "line_count": len(lines),
+                "last_modified": last_modified,
+                "success": True
+            }
+        except Exception as e:
+            return {
+                "content": f"# Error reading file: {str(e)}",
+                "file_path": file_path,
+                "line_count": 0,
+                "success": False
+            }
 
     # Added simple query method for tests expecting .query returning dict with 'code'
     def query(self, code_fragment: str):

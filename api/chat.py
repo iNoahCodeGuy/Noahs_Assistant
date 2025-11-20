@@ -107,9 +107,11 @@ class handler(BaseHTTPRequestHandler):
         """Send JSON response with CORS headers."""
         self.send_response(status_code)
         self._send_cors_headers()
-        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.end_headers()
-        self.wfile.write(json.dumps(data).encode('utf-8'))
+        # Ensure newlines are properly preserved in JSON
+        json_str = json.dumps(data, ensure_ascii=False)
+        self.wfile.write(json_str.encode('utf-8'))
 
     def _send_error(self, status_code: int, message: str):
         """Send error response."""

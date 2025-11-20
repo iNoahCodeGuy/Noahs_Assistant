@@ -18,8 +18,10 @@ See docs/CONVERSATION_PIPELINE_MODULES.md for implementation details.
 """
 
 from __future__ import annotations
+import logging
 
 # Import all conversation nodes from the node_logic package (stage-prefixed for pipeline visibility)
+logger = logging.getLogger(__name__)
 from assistant.flows.node_logic.stage0_session_management import (
     initialize_conversation_state,
     prompt_for_role_selection,
@@ -29,6 +31,7 @@ from assistant.flows.node_logic.stage2_query_classification import classify_inte
 from assistant.flows.node_logic.stage2_entity_extraction import extract_entities
 from assistant.flows.node_logic.stage3_clarification import assess_clarification_need, ask_clarifying_question
 from assistant.flows.node_logic.stage3_query_composition import compose_query
+from assistant.flows.node_logic.query_preprocessing import preprocess_query
 from assistant.flows.node_logic.stage3_presentation_control import (
     presentation_controller,
     depth_controller,  # Deprecated alias
@@ -96,6 +99,22 @@ def handle_greeting(state, rag_engine):
         - Greeting response: <50ms (no LLM calls)
         - Non-greeting: Pass through to next node (~0ms overhead)
     """
+    # GUARD: Skip if initial greeting is already shown or pipeline is halted
+    if state.get("pipeline_halt"):
+        logger.info("handle_greeting: Skipping - pipeline_halt=True")
+        return state
+
+    persona_hints = state.get("session_memory", {}).get("persona_hints", {})
+    if persona_hints.get("initial_greeting_shown"):
+        logger.info("handle_greeting: Skipping - initial_greeting_shown=True")
+        return state
+
+    # Check if answer already contains the initial greeting (don't overwrite it)
+    current_answer = state.get("answer", "")
+    if "Before we dive in, what best describes you?" in current_answer:
+        logger.info("handle_greeting: Skipping - initial greeting already in answer")
+        return state
+
     # Defensive access: chat_history and query may be optional in test scenarios
     query = state.get("query", "")
     if query and should_show_greeting(query, state.get("chat_history", [])):
@@ -117,6 +136,7 @@ __all__ = [
     "assess_clarification_need",
     "ask_clarifying_question",
     "compose_query",
+    "preprocess_query",  # Typo correction + normalization
     "retrieve_chunks",  # Now includes MMR dedup
     "validate_grounding",
     "handle_grounding_gap",

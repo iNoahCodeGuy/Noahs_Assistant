@@ -32,4 +32,4 @@ echo "🌐 Connect in LangSmith Studio: http://127.0.0.1:2024"
 echo "📊 Dashboard: https://smith.langchain.com/"
 echo "==============================================="
 
-langgraph up --port 2024
+langgraph up --port 2024 --rebuild

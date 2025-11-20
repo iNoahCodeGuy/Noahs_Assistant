@@ -6,11 +6,14 @@ Merged route_hiring_manager_technical logic for single-pass routing.
 
 from __future__ import annotations
 
+import logging
 from textwrap import dedent
 from typing import Dict
 
 from assistant.state.conversation_state import ConversationState
 from assistant.observability.langsmith_tracer import create_custom_span
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Role-Specific Welcome Messages
@@ -40,8 +43,8 @@ def _get_role_welcome_message(role_mode: str) -> str:
             • The business and enterprise value of agentic systems like me — how organizations deploy assistants to improve reliability, scalability, and customer satisfaction
 
             You can choose where to start:
-            1️⃣ My full tech stack — end-to-end walkthrough (frontend → backend → data pipeline → observability)
-            2️⃣ The orchestration layer — how my nodes, states, and safeguards work together
+            1️⃣ My full tech stack — architecture overview (frontend → backend → data pipeline → observability)
+            2️⃣ My orchestration layer — see my node and state logic as I progress through conversations
             3️⃣ Enterprise adaptation — how assistants like me are customized for large-scale deployments
             4️⃣ See Noah's technical background — certifications, GitHub projects, and proof of his engineering foundation
         """),
@@ -127,6 +130,13 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
         name="classify_role_mode",
         inputs={"role": state.get("role", "unknown"), "query": state.get("query", "")}
     ):
+        # GUARD: Skip if initial greeting is being shown - don't overwrite it
+        if state.get("is_greeting") or state.get("pipeline_halt"):
+            persona_hints = state.get("session_memory", {}).get("persona_hints", {})
+            if persona_hints.get("initial_greeting_shown"):
+                logger.info("classify_role_mode: Skipping - initial greeting already shown")
+                return state
+
         # If role already set, just normalize it
         if state.get("role"):
             raw_role = state.get("role", "").strip().lower()
@@ -203,6 +213,7 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
         if not persona_hints.get("role_welcome_shown"):
             welcome_msg = _get_role_welcome_message(normalized)
             if welcome_msg:
+                logger.info(f"classify_role_mode: Setting role welcome message for {normalized}")
                 state["answer"] = welcome_msg
                 state["pipeline_halt"] = True  # Wait for user's first real query
                 persona_hints["role_welcome_shown"] = True

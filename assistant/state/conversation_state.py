@@ -95,7 +95,20 @@ class ConversationState(TypedDict, total=False):
 
     # --- Query Classification ---
     query_type: str
-    """Classified query type: 'technical', 'career', 'analytics', 'greeting', 'menu_selection', etc."""
+    """Classified query type: 'technical', 'career', 'analytics', 'greeting', 'menu_selection', 'self_referential', 'file_request', etc."""
+
+    is_self_referential: bool
+    """Flag indicating if query is about Portfolia herself (True) vs about Noah (False).
+
+    Purpose: Route self-referential queries to codebase/documentation chunks,
+    career queries to career_kb chunks.
+    """
+
+    file_request: str
+    """File path requested by user (e.g., 'assistant/core/rag_engine.py').
+
+    Purpose: Enable on-demand file reading when users explicitly request specific files.
+    """
 
     menu_choice: str
     """User's menu selection (e.g., '1', '2', '3', '4') when query_type is 'menu_selection'."""
@@ -131,6 +144,15 @@ class ConversationState(TypedDict, total=False):
     clarifying_question: str
     """Targeted clarifying question to ask the user when context is ambiguous."""
 
+    clarification_type: str
+    """Type of clarification needed: 'topic', 'detail', or 'both'."""
+
+    detail_preference_needed: bool
+    """Whether Portfolia should ask about detail level preference."""
+
+    detail_preference: str
+    """User's detail preference: 'brief', 'moderate', 'comprehensive', or None."""
+
     composed_query: str
     """Reformulated query sent to retrieval once role and entities applied."""
 
@@ -156,6 +178,20 @@ class ConversationState(TypedDict, total=False):
         - code: Code content
         - language: Programming language
     """
+
+    file_content: Dict[str, Any]
+    """File content when user explicitly requests a specific file.
+
+    Structure:
+        - content: Full file content as string
+        - file_path: Original file path
+        - line_count: Total number of lines
+        - last_modified: File modification timestamp (if available)
+        - success: Boolean indicating if read was successful
+    """
+
+    file_read_success: bool
+    """Flag indicating if file reading was successful (True) or failed (False)."""
 
     # --- Response Generation ---
     draft_answer: str

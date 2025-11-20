@@ -104,3 +104,11 @@ codebase_structure.txt
 
 # Empty public directory (Next.js API-only setup)
 public/
+
+# Node.js
+node_modules/
+package-lock.json
+
+# Next.js
+.next/
+next-env.d.ts

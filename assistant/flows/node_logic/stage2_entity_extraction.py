@@ -61,18 +61,20 @@ def extract_entities(state: ConversationState) -> ConversationState:
         if job_details:
             entities.update(job_details)
 
-        email = extract_email_from_query(state["query"])
-        if email:
-            entities["email"] = email
+        query = state.get("query", "")
+        if query:
+            email = extract_email_from_query(query)
+            if email:
+                entities["email"] = email
 
-        name = extract_name_from_query(state["query"])
-        if name:
-            entities["name"] = name
+            name = extract_name_from_query(query)
+            if name:
+                entities["name"] = name
 
-        lowered = state["query"].lower()
-        for keyword, value in CONTACT_KEYWORDS.items():
-            if keyword in lowered:
-                entities.setdefault("contact_preference", value)
+            lowered = query.lower()
+            for keyword, value in CONTACT_KEYWORDS.items():
+                if keyword in lowered:
+                    entities.setdefault("contact_preference", value)
 
         state["entities"] = entities
 

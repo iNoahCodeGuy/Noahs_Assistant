@@ -19,10 +19,13 @@ Role is inferred from natural conversation in classify_role_mode (Node 3).
 
 from __future__ import annotations
 
+import logging
 from textwrap import dedent
 
 from assistant.state.conversation_state import ConversationState
 from assistant.observability.langsmith_tracer import create_custom_span
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -66,6 +69,9 @@ def initialize_conversation_state(state: ConversationState) -> ConversationState
         state.setdefault("hallucination_safe", True)
         state.setdefault("clarification_needed", False)
         state.setdefault("clarifying_question", "")
+        state.setdefault("clarification_type", None)
+        state.setdefault("detail_preference_needed", False)
+        state.setdefault("detail_preference", None)
 
     return state
 
@@ -74,18 +80,7 @@ def initialize_conversation_state(state: ConversationState) -> ConversationState
 # Stage 2: First Message & Role Selection
 # ============================================================================
 
-_INITIAL_GREETING = dedent(
-    """\
-    👋 Hey! I'm Portfolia — Noah's AI Assistant,
-
-    Before we dive in, what best describes you?
-    1️⃣ Hiring Manager (Nontechnical)
-    2️⃣ Hiring Manager (Technical)
-    3️⃣ Software Developer
-    4️⃣ Just Looking Around
-    5️⃣ Looking to Confess Crush 💌
-    """
-)
+_INITIAL_GREETING = "👋 Hey! I'm Portfolia — Noah's AI Assistant,\n\nBefore we dive in, what best describes you?\n\n1️⃣ Hiring Manager (Nontechnical)\n2️⃣ Hiring Manager (Technical)\n3️⃣ Software Developer\n4️⃣ Just Looking Around\n5️⃣ Looking to Confess Crush 💌\n"
 
 
 def prompt_for_role_selection(state: ConversationState) -> ConversationState:
@@ -112,6 +107,7 @@ def prompt_for_role_selection(state: ConversationState) -> ConversationState:
         state["answer"] = _INITIAL_GREETING
         state["pipeline_halt"] = True  # Wait for user response
         state["is_greeting"] = True
+        logger.info("prompt_for_role_selection: Set initial greeting, pipeline_halt=True, is_greeting=True")
         return state
 
     # Case 3: User responded (clear halt, continue to role classification)

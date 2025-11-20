@@ -18,6 +18,7 @@ See: docs/context/CONVERSATION_PERSONALITY.md for generation personality
 """
 
 import logging
+import re
 from typing import Dict, Any, List, Optional
 
 from assistant.state.conversation_state import ConversationState
@@ -28,29 +29,82 @@ from assistant.config.supabase_config import supabase_settings
 
 logger = logging.getLogger(__name__)
 
-MENU_OPTION_ONE_MIN_WORDS = 330
+MENU_OPTION_ONE_MIN_WORDS = 100
+MENU_OPTION_ONE_MAX_WORDS = 150
 MENU_OPTION_ONE_MAX_RETRIES = 2
 
 
 def _validate_menu_option_one_answer(answer: str) -> Dict[str, Any]:
-    """Validate menu option 1 output structure and length."""
+    """Validate menu option 1 output structure and length (brief overview format)."""
 
     required_layers = [
-        "**Frontend Layer:**",
-        "**Backend/Orchestration Layer:**",
-        "**Data Layer:**",
-        "**Observability Layer:**",
-        "**Deployment Layer:**"
+        "Frontend",
+        "Backend",
+        "Data",
+        "Observability"
     ]
 
-    missing_layers = [layer for layer in required_layers if layer not in answer]
+    # Check if layers are mentioned (case-insensitive, partial match)
+    answer_lower = answer.lower()
+    missing_layers = [layer for layer in required_layers if layer.lower() not in answer_lower]
     word_count = len(answer.split())
 
-    return {
+    # Check for follow-up question
+    has_followup_question = any(phrase in answer.lower() for phrase in [
+        "full detailed",
+        "end-to-end walkthrough",
+        "specific part",
+        "would you like",
+        "would you prefer"
+    ])
+
+    # Check for Sources section (should not be present)
+    has_sources = "sources:" in answer_lower or "sources " in answer_lower
+
+    # Check for repetitive phrases (same phrase appearing 2+ times)
+    words = answer.lower().split()
+    # Look for repeated 3-word phrases
+    phrase_counts = {}
+    for i in range(len(words) - 2):
+        phrase = " ".join(words[i:i+3])
+        phrase_counts[phrase] = phrase_counts.get(phrase, 0) + 1
+
+    repetitive_phrases = [phrase for phrase, count in phrase_counts.items() if count >= 2 and len(phrase) > 10]
+    has_repetition = len(repetitive_phrases) > 0
+
+    # Stricter word count validation (reject if >160 words)
+    word_count_valid = word_count >= MENU_OPTION_ONE_MIN_WORDS and word_count <= 160
+
+    is_valid = (
+        not missing_layers and
+        word_count_valid and
+        has_followup_question and
+        not has_sources and
+        not has_repetition
+    )
+
+    validation_details = {
         "missing_layers": missing_layers,
         "word_count": word_count,
-        "is_valid": not missing_layers and word_count >= MENU_OPTION_ONE_MIN_WORDS
+        "word_count_valid": word_count_valid,
+        "has_followup_question": has_followup_question,
+        "has_sources": has_sources,
+        "has_repetition": has_repetition,
+        "repetitive_phrases": repetitive_phrases[:3] if repetitive_phrases else [],
+        "is_valid": is_valid
     }
+
+    if not is_valid:
+        logger.warning(
+            f"Menu option 1 validation failed: "
+            f"missing_layers={missing_layers}, "
+            f"word_count={word_count} (valid={word_count_valid}), "
+            f"has_followup={has_followup_question}, "
+            f"has_sources={has_sources}, "
+            f"has_repetition={has_repetition}"
+        )
+
+    return validation_details
 
 
 def _format_outline_hint(layer_outline: Optional[Dict[str, str]]) -> str:
@@ -75,17 +129,37 @@ def _build_retry_instruction(validation: Dict[str, Any], attempt: int, layer_out
 
     missing_layers = validation.get("missing_layers", [])
     word_count = validation.get("word_count", 0)
-    missing_text = ", ".join(missing_layers) if missing_layers else "All required headings are present."
+    word_count_valid = validation.get("word_count_valid", False)
+    has_followup = validation.get("has_followup_question", False)
+    has_sources = validation.get("has_sources", False)
+    has_repetition = validation.get("has_repetition", False)
+    repetitive_phrases = validation.get("repetitive_phrases", [])
+
+    missing_text = ", ".join(missing_layers) if missing_layers else "All required layers are present."
     outline_hint = _format_outline_hint(layer_outline)
 
     retry_block = [
-        f"REWRITE DIRECTIVE #{attempt} FOR MENU OPTION 1:",
-        f"- Previous attempt length: {word_count} words (target: 350-400).",
-        f"- Missing headings: {missing_text}.",
-        "- Start over and deliver a fresh response that follows the exact layer order.",
-        "- EACH layer must contain 3-4 sentences in first person and explicitly explain what the tools do, why they were chosen, and which problems they solve.",
-        f"- Do not stop before {MENU_OPTION_ONE_MIN_WORDS} words."
+        f"REWRITE DIRECTIVE #{attempt} FOR MENU OPTION 1 (BRIEF OVERVIEW):",
+        f"- Previous attempt length: {word_count} words (target: 100-150 words, valid: {word_count_valid}).",
+        f"- Missing layers: {missing_text}.",
+        f"- Follow-up question present: {has_followup} (REQUIRED).",
     ]
+
+    if has_sources:
+        retry_block.append("- CRITICAL: Remove 'Sources:' section. Do not include citations or sources in your response.")
+
+    if has_repetition:
+        retry_block.append(f"- CRITICAL: Avoid repetition. The following phrases appeared multiple times: {', '.join(repetitive_phrases[:2])}")
+        retry_block.append("- Each layer must have unique wording. Do not repeat the same phrase across layers.")
+
+    retry_block.extend([
+        "- Start over and deliver a BRIEF overview that lists the stack with purpose explanations.",
+        "- EACH layer (Frontend, Backend, Data Pipeline, Observability) must be mentioned with 1-2 sentences explaining purpose only.",
+        f"- Keep it between {MENU_OPTION_ONE_MIN_WORDS} and 160 words (strict limit).",
+        "- MUST end with: 'Would you like a full detailed end-to-end walkthrough of how I work, or would you prefer detail on a specific part of my stack or architecture?'",
+        "- DO NOT copy verbatim from context. Synthesize into unique, concise sentences.",
+        "- DO NOT repeat the same phrase across layers."
+    ])
 
     if outline_hint:
         retry_block.append(f"- {outline_hint}.")
@@ -121,106 +195,54 @@ def _formatted_layer_fact(layer_outline: Optional[Dict[str, str]], layer: str, f
 
 
 def _build_deterministic_menu_option_response(layer_outline: Optional[Dict[str, str]], chunks: List[Dict[str, Any]]) -> str:
-    """Fallback narrative when the LLM refuses to follow instructions."""
+    """Fallback narrative when the LLM refuses to follow instructions - brief overview format."""
 
-    stats = _compute_retrieval_stats(chunks)
     outline = layer_outline or _extract_layer_outline(chunks)
 
     frontend_facts = _formatted_layer_fact(
         outline,
         "frontend",
-        "Streamlit chat console, Next.js front door, Tailwind styling"
+        "Streamlit UI, Next.js"
     )
     backend_facts = _formatted_layer_fact(
         outline,
         "backend",
-        "LangGraph state machine, Python 3.11 orchestrators, modular node logic"
+        "LangGraph, Python 3.11"
     )
     data_facts = _formatted_layer_fact(
         outline,
         "data",
-        "Supabase Postgres, pgvector indexes, OpenAI text-embedding-3-small"
+        "Supabase Postgres, pgvector, OpenAI embeddings"
     )
     observability_facts = _formatted_layer_fact(
         outline,
         "observability",
-        "LangSmith tracing, Supabase analytics tables, retrieval logs"
-    )
-    deployment_facts = _formatted_layer_fact(
-        outline,
-        "deployment",
-        "Vercel serverless, Dockerized LangGraph runtime, horizontal scaling"
+        "LangSmith tracing, Supabase analytics"
     )
 
-    retrieval_sentence = ""
-    if stats["chunk_count"]:
-        if stats["avg_similarity"]:
-            retrieval_sentence = (
-                f"For this explanation I pulled {stats['chunk_count']} grounded chunks averaging "
-                f"{stats['avg_similarity']:.3f} similarity, so every detail maps back to the Supabase knowledge base."
-            )
-        else:
-            retrieval_sentence = (
-                f"I anchored this walkthrough on {stats['chunk_count']} retrieved knowledge chunks so the teach-through-tour stays grounded."
-            )
-
-    opening = (
-        "I'm going to walk you layer by layer through my production tech stack so you can see how a real "
-        "RAG assistant is wired. Each section explains what I use, why I chose it, and the practical problems it solves "
-        "when I'm teaching hiring managers and engineers."
-    )
+    opening = "Here's my tech stack at a glance:"
 
     frontend = (
-        f"**Frontend Layer:** I keep two front doors because I teach in different contexts. Streamlit powers the hands-on "
-        f"workshop console where I can spin up new widgets or role toggles in minutes, while the Next.js surface on Vercel "
-        f"handles production traffic with proper routing and SEO. The retrieved notes call out {frontend_facts}, and those "
-        "choices let me mix rapid iteration with polished presentation. The UI's job is to keep conversations flowing while "
-        "surfacing analytics tables, diagrams, or call-to-action cards without ever blocking the learning experience."
+        f"Frontend: {frontend_facts}. Purpose: Handles user interactions and provides the chat interface for conversations."
     )
 
     backend = (
-        f"**Backend/Orchestration Layer:** Behind the UI sits a LangGraph pipeline written in Python 3.11. I break the "
-        f"conversation into intent classification, retrieval, generation, formatting, action planning, and logging nodes so "
-        f"every concern stays testable. The facts in context mention {backend_facts}; that modularity lets me swap LLM "
-        "providers or add new teaching affordances without rewriting the flow. It also means I can trace every decision a "
-        "user turn triggered, which is critical for enterprise audiences evaluating rigor."
+        f"Backend: {backend_facts}. Purpose: Orchestrates conversation flow through modular nodes that handle intent classification, retrieval, generation, and logging."
     )
 
     data_layer = (
-        f"**Data Layer:** Supabase Postgres is my single source of truth, and pgvector keeps all embeddings inside the same "
-        f"transactional database. I chunk knowledge sources, embed them with text-embedding-3-small, and store both the raw "
-        f"text and the vector so I can regenerate or audit on demand. The retrieved context highlights {data_facts}. Using "
-        f"one governed database keeps costs predictable, enables row-level security if needed, and makes it easy to explain "
-        f"how retrieval is grounded when someone asks for proof."
+        f"Data Pipeline: {data_facts}. Purpose: Stores knowledge base chunks as vector embeddings and enables semantic search for grounded responses."
     )
 
     observability = (
-        f"**Observability Layer:** I trace everything with LangSmith and persist superset analytics in Supabase tables. That "
-        f"means latency, similarity scores, and follow-up actions are all queryable, and I can show a hiring manager exactly "
-        f"how a turn performed. Context snippets cite {observability_facts}, which is how I keep a clean audit trail. This "
-        f"layer is what lets me treat the assistant itself as a live portfolio piece—you can see the evidence instead of "
-        f"taking my word for it."
+        f"Observability: {observability_facts}. Purpose: Tracks performance metrics, traces LLM calls, and logs analytics for debugging and optimization."
     )
 
-    deployment = (
-        f"**Deployment Layer:** Everything deploys serverlessly on Vercel so traffic bursts are painless, while a Dockerized "
-        f"LangGraph runtime handles local testing and LangGraph Studio sessions. The materials mention {deployment_facts}, so "
-        f"you're seeing the same stack I'd ship to an enterprise pilot. Stateless routes keep cold starts low, and the safe "
-        f"restart workflow makes it easy to rebuild containers whenever I change prompt wiring or tracing hooks."
+    closing_question = (
+        "Would you like a full detailed end-to-end walkthrough of how I work, or would you prefer detail on a specific part of my stack or architecture?"
     )
 
-    closing_parts = [
-        "It all comes together as a single teaching engine: the UI invites curiosity, the LangGraph core orchestrates every "
-        "decision, pgvector keeps answers grounded, observability proves reliability, and Vercel handles the edge delivery.",
-        "That combination lets me explain GenAI architecture in first person while demonstrating production discipline in the same breath."
-    ]
-
-    if retrieval_sentence:
-        closing_parts.append(retrieval_sentence)
-
-    closing = " ".join(closing_parts)
-
-    paragraphs = [opening, frontend, backend, data_layer, observability, deployment, closing]
+    paragraphs = [opening, frontend, backend, data_layer, observability, closing_question]
     return "\n\n".join(paragraphs)
 
 
@@ -301,6 +323,77 @@ def _extract_layer_outline(chunks: list) -> Dict[str, str]:
     return layer_facts
 
 
+def _detect_verbatim_copying(answer: str, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Detect if the LLM copied chunks verbatim instead of synthesizing.
+
+    Checks for:
+    - Same sentence appearing in multiple layers
+    - Excessive repetition of phrases like "this ai assistant is built on"
+    - Direct chunk content appearing in answer
+
+    Args:
+        answer: Generated answer text
+        chunks: Retrieved chunks that were used as context
+
+    Returns:
+        Dict with:
+        - has_verbatim_copying: bool
+        - detected_phrases: List of repeated phrases found
+        - severity: "low" | "medium" | "high"
+    """
+    answer_lower = answer.lower()
+    detected_phrases = []
+    severity = "low"
+
+    # Check for common verbatim patterns
+    verbatim_patterns = [
+        "this ai assistant is built on",
+        "this ai assistant is built",
+        "this ai assistant uses",
+        "this ai assistant implements",
+    ]
+
+    for pattern in verbatim_patterns:
+        count = answer_lower.count(pattern)
+        if count > 1:
+            detected_phrases.append(f"'{pattern}' appears {count} times")
+            if count >= 3:
+                severity = "high"
+            elif count >= 2:
+                severity = "medium"
+
+    # Check for same sentence appearing multiple times (simple heuristic)
+    sentences = [s.strip() for s in answer.split('.') if len(s.strip()) > 20]
+    if len(sentences) > 0:
+        # Find sentences that appear more than once
+        from collections import Counter
+        sentence_counts = Counter(sentences)
+        repeated = [s for s, count in sentence_counts.items() if count > 1]
+        if repeated:
+            detected_phrases.append(f"Repeated sentences found: {len(repeated)}")
+            severity = "high" if len(repeated) >= 2 else "medium"
+
+    # Check if answer contains direct chunk content (simple substring match)
+    chunk_texts = [chunk.get("content", "").lower()[:100] for chunk in chunks[:3]]  # Check first 3 chunks
+    for chunk_text in chunk_texts:
+        if len(chunk_text) > 30 and chunk_text in answer_lower:
+            detected_phrases.append("Direct chunk content detected")
+            severity = "medium" if severity == "low" else severity
+
+    has_verbatim = len(detected_phrases) > 0
+
+    if has_verbatim:
+        logger.warning(
+            f"⚠️ Verbatim copying detected (severity: {severity}): {', '.join(detected_phrases)}"
+        )
+
+    return {
+        "has_verbatim_copying": has_verbatim,
+        "detected_phrases": detected_phrases,
+        "severity": severity
+    }
+
+
 def select_model_for_task(state: ConversationState) -> str:
     """Select appropriate OpenAI model based on query complexity.
 
@@ -326,10 +419,10 @@ def select_model_for_task(state: ConversationState) -> str:
     technical_roles = ["hiring_manager_technical", "software_developer"]
 
     if (query_type in technical_query_types or role_mode in technical_roles):
-        # For menu option 1 (full tech stack), use GPT-4o for better structured output adherence
+        # For menu option 1 (brief tech stack overview), gpt-4o-mini is sufficient for concise output
         if query_type == "menu_selection" and state.get("menu_choice") == "1":
-            logger.info(f"Using gpt-4o for structured tech stack response (menu option 1)")
-            return "gpt-4o"
+            logger.info(f"Using gpt-4o-mini for brief tech stack overview (menu option 1)")
+            return "gpt-4o-mini"
         # For other technical queries, gpt-4o-mini is sufficient
         logger.info(f"Using gpt-4o-mini for technical query (type={query_type}, role={role_mode})")
         return "gpt-4o-mini"
@@ -406,17 +499,54 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         logger.error("generate_draft called without query in state")
         raise KeyError("State must contain 'query' field for generation") from e
 
+    # Log entry for debugging
+    current_answer = state.get("answer", "")
+    logger.info(f"generate_draft ENTERED - query='{query}', pipeline_halt={state.get('pipeline_halt')}, is_greeting={state.get('is_greeting')}, answer_preview={current_answer[:80] if current_answer else 'None'}")
+
+    # GUARD: Skip generation if this is a greeting or pipeline is halted
+    if state.get("pipeline_halt") or state.get("is_greeting"):
+        logger.info("generate_draft: Skipping - pipeline_halt or is_greeting is True")
+        return state
+
+    # GUARD: Skip generation if query is empty (initial greeting case)
+    if not query or not query.strip():
+        logger.info("generate_draft: Skipping - empty query")
+        return state
+
+    # GUARD: Never call LLM if initial greeting is already set (check before any processing)
+    if current_answer and "1️⃣ Hiring Manager" in current_answer:
+        logger.warning("generate_draft: Initial greeting detected in answer - skipping LLM call entirely")
+        return state
+
     # Access optional fields safely (Defensibility)
     retrieved_chunks = state.get("retrieved_chunks", [])
     role = state.get("role", "Just looking around")
     chat_history = state.get("chat_history", [])
 
+    # Layer 2: File Content Integration in Generation
+    # Include file content in context when available (supplements retrieved chunks)
+    file_content = state.get("file_content")
+    if file_content and file_content.get("success") and file_content.get("content"):
+        # Prepend file content as a special chunk at the beginning of retrieved_chunks
+        # This ensures it's included in the context passed to the LLM
+        file_chunk = {
+            "content": f"[File: {file_content['file_path']}]\n{file_content['content']}",
+            "section": f"File: {file_content['file_path']}",
+            "similarity": 1.0,  # High similarity since it's explicitly requested
+            "doc_id": "file_content",
+            "metadata": {
+                "file_path": file_content['file_path'],
+                "line_count": file_content.get('line_count', 0),
+                "source": "file_reading"
+            }
+        }
+        # Insert at beginning so file content appears first in context
+        retrieved_chunks = [file_chunk] + retrieved_chunks
+        logger.info(f"File content included in context: {file_content['file_path']} ({file_content['line_count']} lines)")
+
     # Initialize update dict (Loose Coupling)
     update: Dict[str, Any] = {}
     state.setdefault("analytics_metadata", {})
-
-    if state.get("pipeline_halt"):
-        return state
 
     grounding_status = state.get("grounding_status")
     if grounding_status and grounding_status not in {"ok", "unknown"}:
@@ -507,28 +637,132 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         layer_outline = _extract_layer_outline(retrieved_chunks)
 
         extra_instructions.append(
-            "CRITICAL INSTRUCTION - FULL TECH STACK WALKTHROUGH:\n\n"
-            "🎯 BALANCING ACT:\n"
-            "- Be CREATIVE and CONVERSATIONAL in your explanations (high temperature = warmth + personality)\n"
-            "- But ALL FACTS must be GROUNDED in the retrieved context chunks (no hallucinations)\n"
-            "- Think of it like: creative teacher using a textbook (context = textbook, you = creative teacher)\n\n"
-            "⚠️ ANTI-PLAGIARISM RULE: DO NOT copy text verbatim from context chunks. "
-            "Synthesize the facts below into a cohesive, natural-sounding narrative.\n\n"
-            "📋 REQUIRED OUTPUT FORMAT (Follow this structure exactly):\n\n"
-            "[Opening paragraph: 2-3 conversational sentences introducing the 5-layer architecture. Make it inviting, not robotic! Explain why this architecture matters using natural language.]\n\n"
-            "**Frontend Layer:** [3-4 sentences. Start by listing technologies from context: " + layer_outline.get("frontend", "Streamlit UI, Next.js migration planned") + ". Then creatively explain: (1) What each tech does (your words, grounded facts), (2) WHY it was chosen (ground in context but explain conversationally), (3) What problems it solves (specific, from context).]\n\n"
-            "**Backend/Orchestration Layer:** [3-4 sentences. Technologies from context: " + layer_outline.get("backend", "LangGraph StateGraph, Python 3.11+, modular pipeline") + ". Then explain conversationally: (1) What it does, (2) Why chosen, (3) Problems solved. Use natural transitions like 'This is perfect for...' or 'We chose this because...'.]\n\n"
-            "**Data Layer:** [3-4 sentences. Technologies from context: " + layer_outline.get("data", "Supabase PostgreSQL, pgvector extension, OpenAI embeddings") + ". Explain with personality: (1) What it does, (2) Why chosen, (3) Problems solved. Connect to real-world impact.]\n\n"
-            "**Observability Layer:** [3-4 sentences. Technologies from context: " + layer_outline.get("observability", "LangSmith tracing, Supabase analytics") + ". Make it engaging: (1) What it does, (2) Why chosen, (3) Problems solved.]\n\n"
-            "**Deployment Layer:** [3-4 sentences. Technologies from context: " + layer_outline.get("deployment", "Vercel serverless, stateless design, horizontal scaling") + ". Explain with warmth: (1) What it does, (2) Why chosen, (3) Problems solved.]\n\n"
-            "[Closing paragraph: 2-3 sentences showing how these 5 layers work together. Use conversational language like 'It all comes together...' or 'This architecture matters because...'. Connect to enterprise readiness with warmth.]\n\n"
-            "🎯 TARGET: 350-400 words total (DO NOT STOP BEFORE 300 WORDS) | Conversational + technically accurate | "
-            "Ground every fact in retrieved context, but explain with personality and natural transitions. "
-            "Each layer MUST appear with the exact heading shown above."
+            "CRITICAL INSTRUCTION - BRIEF TECH STACK OVERVIEW:\n\n"
+            "You must provide a BRIEF overview of my tech stack. This should be concise and clean.\n\n"
+            "CRITICAL RULES:\n"
+            "- DO NOT repeat the same phrase across layers. Each layer must use DIFFERENT wording - if you find yourself repeating the same phrase, rewrite it.\n"
+            "- DO NOT copy verbatim from context. Synthesize the information into concise, unique sentences.\n"
+            "- NEVER say 'this ai assistant' or 'This AI assistant' - always use 'I' or 'my'.\n"
+            "- Example: ✅ 'I'm built on Python 3.11+' ❌ 'this ai assistant is built on Python 3.11+'\n"
+            "- Example: ✅ 'My architecture uses...' ❌ 'this ai assistant uses...'\n"
+            "- DO NOT include 'Sources:' or citations in your response.\n"
+            "- CRITICAL: Your response MUST be between 100-150 words. Count your words carefully.\n\n"
+            "WHAT NOT TO DO (VERBATIM COPYING EXAMPLES):\n"
+            "❌ BAD: Repeating 'this ai assistant is built on a modern, scalable tech stack' in every layer\n"
+            "❌ BAD: Copying the exact same sentence structure across Frontend, Backend, Data Pipeline, Observability\n"
+            "❌ BAD: Using identical phrasing like 'this ai assistant is built on' multiple times\n"
+            "✅ GOOD: Each layer has unique wording: 'I use Streamlit for...' vs 'My backend runs on...' vs 'I store data in...'\n\n"
+            "REQUIRED OUTPUT FORMAT:\n\n"
+            "[Brief opening: 1 sentence introducing the stack overview]\n\n"
+            "Frontend: [1-2 sentences listing technologies and brief purpose. Technologies from context: " + layer_outline.get("frontend", "Streamlit UI, Next.js") + "]\n\n"
+            "Backend: [1-2 sentences listing technologies and brief purpose. Technologies from context: " + layer_outline.get("backend", "LangGraph, Python 3.11") + "]\n\n"
+            "Data Pipeline: [1-2 sentences listing technologies and brief purpose. Technologies from context: " + layer_outline.get("data", "Supabase Postgres, pgvector, OpenAI embeddings") + "]\n\n"
+            "Observability: [1-2 sentences listing technologies and brief purpose. Technologies from context: " + layer_outline.get("observability", "LangSmith tracing, Supabase analytics") + "]\n\n"
+            "[Closing question: End with this exact question: 'Would you like more detail on a specific layer, or a deeper dive into how my architecture works?']\n\n"
+            "EXAMPLE OF GOOD FORMAT:\n"
+            "Here's my tech stack at a glance:\n\n"
+            "Frontend: Streamlit UI handles user interactions and provides the chat interface.\n\n"
+            "Backend: LangGraph orchestrates conversation flow through modular nodes that handle intent classification and generation.\n\n"
+            "Data Pipeline: Supabase Postgres with pgvector stores knowledge base chunks as vector embeddings for semantic search.\n\n"
+            "Observability: LangSmith traces LLM calls and tracks performance metrics for debugging and optimization.\n\n"
+            "Would you like more detail on a specific layer, or a deeper dive into how my architecture works?\n\n"
+            "TARGET: 100-150 words total | Brief and concise | Plain text, no asterisks | "
+            "List the stack: Frontend → Backend → Data Pipeline → Observability | "
+            "Each layer: 1-2 sentences explaining purpose only | "
+            "MUST end with the closing question about specific layer or architecture"
         )
         logger.info(f"📝 Layer outline extracted for synthesis: {list(layer_outline.keys())}")
         logger.warning(f"🚨 DEBUG: extra_instructions length = {len(''.join(extra_instructions))} characters")
         logger.warning(f"🚨 DEBUG: First 200 chars of extra_instructions = {(''.join(extra_instructions))[:200]}")
+
+    # Detect documentation chunks and add synthesis instructions
+    has_documentation_chunks = any(
+        chunk.get("doc_id") == "documentation" for chunk in retrieved_chunks
+    )
+
+    # Detect walkthrough requests
+    walkthrough_keywords = [
+        "walkthrough", "walk through", "end to end", "end-to-end",
+        "full stack", "comprehensive", "complete overview", "full overview"
+    ]
+    is_walkthrough_query = any(
+        kw in query.lower()
+        for kw in walkthrough_keywords
+    )
+
+    if has_documentation_chunks:
+        extra_instructions.append(
+            "CRITICAL DOCUMENTATION SYNTHESIS - YOU MUST FOLLOW THESE RULES:\n\n"
+            "You retrieved documentation chunks with markdown headers. These are RAW STRUCTURE, not conversational text.\n\n"
+            "MANDATORY TRANSFORMATIONS:\n"
+            "1. Remove ALL markdown syntax: ##, ###, **, -\n"
+            "2. Transform headers into natural sentences:\n"
+            "   ❌ '## Example Conversation 1' → ✅ 'Here's an example conversation...'\n"
+            "   ❌ '## 🔧 Hiring Manager (Technical)' → ✅ 'For technical hiring managers, I focus on...'\n"
+            "3. Synthesize content into flowing first-person narrative\n"
+            "4. DO NOT copy-paste documentation structure - rewrite it conversationally\n"
+            "5. If you see 'query=\"What's the tech stack?\"', transform it into natural language\n"
+            "FAILURE TO DO THIS WILL RESULT IN POOR USER EXPERIENCE."
+        )
+        logger.info("📚 Documentation chunks detected - added synthesis instructions")
+
+    if is_walkthrough_query:
+        if has_documentation_chunks:
+            extra_instructions.append(
+                "CRITICAL: User requested a FULL WALKTHROUGH. You must provide a comprehensive, "
+                "end-to-end explanation (300-500 words) that flows naturally from frontend → backend → data → observability. "
+                "DO NOT just list documentation chunks - synthesize them into a cohesive narrative. "
+                "Transform all markdown headers into conversational explanations. "
+                "Provide detailed explanation, not just brief snippets. "
+                "If the documentation contains examples or structured content, weave it into your narrative naturally."
+            )
+        else:
+            extra_instructions.append(
+                "CRITICAL: User requested a FULL WALKTHROUGH. Provide a comprehensive, "
+                "end-to-end explanation (300-500 words) covering all layers of the architecture. "
+                "Flow naturally from frontend → backend → data → observability with detailed explanations."
+            )
+        logger.info("Walkthrough query detected - comprehensive response mode enabled")
+
+    # Detect enterprise adaptation questions
+    enterprise_keywords = [
+        "enterprise", "adapt", "scale", "business use case",
+        "customer support", "internal docs", "how would this work for",
+        "enterprise use", "enterprise deployment", "enterprise adaptation",
+        "business scenario", "production deployment", "large scale"
+    ]
+    query_lower = query.lower()
+    is_enterprise_adaptation = any(kw in query_lower for kw in enterprise_keywords)
+
+    if is_enterprise_adaptation:
+        extra_instructions.append(
+            "ENTERPRISE ADAPTATION FRAMEWORK - CRITICAL INSTRUCTION:\n\n"
+            "Structure your response using the systematic enterprise adaptation framework:\n\n"
+            "1. Business Use Case Example (concrete scenario):\n"
+            "   - Must be specific, not generic. Include scale, context, and business requirements.\n"
+            "   - Example: 'Consider a customer support bot handling 10,000 tickets per day for a SaaS company. Users ask about billing, feature availability, and technical troubleshooting. The bot must integrate with Zendesk, authenticate via SSO, and maintain conversation context across multiple channels.'\n"
+            "   - Avoid vague statements - be concrete with numbers and context.\n\n"
+            "2. Required Changes (specific programming/architecture modifications):\n"
+            "   - Authentication: Specify exact implementation (e.g., 'Add SSO layer using OAuth2/OIDC. Implement token validation middleware that intercepts requests before they reach the orchestration layer.')\n"
+            "   - Integration: Specify code changes (e.g., 'Swap email action node for Zendesk API integration. Replace execute_actions node's email handler with Zendesk ticket creation logic.')\n"
+            "   - Scaling: Specify infrastructure changes (e.g., 'Add Redis caching layer for vector search results. Cache embeddings for common queries to reduce pgvector load from 850ms to 50ms.')\n"
+            "   - Security: Specify policy changes (e.g., 'Implement row-level security policies for multi-tenant data. Add tenant_id to all database queries and filter results by organization.')\n"
+            "   - Be specific about code/architecture changes, not just concepts.\n\n"
+            "3. Unchanged Components (what stays the same):\n"
+            "   - 'LangGraph orchestration logic remains identical. The 18-node pipeline structure is unchanged.'\n"
+            "   - 'RAG pipeline (embedding → retrieval → generation) unchanged. Same pgvector search, same similarity threshold, same chunking strategy.'\n"
+            "   - 'Vector search algorithm preserved. The cosine similarity calculation and IVFFLAT indexing logic stay the same.'\n"
+            "   - 'State management pattern consistent. ConversationState structure and node update logic remain unchanged.'\n"
+            "   - Explain why these components don't need modification.\n\n"
+            "4. Integration Reasoning (why these decisions matter):\n"
+            "   - Connect changes to business requirements: 'SSO is required for enterprise security compliance. Without it, customers cannot integrate with their identity providers.'\n"
+            "   - Explain tradeoffs and benefits: 'Adding Redis caching increases complexity but reduces database load by 60%, enabling horizontal scaling without database bottlenecks.'\n"
+            "   - Show how unchanged components enable rapid adaptation: 'Because the LangGraph orchestration is modular, swapping the action node takes 2 hours instead of 2 weeks. The RAG pipeline remains untouched, preserving all existing knowledge base investments.'\n"
+            "   - Demonstrate understanding of enterprise constraints: 'Multi-tenant RLS is non-negotiable for SaaS deployments. The unchanged vector search logic means we can add tenant filtering without rewriting retrieval code.'\n\n"
+            "Use systematic paragraphs, NOT bullet points. Include quantitative details where relevant. "
+            "Start with the fundamental problem enterprise deployments must solve, then work through each section methodically."
+        )
+        logger.info("🏢 Enterprise adaptation framework triggered for query")
 
     # When teaching/explaining, provide comprehensive depth
     elif state.get("needs_longer_response", False) or state.get("teaching_moment", False):
@@ -593,6 +827,13 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     instruction_suffix = " ".join(extra_instructions) if extra_instructions else None
     base_instruction_suffix = instruction_suffix
 
+    # CRITICAL GUARD: Never call LLM if initial greeting is already set
+    # Check again right before LLM call (defense in depth)
+    current_answer_check = state.get("answer", "")
+    if current_answer_check and "1️⃣ Hiring Manager" in current_answer_check:
+        logger.warning("generate_draft: Initial greeting detected before LLM call - aborting generation")
+        return state  # Don't call LLM, don't modify answer
+
     # Select appropriate model for this task
     selected_model = select_model_for_task(state)
 
@@ -600,7 +841,7 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     state.setdefault("analytics_metadata", {})["selected_model"] = selected_model
 
     # Generate response with LLM (Encapsulation - delegates to response generator)
-    attempt_label = "menu-option-1" if is_menu_option_one else "generic-response"
+    attempt_label = "menu-option-1-brief" if is_menu_option_one else "generic-response"
     attempt_counter = 0
 
     if is_menu_option_one:
@@ -626,7 +867,37 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     if is_menu_option_one:
         _log_answer_snapshot(f"{attempt_label}-attempt-{attempt_counter}", answer)
 
-    # Validate structured output for menu option 1 (full tech stack)
+        # Check for verbatim copying
+        verbatim_check = _detect_verbatim_copying(answer, retrieved_chunks)
+        if verbatim_check["has_verbatim_copying"]:
+            logger.warning(
+                f"⚠️ Verbatim copying detected in menu option 1 answer (severity: {verbatim_check['severity']})"
+            )
+            # Apply stronger first-person enforcement
+            answer = rag_engine.response_generator._enforce_first_person(answer)
+            update["generation_quality_warning"] = f"Verbatim copying detected: {', '.join(verbatim_check['detected_phrases'])}"
+
+        # Force the correct closing question - detect and replace old patterns
+        old_patterns = [
+            r"full detailed end-to-end walkthrough",
+            r"end-to-end walkthrough",
+            r"full end to end walkthrough",
+            r"end to end walkthrough"
+        ]
+
+        for pattern in old_patterns:
+            if re.search(pattern, answer, flags=re.IGNORECASE):
+                # Replace the entire closing question
+                answer = re.sub(
+                    r'Would you like.*\?',
+                    "Would you like more detail on a specific layer, or a deeper dive into how my architecture works?",
+                    answer,
+                    flags=re.IGNORECASE | re.DOTALL
+                )
+                logger.info("Fixed closing question to match required format")
+                break
+
+    # Validate structured output for menu option 1 (brief tech stack overview)
     if is_menu_option_one:
         validation = _validate_menu_option_one_answer(answer)
         retries = 0
@@ -670,18 +941,32 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
 
         missing_layers = validation["missing_layers"]
         word_count = validation["word_count"]
+        has_followup = validation.get("has_followup_question", False)
 
         if missing_layers:
             logger.warning(f"⚠️ Generated answer missing {len(missing_layers)} layers: {missing_layers}")
-            logger.warning(f"⚠️ Word count: {word_count} (target: 350-400)")
+            logger.warning(f"⚠️ Word count: {word_count} (target: 100-150)")
             update["generation_quality_warning"] = f"Missing layers: {', '.join(missing_layers)}"
         elif word_count < MENU_OPTION_ONE_MIN_WORDS:
-            logger.warning(f"⚠️ Generated answer too short: {word_count} words (target: 350-400)")
+            logger.warning(f"⚠️ Generated answer too short: {word_count} words (target: 100-150)")
             update["generation_quality_warning"] = f"Too short: {word_count} words"
+        elif word_count > MENU_OPTION_ONE_MAX_WORDS:
+            logger.warning(f"⚠️ Generated answer too long: {word_count} words (target: 100-150)")
+            update["generation_quality_warning"] = f"Too long: {word_count} words"
+        elif not has_followup:
+            logger.warning(f"⚠️ Generated answer missing follow-up question")
+            update["generation_quality_warning"] = "Missing follow-up question"
         else:
-            logger.info(f"✅ Structured output validated: All 5 layers present, {word_count} words")
+            logger.info(f"✅ Brief overview validated: All layers present, {word_count} words, follow-up question included")
 
     cleaned_answer = sanitize_generated_answer(answer)
+
+    # CRITICAL GUARD: Never overwrite the initial greeting if it's already set
+    current_answer = state.get("answer", "")
+    if current_answer and "1️⃣ Hiring Manager" in current_answer:
+        logger.warning("generate_draft: Attempted to overwrite initial greeting - preserving original")
+        return state  # Don't modify the answer at all
+
     update["draft_answer"] = cleaned_answer
     update["answer"] = cleaned_answer
 
