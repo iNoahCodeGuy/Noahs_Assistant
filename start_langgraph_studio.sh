@@ -1,20 +1,8 @@
 #!/bin/bash
-# Easy LangGraph Studio Startup Script
+# Quick LangGraph Studio Startup (No Docker - for testing)
 
-echo "🚀 Starting LangGraph Studio..."
+echo "🚀 Starting LangGraph Studio (No Docker)..."
 echo "==============================================="
-
-# Check if Docker is running
-if ! docker info > /dev/null 2>&1; then
-    echo "⚠️  Starting Docker Desktop..."
-    open /Applications/Docker.app
-    echo "⏳ Waiting for Docker to start..."
-    while ! docker info > /dev/null 2>&1; do
-        sleep 2
-        echo "   Still waiting for Docker..."
-    done
-    echo "✅ Docker is ready!"
-fi
 
 # Load environment variables
 if [ -f .env ]; then
@@ -22,14 +10,39 @@ if [ -f .env ]; then
     export $(cat .env | grep -v '^#' | xargs)
     echo "✅ Environment loaded"
 else
-    echo "❌ .env file not found!"
-    exit 1
+    echo "⚠️  No .env file found - continuing anyway..."
 fi
 
-# Start LangGraph Studio
-echo "🎯 Starting LangGraph Studio on port 2024..."
-echo "🌐 Connect in LangSmith Studio: http://127.0.0.1:2024"
-echo "📊 Dashboard: https://smith.langchain.com/"
-echo "==============================================="
+# Ensure LangSmith tracing is enabled
+export LANGCHAIN_TRACING_V2=true
+echo "🔗 LangSmith tracing enabled"
 
-langgraph up --port 2024
+# Start LangGraph dev server (no Docker)
+echo "🎯 Starting LangGraph dev server..."
+echo "🌐 Server will be at: http://127.0.0.1:2024"
+echo "📊 LangSmith Studio: https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024"
+echo "📈 View traces: https://smith.langchain.com/o/project/${LANGCHAIN_PROJECT:-noahs-ai-assistant}"
+echo "==============================================="
+echo ""
+echo "⏳ Starting server... (will open browser in 5 seconds)"
+echo ""
+
+# Start langgraph dev in background and capture PID
+langgraph dev &
+LANGGRAPH_PID=$!
+
+# Wait a few seconds for server to start, then open browser
+sleep 5
+
+# Open LangSmith Studio in browser
+LANGSMITH_URL="https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024"
+echo "🌐 Opening LangSmith Studio in browser..."
+open "$LANGSMITH_URL" 2>/dev/null || xdg-open "$LANGSMITH_URL" 2>/dev/null || echo "⚠️  Please manually open: $LANGSMITH_URL"
+
+echo ""
+echo "✅ Server running (PID: $LANGGRAPH_PID)"
+echo "🛑 Press Ctrl+C to stop"
+echo ""
+
+# Wait for langgraph process
+wait $LANGGRAPH_PID

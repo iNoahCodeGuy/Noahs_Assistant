@@ -476,7 +476,54 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         intent_label = "business_value"
 
     update["query_intent"] = intent_label
-    update["intent_confidence"] = 0.9
+
+    # Multi-strategy confidence scoring for ambiguous queries
+    confidence_scores = {
+        "keyword_match": 0.0,
+        "conversation_context": 0.0,
+        "entity_extraction": 0.0
+    }
+
+    # Strategy 1: Keyword matching
+    if any(kw in lowered for kw in ["code", "implementation", "show me"]):
+        confidence_scores["keyword_match"] = 0.8
+    elif any(kw in lowered for kw in ["how", "what", "explain"]):
+        confidence_scores["keyword_match"] = 0.6
+    else:
+        confidence_scores["keyword_match"] = 0.4
+
+    # Strategy 2: Conversation context
+    session_memory = state.get("session_memory", {})
+    if chat_history and len(chat_history) >= 2:
+        recent_content = " ".join([msg.get("content", "") for msg in chat_history[-2:]])
+        session_topics = session_memory.get("topics", []) if session_memory else []
+        if any(topic in recent_content.lower() for topic in session_topics):
+            confidence_scores["conversation_context"] = 0.9  # High if previous context exists
+        else:
+            confidence_scores["conversation_context"] = 0.5
+    else:
+        confidence_scores["conversation_context"] = 0.3  # Lower for new conversations
+
+    # Strategy 3: Entity extraction
+    entities = state.get("entities", {})
+    is_menu_selection = update.get("query_type") == "menu_selection"
+    if entities.get("menu_context") or entities.get("menu_selection") or is_menu_selection:
+        confidence_scores["entity_extraction"] = 0.7  # Menu selections are explicit
+    else:
+        confidence_scores["entity_extraction"] = 0.3
+
+    # Aggregate confidence (weighted average)
+    overall_confidence = (
+        confidence_scores["keyword_match"] * 0.4 +
+        confidence_scores["conversation_context"] * 0.4 +
+        confidence_scores["entity_extraction"] * 0.2
+    )
+    update["intent_confidence"] = overall_confidence
+
+    # Low confidence triggers clarification
+    if overall_confidence < 0.5 and not is_menu_selection:
+        update["clarification_needed"] = True
+        logger.info(f"Low confidence query detected ({overall_confidence:.2f}), requesting clarification")
 
     # Return partial update - LangGraph will merge into state
     return update

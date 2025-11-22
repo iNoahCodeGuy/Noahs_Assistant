@@ -153,6 +153,102 @@ def _split_answer_and_sources(answer: str) -> tuple[str, str]:
     return answer.strip(), ""
 
 
+def _remove_chunk_citations(text: str) -> str:
+    """Remove citation phrases that reference retrieved chunks verbatim.
+
+    Removes phrases like:
+    - "The retrieved notes call out..."
+    - "The retrieved chunks mention..."
+    - "The context chunks indicate..."
+    - "The retrieved context says..."
+
+    These phrases break the first-person narrative and reveal the RAG mechanism.
+
+    Args:
+        text: Answer text that may contain chunk citation phrases
+
+    Returns:
+        Text with citation phrases removed
+
+    Example:
+        >>> _remove_chunk_citations("The retrieved notes call out Streamlit UI.")
+        "Streamlit UI."
+    """
+    # Patterns to remove (case-insensitive)
+    citation_patterns = [
+        r'\b[Tt]he\s+retrieved\s+notes\s+call\s+out\s+',
+        r'\b[Tt]he\s+retrieved\s+chunks?\s+(?:call\s+out|mention|indicate|say|show|contain)\s+',
+        r'\b[Tt]he\s+context\s+chunks?\s+(?:call\s+out|mention|indicate|say|show|contain)\s+',
+        r'\b[Tt]he\s+retrieved\s+context\s+(?:calls?\s+out|mentions?|indicates?|says?|shows?|contains?)\s+',
+        r'\b[Tt]he\s+context\s+(?:calls?\s+out|mentions?|indicates?|says?|shows?|contains?)\s+',
+        r'\b[Tt]he\s+notes\s+(?:call\s+out|mention|indicate|say|show|contain)\s+',
+        # Additional patterns to catch more citation phrases
+        r'\b[Tt]he\s+facts\s+in\s+context\s+mention\s+',
+        r'\b[Tt]he\s+materials\s+mention\s+',
+        r'\b[Cc]ontext\s+snippets\s+cite\s+',
+        r'\b[Tt]he\s+retrieved\s+context\s+highlights\s+',
+    ]
+
+    result = text
+    for pattern in citation_patterns:
+        # Remove the citation phrase, preserving the rest of the sentence
+        result = re.sub(pattern, '', result, flags=re.IGNORECASE)
+
+    # Clean up any double spaces or punctuation issues
+    result = re.sub(r'\s+', ' ', result)
+    result = re.sub(r'\s+([,.!?])', r'\1', result)
+
+    return result.strip()
+
+
+def _remove_markdown_headers(text: str) -> str:
+    """Remove markdown headers (##, ###) and convert to plain text.
+
+    Removes markdown headers like:
+    - "## Example Conversation 1" → "Example Conversation 1"
+    - "### Turn 1: Enterprise Opening" → "Turn 1: Enterprise Opening"
+    - "## 🎯 Hiring Manager" → "Hiring Manager"
+
+    These headers often appear when documentation chunks are copied verbatim.
+
+    Args:
+        text: Answer text that may contain markdown headers
+
+    Returns:
+        Text with headers removed or converted to plain text
+
+    Example:
+        >>> _remove_markdown_headers("## Example Conversation 1\\n**Content**")
+        "Example Conversation 1\\n**Content**"
+        >>> _remove_markdown_headers("### Turn 1: Enterprise Opening")
+        "Turn 1: Enterprise Opening"
+    """
+    if not text:
+        return text
+
+    # Remove markdown headers (##, ###, ####) - capture the header text
+    # Pattern: 1-4 hashes followed by whitespace, then optional emojis, then text
+    lines = text.split('\n')
+    cleaned_lines = []
+
+    for line in lines:
+        # Match markdown headers with optional emojis
+        # Pattern: ^#{1,4}\s+([🎯🔧⚙️📊🏗️🧪🚀]*\s*)?(.+)$
+        header_match = re.match(r'^#{1,4}\s+(?:[🎯🔧⚙️📊🏗️🧪🚀]+\s*)?(.+)$', line)
+        if header_match:
+            # Extract just the text content after the header
+            cleaned_lines.append(header_match.group(1).strip())
+        else:
+            cleaned_lines.append(line)
+
+    result = '\n'.join(cleaned_lines)
+
+    # Clean up any double newlines created by header removal
+    result = re.sub(r'\n{3,}', '\n\n', result)
+
+    return result.strip()
+
+
 def _add_subcategory_code_blocks(
     sections: List[str],
     active_subcats: List[str],
@@ -321,7 +417,84 @@ def _build_subcategory_followups(active_subcats: List[str]) -> List[str]:
     return suggestions[:3]  # Return at most 3
 
 
-def _build_followups(variant: str, intent: str = "general", active_subcats: List[str] = None, role_mode: str = "explorer") -> List[str]:
+def _analyze_conversation_flow(chat_history: List[Dict], session_memory: Dict) -> Dict:
+    """Analyze conversation pattern to infer progression.
+
+    Detects conversation patterns like:
+    - orchestration → enterprise (Turn 3: orchestration, Turn 4: enterprise)
+    - architecture → implementation (architectural discussion → code details)
+    - general → specific (broad question → specific follow-up)
+
+    Args:
+        chat_history: List of message dicts with 'role' and 'content' keys
+        session_memory: Dict with topics, entities, persona_hints, etc.
+
+    Returns:
+        Dict with:
+        - pattern: Detected pattern name (or None)
+        - topics: List of accumulated topics
+        - has_progression: Boolean indicating if progression detected
+
+    Example:
+        >>> chat_history = [
+        ...     {"role": "user", "content": "explain orchestration"},
+        ...     {"role": "assistant", "content": "..."},
+        ...     {"role": "user", "content": "how is this relevant to enterprise?"}
+        ... ]
+        >>> session_memory = {"topics": ["orchestration", "technical"]}
+        >>> _analyze_conversation_flow(chat_history, session_memory)
+        {"pattern": "orchestration_to_enterprise", "topics": [...], "has_progression": True}
+    """
+    patterns = []
+    topics = session_memory.get("topics", []) if session_memory else []
+    topics_text = " ".join(topics).lower() if topics else ""
+
+    # Need at least 2 messages to detect patterns
+    if not chat_history or len(chat_history) < 2:
+        return {
+            "pattern": None,
+            "topics": topics,
+            "has_progression": False
+        }
+
+    # Get last few messages for pattern analysis
+    recent_messages = chat_history[-4:] if len(chat_history) > 4 else chat_history
+    recent_content = " ".join([msg.get("content", "").lower() for msg in recent_messages])
+
+    # Detect pattern: orchestration → enterprise
+    # User asked about orchestration (Turn 3), now asking about enterprise (Turn 4)
+    if "orchestration" in topics_text or "orchestration" in recent_content:
+        if any("enterprise" in msg.get("content", "").lower() for msg in recent_messages[-2:]):
+            patterns.append("orchestration_to_enterprise")
+
+    # Detect pattern: architecture → implementation
+    # User asked about architecture, now asking about implementation/code
+    if "architecture" in recent_content or "architecture" in topics_text:
+        if any(kw in recent_content for kw in ["code", "implementation", "how is this built", "show me"]):
+            patterns.append("architecture_to_implementation")
+
+    # Detect pattern: general → specific
+    # User started with general question, now asking specific follow-up
+    if len(chat_history) >= 4:
+        # Compare first query vs recent queries
+        first_query = chat_history[0].get("content", "").lower() if chat_history[0].get("role") == "user" else ""
+        recent_query = chat_history[-1].get("content", "").lower() if chat_history[-1].get("role") == "user" else ""
+
+        # First query is general (short, simple), recent query is specific (longer, more keywords)
+        if first_query and recent_query:
+            first_word_count = len(first_query.split())
+            recent_word_count = len(recent_query.split())
+            if first_word_count <= 5 and recent_word_count > 5:
+                patterns.append("general_to_specific")
+
+    return {
+        "pattern": patterns[0] if patterns else None,
+        "topics": topics,
+        "has_progression": len(patterns) > 0
+    }
+
+
+def _build_followups(variant: str, intent: str = "general", active_subcats: List[str] = None, role_mode: str = "explorer", chat_history: List[Dict] = None, session_memory: Dict = None) -> List[str]:
     """Generate role-specific followup prompt suggestions with subcategory awareness.
 
     Merged logic from logging_nodes.suggest_followups for inline followup generation.
@@ -340,10 +513,38 @@ def _build_followups(variant: str, intent: str = "general", active_subcats: List
         ["Want the LangGraph node flow diagram?", ...]
     """
     active_subcats = active_subcats or []
+    chat_history = chat_history or []
+    session_memory = session_memory or {}
 
     # Confession mode gets no followups (privacy)
     if role_mode == "confession":
         return []
+
+    # NEW: Conversation flow analysis for inference-based followup generation
+    if chat_history and len(chat_history) >= 2:
+        # Analyze conversation pattern to infer progression
+        flow_analysis = _analyze_conversation_flow(chat_history, session_memory)
+
+        # Generate context-aware followups based on progression pattern
+        if flow_analysis.get("pattern") == "orchestration_to_enterprise":
+            return [
+                "Want to see how orchestration scales in enterprise deployments?",
+                "Curious about the enterprise patterns built on this architecture?",
+                "Should I show the production safeguards that make this enterprise-ready?"
+            ]
+        elif flow_analysis.get("pattern") == "architecture_to_implementation":
+            return [
+                "Want to see the code behind this architecture?",
+                "Curious about the specific implementation details?",
+                "Should I walk through the technical implementation?"
+            ]
+        elif flow_analysis.get("pattern") == "general_to_specific":
+            # User is getting more specific - offer deeper dives
+            return [
+                "Want to dive deeper into the technical details?",
+                "Curious about how this works under the hood?",
+                "Should I show you the implementation or walk through the code?"
+            ]
 
     # Subcategory-specific followups take priority for technical queries
     if intent in {"technical", "engineering"} and active_subcats:
@@ -480,6 +681,8 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
     role = state.get("role", "Just looking around")
 
     body_text, sources_text = _split_answer_and_sources(base_answer)
+    # Remove chunk citation phrases that break first-person narrative
+    body_text = _remove_chunk_citations(body_text)
     summary_lines = _summarize_answer(body_text, depth)
 
     sections: List[str] = []
@@ -782,12 +985,16 @@ def build_conversation_graph():
     intent = state.get("query_intent") or state.get("query_type") or "general"
     role_mode = state.get("role_mode", "explorer")
     followup_variant = state.get("followup_variant", "mixed")
+    chat_history = state.get("chat_history", [])
+    session_memory = state.get("session_memory", {})
 
     followups = _build_followups(
         variant=followup_variant,
         intent=intent,
         active_subcats=active_subcats,
-        role_mode=role_mode
+        role_mode=role_mode,
+        chat_history=chat_history,
+        session_memory=session_memory
     )
 
     if followups:

@@ -212,6 +212,20 @@ def run_conversation_flow(
         if state.get("pipeline_halt") or state.get("is_greeting"):
             break
 
+    # Append user query and assistant answer to chat_history for conversation continuity
+    # Skip for greetings or pipeline halts (no real conversation yet)
+    if state.get("answer") and not state.get("is_greeting") and not state.get("pipeline_halt"):
+        chat_history = state.get("chat_history", [])
+        # Append user query if present and not already in history
+        if state.get("query"):
+            # Check if this query was already added (avoid duplicates)
+            last_user_msg = chat_history[-1] if chat_history and chat_history[-1].get("role") == "user" else None
+            if not last_user_msg or last_user_msg.get("content") != state["query"]:
+                chat_history.append({"role": "user", "content": state["query"]})
+        # Append assistant answer
+        chat_history.append({"role": "assistant", "content": state["answer"]})
+        state["chat_history"] = chat_history
+
     elapsed_ms = int((time.time() - start) * 1000)
     state = log_and_notify(state, session_id=session_id, latency_ms=elapsed_ms)
     return state

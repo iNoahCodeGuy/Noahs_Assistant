@@ -40,8 +40,8 @@ def _get_role_welcome_message(role_mode: str) -> str:
             • The business and enterprise value of agentic systems like me — how organizations deploy assistants to improve reliability, scalability, and customer satisfaction
 
             You can choose where to start:
-            1️⃣ My full tech stack — end-to-end walkthrough (frontend → backend → data pipeline → observability)
-            2️⃣ The orchestration layer — how my nodes, states, and safeguards work together
+            1️⃣ My full tech stack — architecture overview (frontend → backend → data pipeline → observability)
+            2️⃣ The orchestration layer — how my nodes, states, and safeguards work together as a conversation progresses
             3️⃣ Enterprise adaptation — how assistants like me are customized for large-scale deployments
             4️⃣ See Noah's technical background — certifications, GitHub projects, and proof of his engineering foundation
         """),

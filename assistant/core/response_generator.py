@@ -15,6 +15,7 @@ Supports multiple response types: basic, technical, and role-specific.
 from __future__ import annotations
 
 import logging
+import re
 from typing import List, Dict, Any, Optional
 
 from .langchain_compat import RetrievalQA, PromptTemplate, ChatOpenAI
@@ -22,10 +23,49 @@ from .langchain_compat import RetrievalQA, PromptTemplate, ChatOpenAI
 logger = logging.getLogger(__name__)
 
 class ResponseGenerator:
+    # Simple in-memory cache for common queries
+    _response_cache: Dict[str, str] = {}
+    _cache_max_size = 50
+
     def __init__(self, llm, qa_chain: Optional[RetrievalQA] = None, degraded_mode: bool = False):
         self.llm = llm
         self.qa_chain = qa_chain
         self.degraded_mode = degraded_mode
+
+    def _get_cached_response(self, query: str, role: str, context_hash: str) -> Optional[str]:
+        """Check cache for common queries (menu selections, greetings).
+
+        Args:
+            query: User query
+            role: User role
+            context_hash: Hash of context to ensure cache validity
+
+        Returns:
+            Cached response if available, None otherwise
+        """
+        cache_key = f"{role}:{query.strip().lower()}:{context_hash}"
+        cached = self._response_cache.get(cache_key)
+        if cached:
+            logger.debug(f"Cache hit for query: {query[:50]}")
+        return cached
+
+    def _cache_response(self, query: str, role: str, context_hash: str, response: str):
+        """Cache response for common queries.
+
+        Args:
+            query: User query
+            role: User role
+            context_hash: Hash of context for cache key
+            response: Generated response to cache
+        """
+        cache_key = f"{role}:{query.strip().lower()}:{context_hash}"
+        if len(self._response_cache) >= self._cache_max_size:
+            # Remove oldest entry (simple FIFO)
+            oldest_key = next(iter(self._response_cache))
+            del self._response_cache[oldest_key]
+            logger.debug(f"Cache evicted oldest entry: {oldest_key[:50]}")
+        self._response_cache[cache_key] = response
+        logger.debug(f"Cached response for query: {query[:50]}")
 
     def generate_basic_response(self, query: str, fallback_docs: List[str] = None, chat_history: List[Dict[str, str]] = None) -> str:
         """Generate basic response using LLM with retrieved context and conversation history."""
@@ -113,6 +153,48 @@ Please provide a helpful and accurate answer based on the information provided. 
                 context_parts.append(str(item))
 
         context_str = "\n".join(context_parts)
+
+        # Framework-aware code suggestions
+        framework_instructions = ""
+        # Note: detected_framework would come from state if this were in the pipeline
+        # For now, detect from query directly in this legacy module
+        query_lower = query.lower()
+        if any(kw in query_lower for kw in ["frontend", "ui", "react", "next.js", "nextjs", "typescript"]):
+            framework_instructions = (
+                "\n\nCRITICAL: FRAMEWORK-AWARE CODE SUGGESTIONS\n"
+                "- When showing frontend code, use Next.js patterns (Link, not <a> tags)\n"
+                "- Show TypeScript examples, not JavaScript\n"
+                "- Reference Next.js conventions (app router, server components)\n"
+                "- Mention Next.js-specific features (Image optimization, API routes)\n"
+            )
+        elif any(kw in query_lower for kw in ["backend", "api", "python", "langgraph"]):
+            framework_instructions = (
+                "\n\nCRITICAL: PYTHON-SPECIFIC PATTERNS\n"
+                "- Use Python 3.11+ features (type hints, dataclasses)\n"
+                "- Reference LangGraph patterns for orchestration\n"
+                "- Show async/await patterns where relevant\n"
+                "- Use Pythonic idioms (list comprehensions, context managers)\n"
+            )
+
+        if framework_instructions and extra_instructions:
+            extra_instructions = f"{extra_instructions}\n{framework_instructions}"
+        elif framework_instructions:
+            extra_instructions = framework_instructions
+
+        # Check cache for common queries (menu selections, greetings)
+        query_lower = query.lower().strip()
+        is_cacheable = (
+            query_lower in ["1", "2", "3", "4"] or  # Menu selections
+            query_lower.startswith("option") or
+            any(greeting in query_lower for greeting in ["hi", "hello", "hey"])
+        )
+
+        if is_cacheable:
+            context_hash = str(hash(str(context)[:100]))  # Hash first 100 chars
+            cached = self._get_cached_response(query, role or "", context_hash)
+            if cached:
+                return cached
+
         prompt = self._build_role_prompt(query, context_str, role, chat_history, extra_instructions)
 
         try:
@@ -138,6 +220,11 @@ Please provide a helpful and accurate answer based on the information provided. 
 
             # Add follow-up suggestions for ALL roles to promote interaction
             response = self._add_technical_followup(response, query, role)
+
+            # Cache response for common queries
+            if is_cacheable:
+                context_hash = str(hash(str(context)[:100]))  # Hash first 100 chars
+                self._cache_response(query, role or "", context_hash, response)
 
             return response
         except Exception as e:
@@ -904,6 +991,41 @@ Please provide a helpful and accurate answer based on the information provided. 
         Returns:
             Text with third-person patterns replaced with first person
         """
+        result = text
+
+        # Use regex for longer phrases that may have variable content
+        # Pattern: "this ai assistant is built on [anything]" -> "I'm built on [anything]"
+        result = re.sub(
+            r'\bthis\s+ai\s+assistant\s+is\s+built\s+on\s+([^.!?]+)',
+            r"I'm built on \1",
+            result,
+            flags=re.IGNORECASE
+        )
+
+        # Pattern: "this ai assistant is built with [anything]" -> "I'm built with [anything]"
+        result = re.sub(
+            r'\bthis\s+ai\s+assistant\s+is\s+built\s+with\s+([^.!?]+)',
+            r"I'm built with \1",
+            result,
+            flags=re.IGNORECASE
+        )
+
+        # Pattern: "this ai assistant uses [anything]" -> "I use [anything]"
+        result = re.sub(
+            r'\bthis\s+ai\s+assistant\s+uses\s+([^.!?]+)',
+            r"I use \1",
+            result,
+            flags=re.IGNORECASE
+        )
+
+        # Pattern: "this ai assistant [verb] [anything]" -> "I [verb] [anything]"
+        result = re.sub(
+            r'\bthis\s+ai\s+assistant\s+(is|was|has|does|can|will)\s+([^.!?]+)',
+            r"I \1 \2",
+            result,
+            flags=re.IGNORECASE
+        )
+
         # Define replacement patterns (most specific first to avoid over-replacement)
         replacements = [
             # System/product references
@@ -943,7 +1065,6 @@ Please provide a helpful and accurate answer based on the information provided. 
             ("Portfolia", "I"),
         ]
 
-        result = text
         for old, new in replacements:
             result = result.replace(old, new)
 

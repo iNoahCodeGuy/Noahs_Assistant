@@ -47,6 +47,12 @@ env/
 ENV/
 .venv/
 
+# Node.js dependencies
+node_modules/
+.next/
+.npm
+.node_repl_history
+
 # IDE
 .vscode/
 .idea/

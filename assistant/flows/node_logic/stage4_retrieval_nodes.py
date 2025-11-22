@@ -62,6 +62,43 @@ def _clean_chunk_qa_format(content: str) -> str:
     return content
 
 
+def _extract_mentioned_files(chat_history: List[Dict]) -> List[str]:
+    """Extract code file paths mentioned in previous conversation turns.
+
+    This function identifies files that were discussed in previous turns,
+    enabling hierarchical context selection that prioritizes mentioned files.
+
+    Args:
+        chat_history: List of message dicts with 'role' and 'content' keys
+
+    Returns:
+        List of unique file paths mentioned in conversation
+
+    Example:
+        >>> chat_history = [
+        ...     {"role": "user", "content": "show me retrieval_nodes.py"},
+        ...     {"role": "assistant", "content": "Here's retrieval_nodes.py..."}
+        ... ]
+        >>> _extract_mentioned_files(chat_history)
+        ['retrieval_nodes.py']
+    """
+    mentioned_files = []
+    for msg in chat_history:
+        content = msg.get("content", "").lower()
+        # Extract file paths from mentions (e.g., "retrieval_nodes.py", "stage4_retrieval")
+        file_patterns = [
+            r'([a-z_]+\.py)',  # Python files
+            r'(stage\d+_[a-z_]+)',  # Stage modules
+            r'(assistant/[a-z_/]+\.py)',  # Full paths
+            r'([a-z_]+_nodes\.py)',  # Node files
+            r'([a-z_]+_retriever\.py)',  # Retriever files
+        ]
+        for pattern in file_patterns:
+            matches = re.findall(pattern, content)
+            mentioned_files.extend(matches)
+    return list(set(mentioned_files))  # Deduplicate
+
+
 def _build_retrieval_hints(active_subcategories: List[str]) -> List[str]:
     """Map active technical subcategories to preferred retrieval sources.
 
@@ -155,11 +192,35 @@ def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int 
         metadata["retrieval_source_hints"] = retrieval_hints
         logger.info("Retrieval targeting: %s", ", ".join(retrieval_hints))
 
+    # Hierarchical context selection: extract mentioned files from conversation
+    chat_history = state.get("chat_history", [])
+    mentioned_files = _extract_mentioned_files(chat_history) if chat_history else []
+    if mentioned_files:
+        metadata["mentioned_files"] = mentioned_files
+        logger.debug(f"Files mentioned in conversation: {mentioned_files}")
+
+    # Adaptive top_k based on conversation length and query complexity
+    # Later turns need more context to build on previous discussion
+    original_top_k = top_k
+    if len(chat_history) >= 6:  # 3+ turns
+        top_k = min(8, top_k + 2)  # More context for later turns
+        logger.debug(f"Increased top_k from {original_top_k} to {top_k} (later turn)")
+    elif len(chat_history) <= 2:  # Early turns
+        top_k = max(3, top_k - 1)  # Less context for early turns
+        logger.debug(f"Decreased top_k from {original_top_k} to {top_k} (early turn)")
+
+    # File-level prioritization for code-related queries
+    query_lower = query.lower()
+    if "code" in query_lower or "retrieval" in query_lower or "implementation" in query_lower:
+        metadata["file_priority"] = True  # Boost codebase chunks
+        logger.debug("File priority enabled for code-related query")
+
     with create_custom_span("retrieve_chunks", {
         "query": query[:120],
         "top_k": top_k,
         "active_subcategories": active_subcats,
-        "source_hints": retrieval_hints
+        "source_hints": retrieval_hints,
+        "mentioned_files": mentioned_files
     }):
         try:
             chunks = rag_engine.retrieve(query, top_k=top_k) or {}
@@ -216,6 +277,23 @@ def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int 
                         continue
                     seen_signatures.add(signature)
                     diversified.append(chunk)
+
+                # Conversation-aware code file prioritization
+                session_memory = state.get("session_memory", {})
+                discussed_files = session_memory.get("discussed_files", [])
+
+                if discussed_files and any(c.get("doc_id") == "codebase" for c in diversified):
+                    # Boost chunks from discussed files (user already familiar)
+                    for chunk in diversified:
+                        file_path = chunk.get("section") or chunk.get("metadata", {}).get("file_path", "")
+                        if any(discussed_file in file_path for discussed_file in discussed_files):
+                            # Boost similarity score for discussed files
+                            current_sim = chunk.get("similarity", 0.0)
+                            chunk["similarity"] = min(1.0, current_sim + 0.1)
+                            logger.debug(f"Boosted discussed file: {file_path} (similarity: {current_sim:.3f} → {chunk['similarity']:.3f})")
+
+                    # Re-sort by boosted similarity
+                    diversified = sorted(diversified, key=lambda c: c.get("similarity", 0.0), reverse=True)
 
                 state["retrieved_chunks"] = diversified
                 state["retrieval_scores"] = [c.get("similarity", 0.0) for c in diversified]

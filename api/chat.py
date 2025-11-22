@@ -78,6 +78,7 @@ class handler(BaseHTTPRequestHandler):
                 'answer': result_state.get('answer', ''),
                 'role': result_state.get('role', role),
                 'session_id': result_state.get('session_id', session_id),
+                'chat_history': result_state.get('chat_history', []),  # Include chat_history for frontend preservation
                 'session_memory': result_state.get('session_memory', {}),  # Persist session state
                 'analytics': result_state.get('analytics_metadata', {}),
                 'actions_taken': [

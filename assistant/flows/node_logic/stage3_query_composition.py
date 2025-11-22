@@ -1,9 +1,12 @@
 """Compose retrieval-ready queries that respect role and entity context."""
 
 from __future__ import annotations
+import logging
 
 from assistant.state.conversation_state import ConversationState
 from assistant.observability.langsmith_tracer import create_custom_span
+
+logger = logging.getLogger(__name__)
 
 
 def _expand_menu_selection(menu_choice: str, role_mode: str) -> str:
@@ -84,6 +87,16 @@ def compose_query(state: ConversationState) -> ConversationState:
             else:
                 composed = expanded_query
 
+            # ENHANCEMENT: Include accumulated topics for progressive inference
+            session_memory = state.get("session_memory", {})
+            topics = session_memory.get("topics", [])
+            if topics:
+                # Include last 2-3 topics to connect menu selection to conversation history
+                recent_topics = topics[-3:] if len(topics) > 3 else topics
+                topic_context = " ".join(recent_topics)
+                composed = f"{composed} {topic_context}"
+                logger.debug(f"Enhanced menu selection with topics: {topic_context}")
+
             state["composed_query"] = composed.strip()
             state["menu_expanded"] = True  # Flag for debugging
             return state
@@ -92,6 +105,10 @@ def compose_query(state: ConversationState) -> ConversationState:
         base_query = state.get("expanded_query") or state.get("query", "")
         role_hint = state.get("role_mode", "")
         entity_hint = state.get("entities", {})
+
+        # Get accumulated topics from session memory for progressive inference
+        session_memory = state.get("session_memory", {})
+        topics = session_memory.get("topics", [])
 
         entity_fragments = []
         if company := entity_hint.get("company"):
@@ -104,6 +121,42 @@ def compose_query(state: ConversationState) -> ConversationState:
         composed = base_query
         if role_hint:
             composed = f"[{role_hint}] {composed}"
+
+        # Use conversation flow analysis to enhance query composition
+        chat_history = state.get("chat_history", [])
+        if chat_history and len(chat_history) >= 2:
+            # Import pattern analysis (avoid circular import)
+            from assistant.flows.node_logic.stage6_formatting_nodes import _analyze_conversation_flow
+
+            flow_analysis = _analyze_conversation_flow(chat_history, session_memory)
+            detected_pattern = flow_analysis.get("pattern")
+
+            if detected_pattern == "orchestration_to_enterprise":
+                # User is asking about enterprise relevance of orchestration
+                if "enterprise" not in base_query.lower() and "orchestration" in topics:
+                    composed = f"{composed} enterprise orchestration relevance"
+                    logger.debug("Enhanced query with pattern: orchestration_to_enterprise")
+            elif detected_pattern == "architecture_to_implementation":
+                # User wants implementation details, not high-level architecture
+                if "code" not in base_query.lower() and "implementation" not in base_query.lower():
+                    composed = f"{composed} code implementation details"
+                    logger.debug("Enhanced query with pattern: architecture_to_implementation")
+            elif detected_pattern == "general_to_specific":
+                # User is diving deeper, enhance with previous topics for specificity
+                if topics:
+                    composed = f"{composed} {' '.join(topics[-2:])} detailed"
+                    logger.debug("Enhanced query with pattern: general_to_specific")
+
+        # Enhance query with previous topics for progressive inference
+        # Include last 2-3 topics to maintain context without query bloat
+        if topics:
+            recent_topics = topics[-3:] if len(topics) > 3 else topics
+            topic_context = " ".join(recent_topics)
+            # Only add topics if they're not already in composed query
+            for topic in recent_topics:
+                if topic not in composed.lower():
+                    composed = f"{composed} {topic}"
+
         if entity_fragments:
             fragments = " | ".join(entity_fragments)
             composed = f"{composed} :: {fragments}"

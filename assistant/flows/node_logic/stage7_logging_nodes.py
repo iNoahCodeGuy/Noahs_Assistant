@@ -263,6 +263,29 @@ def update_memory(state: ConversationState) -> ConversationState:
     if intent and intent not in topics:
         topics.append(intent)
 
+    # Extract topics from menu selections for progressive inference
+    query_type = state.get("query_type")
+    if query_type == "menu_selection":
+        entities = state.get("entities", {})
+        menu_context = entities.get("menu_context")
+        if menu_context:
+            # Extract topic from menu context (e.g., "orchestration_layer" → "orchestration")
+            topic_map = {
+                "orchestration_layer": "orchestration",
+                "full_tech_stack": "architecture",
+                "enterprise_adaptation": "enterprise",
+                "technical_background": "career"
+            }
+            # Try mapping first, fallback to extracting key word
+            topic = topic_map.get(menu_context)
+            if not topic:
+                # Extract key word (remove "_layer", "_adaptation", etc.)
+                topic = menu_context.split("_")[0] if "_" in menu_context else menu_context
+
+            if topic and topic not in topics:
+                topics.append(topic)
+                logger.info(f"📝 Stored topic from menu selection: {topic} (from menu_context: {menu_context})")
+
     # Store entities
     entities = state.get("entities", {})
     if entities:
@@ -272,6 +295,34 @@ def update_memory(state: ConversationState) -> ConversationState:
                 stored_entities[key] = value
 
     memory["last_grounding_status"] = state.get("grounding_status")
+
+    # Track discussed code files for conversation-aware code index
+    discussed_files = memory.setdefault("discussed_files", [])
+    retrieved_chunks = state.get("retrieved_chunks", [])
+
+    for chunk in retrieved_chunks:
+        # Extract file paths from codebase chunks
+        if chunk.get("doc_id") == "codebase":
+            file_path = chunk.get("section") or chunk.get("metadata", {}).get("file_path")
+            if file_path and file_path not in discussed_files:
+                discussed_files.append(file_path)
+                logger.debug(f"Tracked discussed file: {file_path}")
+
+    # Limit to last 10 files to prevent memory bloat
+    memory["discussed_files"] = discussed_files[-10:]
+
+    # Backup chat_history to session_memory for persistence
+    # This ensures conversation context persists even if frontend doesn't send it back
+    chat_history = state.get("chat_history", [])
+    if chat_history:
+        # Store last 6 messages (3 exchanges) for context continuity
+        memory["chat_history_backup"] = chat_history[-6:]
+        logger.debug(f"Backed up chat_history to session_memory: {len(chat_history)} messages")
+
+    # Restore chat_history from backup if it's empty but backup exists
+    if not chat_history and memory.get("chat_history_backup"):
+        state["chat_history"] = memory["chat_history_backup"]
+        logger.debug(f"Restored chat_history from backup: {len(memory['chat_history_backup'])} messages")
 
     # Update enterprise affinity (merged from update_enterprise_affinity)
     _update_enterprise_affinity(state, memory)
