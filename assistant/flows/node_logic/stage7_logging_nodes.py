@@ -20,6 +20,7 @@ See: docs/context/SYSTEM_ARCHITECTURE_SUMMARY.md for full pipeline flow
 """
 
 import logging
+import time
 from typing import Dict, Any, List
 
 from assistant.state.conversation_state import ConversationState
@@ -283,7 +284,15 @@ def update_memory(state: ConversationState) -> ConversationState:
                 topic = menu_context.split("_")[0] if "_" in menu_context else menu_context
 
             if topic and topic not in topics:
+                # Validate topic accumulation
+                topics_before = len(topics)
                 topics.append(topic)
+                topics_after = len(topics)
+                if topics_after <= topics_before:
+                    logger.warning(
+                        f"Topic not accumulated: topic={topic}, before={topics_before}, after={topics_after}. "
+                        f"This may indicate a duplicate detection issue."
+                    )
                 logger.info(f"📝 Stored topic from menu selection: {topic} (from menu_context: {menu_context})")
 
     # Store entities
@@ -311,9 +320,112 @@ def update_memory(state: ConversationState) -> ConversationState:
     # Limit to last 10 files to prevent memory bloat
     memory["discussed_files"] = discussed_files[-10:]
 
+    # Append user query and assistant answer to chat_history for conversation continuity
+    # This is needed for StateGraph version (LangGraph Studio) which doesn't use run_conversation_flow()
+    # Skip only for actual greetings (initial greeting before role selection)
+    # Role welcome messages and menu selections are part of conversation and should be preserved
+    chat_history = state.get("chat_history", [])
+
+    # #region agent log
+    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        import json
+        f.write(json.dumps({
+            "location": "stage7_logging_nodes.py:319",
+            "message": "update_memory: Before chat_history append check",
+            "data": {
+                "has_answer": bool(state.get("answer")),
+                "is_greeting": state.get("is_greeting"),
+                "answer_preview": (state.get("answer", "")[:100] + "...") if state.get("answer") else None,
+                "chat_history_len": len(chat_history),
+                "has_query": bool(state.get("query")),
+                "query": state.get("query", ""),
+                "condition_passes": bool(state.get("answer") and not state.get("is_greeting"))
+            },
+            "timestamp": int(time.time() * 1000),
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": "D"
+        }) + "\n")
+    # #endregion
+
+    if state.get("answer") and not state.get("is_greeting"):
+        # Validate chat_history accumulation
+        previous_len = len(chat_history)
+
+        # Append user query if present and not already in history
+        if state.get("query"):
+            # Check if this query was already added (avoid duplicates)
+            # Support both dict format and LangGraph message objects
+            last_user_msg = None
+            if chat_history:
+                last_msg = chat_history[-1]
+                # Check if last message is a user message (both formats)
+                if isinstance(last_msg, dict):
+                    if last_msg.get("role") == "user" or last_msg.get("type") == "human":
+                        last_user_msg = last_msg
+                elif hasattr(last_msg, "type"):
+                    if last_msg.type == "human" or getattr(last_msg, "role", None) == "user":
+                        last_user_msg = last_msg
+
+            # Check if query content matches (avoid duplicates)
+            query_matches = False
+            if last_user_msg:
+                if isinstance(last_user_msg, dict):
+                    query_matches = last_user_msg.get("content") == state["query"]
+                elif hasattr(last_user_msg, "content"):
+                    query_matches = last_user_msg.content == state["query"]
+
+            if not query_matches:
+                chat_history.append({"role": "user", "content": state["query"]})
+        # Append assistant answer
+        chat_history.append({"role": "assistant", "content": state["answer"]})
+        state["chat_history"] = chat_history
+
+        # Validate chat_history length increased
+        current_len = len(state["chat_history"])
+        expected_increase = 1 if state.get("query") else 0  # User message may already be present
+        expected_increase += 1  # Assistant answer always added
+        if current_len <= previous_len and previous_len > 0:
+            logger.warning(
+                f"Chat history did not accumulate: previous={previous_len}, current={current_len}. "
+                f"This may indicate duplicate detection or append logic failure."
+            )
+
+        # #region agent log
+        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+            import json
+            # Convert LangGraph message objects to serializable format
+            messages_serializable = []
+            for msg in chat_history:
+                if isinstance(msg, dict):
+                    messages_serializable.append(msg)
+                elif hasattr(msg, "type") or hasattr(msg, "content"):
+                    # LangGraph message object - convert to dict
+                    messages_serializable.append({
+                        "type": getattr(msg, "type", None) or getattr(msg, "role", None),
+                        "content": getattr(msg, "content", str(msg))[:200] if hasattr(msg, "content") else str(msg)[:200]
+                    })
+                else:
+                    messages_serializable.append(str(msg)[:200])
+
+            f.write(json.dumps({
+                "location": "stage7_logging_nodes.py:329",
+                "message": "update_memory: After chat_history append",
+                "data": {
+                    "chat_history_len": len(chat_history),
+                    "messages": messages_serializable
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "D"
+            }) + "\n")
+        # #endregion
+
+        logger.debug(f"Appended to chat_history: {len(chat_history)} messages total")
+
     # Backup chat_history to session_memory for persistence
     # This ensures conversation context persists even if frontend doesn't send it back
-    chat_history = state.get("chat_history", [])
     if chat_history:
         # Store last 6 messages (3 exchanges) for context continuity
         memory["chat_history_backup"] = chat_history[-6:]
@@ -330,7 +442,80 @@ def update_memory(state: ConversationState) -> ConversationState:
     # Update technical affinity (merged from update_technical_affinity)
     _update_technical_affinity(state, memory)
 
+    # Track progressive inference metrics
+    conversation_turn = state.get("conversation_turn", 0)
+    topics = memory.get("topics", [])
+    chat_history = state.get("chat_history", [])
+    depth_level = state.get("depth_level", 1)
+
+    metrics = memory.setdefault("progressive_inference_metrics", {
+        "turn_count": 0,
+        "topics_count": 0,
+        "chat_history_length": 0,
+        "depth_level": 1,
+        "retrieval_similarity_history": [],
+    })
+
+    # Update metrics
+    metrics["turn_count"] = conversation_turn
+    metrics["topics_count"] = len(topics)
+    metrics["chat_history_length"] = len(chat_history)
+    metrics["depth_level"] = depth_level
+
+    # Store retrieval similarity for this turn
+    if state.get("retrieval_scores") and state["retrieval_scores"]:
+        similarity = state["retrieval_scores"][0]
+        metrics["retrieval_similarity_history"].append({
+            "turn": conversation_turn,
+            "similarity": similarity,
+            "timestamp": time.time()
+        })
+        # Keep only last 10 similarity scores
+        metrics["retrieval_similarity_history"] = metrics["retrieval_similarity_history"][-10:]
+
+    # Log success criteria status
+    _log_success_criteria(state, memory)
+
     return state
+
+
+def _log_success_criteria(state: ConversationState, session_memory: Dict) -> None:
+    """Log whether success criteria are met for this turn."""
+    conversation_turn = state.get("conversation_turn", 0)
+    chat_history = state.get("chat_history", [])
+    topics = session_memory.get("topics", [])
+    depth_level = state.get("depth_level", 1)
+
+    criteria = {
+        "turn": conversation_turn,
+        "chat_history_length": len(chat_history),
+        "topics_count": len(topics),
+        "depth_level": depth_level,
+        "chat_history_preserved": len(chat_history) >= conversation_turn * 2 if conversation_turn > 0 else True,
+        "topics_accumulating": len(topics) >= max(0, conversation_turn - 1) if conversation_turn > 0 else True,
+        "depth_progressing": depth_level >= min(2, max(1, conversation_turn)) if conversation_turn >= 2 else True,
+    }
+
+    # Log if any criteria fail
+    if conversation_turn > 0:
+        if not criteria["chat_history_preserved"] and conversation_turn > 1:
+            logger.warning(
+                f"Success criteria failure at turn {conversation_turn}: "
+                f"chat_history not preserved (expected >= {conversation_turn * 2}, got {len(chat_history)})"
+            )
+        if not criteria["topics_accumulating"] and conversation_turn >= 3:
+            logger.warning(
+                f"Success criteria failure at turn {conversation_turn}: "
+                f"topics not accumulating (expected >= {conversation_turn - 1}, got {len(topics)})"
+            )
+        if not criteria["depth_progressing"] and conversation_turn >= 2:
+            logger.warning(
+                f"Success criteria failure at turn {conversation_turn}: "
+                f"depth not progressing (expected >= 2, got {depth_level})"
+            )
+
+    # Store criteria in state for analytics
+    state.setdefault("success_criteria", criteria)
 
 
 def _update_enterprise_affinity(state: ConversationState, memory: dict) -> None:

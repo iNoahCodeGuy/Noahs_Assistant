@@ -163,4 +163,27 @@ def compose_query(state: ConversationState) -> ConversationState:
 
         state["composed_query"] = composed.strip()
 
+        # Validate query enhancement
+        role_mode = state.get("role_mode", "")
+        topics = session_memory.get("topics", [])
+        composed = state.get("composed_query", "")
+
+        # Check role is included (if role_mode exists)
+        if role_mode and len(composed) > 10:
+            if role_mode not in composed.lower() and not any(alias in composed.lower() for alias in ["hiring_manager", "technical", "developer"]):
+                logger.warning(
+                    f"Query enhancement missing role: role={role_mode}, query={composed[:50]}. "
+                    f"This may indicate role context was not applied."
+                )
+
+        # Check topics are included (if topics exist and query length allows)
+        if topics and len(composed) > 50:
+            recent_topics = topics[-3:]
+            included_topics = sum(1 for topic in recent_topics if topic.lower() in composed.lower())
+            if included_topics == 0 and len(recent_topics) > 0:
+                logger.warning(
+                    f"Query enhancement missing topics: topics={recent_topics}, query={composed[:50]}. "
+                    f"This may indicate topic context was not applied for progressive inference."
+                )
+
     return state

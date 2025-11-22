@@ -84,7 +84,13 @@ def _extract_mentioned_files(chat_history: List[Dict]) -> List[str]:
     """
     mentioned_files = []
     for msg in chat_history:
-        content = msg.get("content", "").lower()
+        # Extract content from messages (support both dict format and LangGraph message objects)
+        if isinstance(msg, dict):
+            content = msg.get("content", "").lower()
+        elif hasattr(msg, "content"):
+            content = msg.content.lower() if hasattr(msg, "content") else ""
+        else:
+            content = ""
         # Extract file paths from mentions (e.g., "retrieval_nodes.py", "stage4_retrieval")
         file_patterns = [
             r'([a-z_]+\.py)',  # Python files

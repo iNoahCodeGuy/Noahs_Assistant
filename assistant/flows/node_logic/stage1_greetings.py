@@ -19,7 +19,7 @@ def is_first_turn(chat_history: list) -> bool:
     """Check if this is the first turn of the conversation.
 
     Args:
-        chat_history: List of conversation messages
+        chat_history: List of conversation messages (can be dicts or LangGraph message objects)
 
     Returns:
         True if this is the first user query (no assistant messages yet)
@@ -28,7 +28,21 @@ def is_first_turn(chat_history: list) -> bool:
         return True
 
     # Check if there are any assistant messages
-    assistant_messages = [msg for msg in chat_history if msg.get("role") == "assistant"]
+    # Handle both dict format ({"role": "assistant"}) and LangGraph message format (type="ai")
+    assistant_messages = []
+    for msg in chat_history:
+        # Try dict format first
+        if isinstance(msg, dict):
+            if msg.get("role") == "assistant" or msg.get("type") == "ai":
+                assistant_messages.append(msg)
+        # Handle LangGraph message objects (Pydantic models)
+        elif hasattr(msg, "type"):
+            if msg.type == "ai" or getattr(msg, "role", None) == "assistant":
+                assistant_messages.append(msg)
+        # Fallback: check for "role" attribute
+        elif hasattr(msg, "role") and msg.role == "assistant":
+            assistant_messages.append(msg)
+
     return len(assistant_messages) == 0
 
 

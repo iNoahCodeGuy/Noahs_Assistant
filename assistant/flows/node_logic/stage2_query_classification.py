@@ -319,13 +319,31 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         return update  # Return partial update - LangGraph will merge into state
 
     chat_history = state.get("chat_history", [])
-    user_turns = sum(1 for message in chat_history if message.get("role") == "user")
+    # Count user messages (support both dict format and LangGraph message objects)
+    user_turns = 0
+    for msg in chat_history:
+        # Check dict format
+        if isinstance(msg, dict):
+            if msg.get("role") == "user" or msg.get("type") == "human":
+                user_turns += 1
+        # Check LangGraph message objects
+        elif hasattr(msg, "type") and (msg.type == "human" or getattr(msg, "role", None) == "user"):
+            user_turns += 1
+
     if user_turns:
         update["conversation_turn"] = user_turns
         update["emotional_pacing"] = "surge" if user_turns % 2 else "reflect"
     else:
         update["conversation_turn"] = 0
         update["emotional_pacing"] = "surge"
+
+    # Validate conversation_turn calculation matches chat_history
+    conversation_turn = update.get("conversation_turn", 0)
+    if user_turns != conversation_turn:
+        logger.warning(
+            f"Conversation turn mismatch: calculated={user_turns}, stored={conversation_turn}. "
+            f"This may indicate chat_history format inconsistency."
+        )
 
     update["topic_focus"] = detect_topic_focus(query)
 
@@ -495,7 +513,19 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
     # Strategy 2: Conversation context
     session_memory = state.get("session_memory", {})
     if chat_history and len(chat_history) >= 2:
-        recent_content = " ".join([msg.get("content", "") for msg in chat_history[-2:]])
+        # Extract content from messages (support both dict format and LangGraph message objects)
+        recent_contents = []
+        for msg in chat_history[-2:]:
+            # Check dict format first
+            if isinstance(msg, dict):
+                content = msg.get("content", "")
+            # Handle LangGraph message objects (Pydantic models)
+            elif hasattr(msg, "content"):
+                content = msg.content if hasattr(msg, "content") else ""
+            else:
+                content = ""
+            recent_contents.append(content)
+        recent_content = " ".join(recent_contents)
         session_topics = session_memory.get("topics", []) if session_memory else []
         if any(topic in recent_content.lower() for topic in session_topics):
             confidence_scores["conversation_context"] = 0.9  # High if previous context exists

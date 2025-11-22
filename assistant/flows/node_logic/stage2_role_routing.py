@@ -6,11 +6,15 @@ Merged route_hiring_manager_technical logic for single-pass routing.
 
 from __future__ import annotations
 
+import logging
+import time
 from textwrap import dedent
-from typing import Dict
+from typing import Any, Dict
 
 from assistant.state.conversation_state import ConversationState
 from assistant.observability.langsmith_tracer import create_custom_span
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Role-Specific Welcome Messages
@@ -137,7 +141,86 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
 
             persona_hints: Dict[str, str] = state["session_memory"].setdefault("persona_hints", {})
             persona_hints.setdefault("role_mode", normalized)
-            return state
+
+            # Clear pipeline_halt if it exists (from previous welcome message)
+            # Menu selections after role selection should proceed normally
+            # #region agent log
+            with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({
+                    "location": "stage2_role_routing.py:146",
+                    "message": "Before pipeline_halt clear check",
+                    "data": {
+                        "pipeline_halt": state.get("pipeline_halt"),
+                        "role_welcome_shown": persona_hints.get("role_welcome_shown"),
+                        "condition_passes": bool(state.get("pipeline_halt") and persona_hints.get("role_welcome_shown"))
+                    },
+                    "timestamp": int(time.time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "C"
+                }) + "\n")
+            # #endregion
+
+            if state.get("pipeline_halt") and persona_hints.get("role_welcome_shown"):
+                state.pop("pipeline_halt", None)
+                # #region agent log
+                with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "location": "stage2_role_routing.py:160",
+                        "message": "Pipeline_halt cleared",
+                        "data": {
+                            "role": normalized,
+                            "role_welcome_shown": persona_hints.get("role_welcome_shown"),
+                            "pipeline_halt_after": state.get("pipeline_halt")
+                        },
+                        "timestamp": int(time.time() * 1000),
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "C"
+                    }) + "\n")
+                # #endregion
+                logger.debug(f"Cleared pipeline_halt for menu selection after role welcome: role={normalized}, role_welcome_shown={persona_hints.get('role_welcome_shown')}")
+
+            # #region agent log
+            with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({
+                    "location": "stage2_role_routing.py:186",
+                    "message": "Returning from classify_role_mode (role already set)",
+                    "data": {
+                        "pipeline_halt": state.get("pipeline_halt"),
+                        "role": normalized,
+                        "role_welcome_shown": persona_hints.get("role_welcome_shown"),
+                        "has_answer": bool(state.get("answer"))
+                    },
+                    "timestamp": int(time.time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "E"
+                }) + "\n")
+            # #endregion
+
+            # Return partial update dict (not full state) to avoid preserving old answer
+            # Only include top-level fields that were modified
+            # Note: session_memory is modified in place, so LangGraph will merge it automatically
+            # We don't need to include it in the partial update to avoid overwriting nested dicts
+            partial_update: Dict[str, Any] = {
+                "role_mode": normalized,
+                "role_confidence": 1.0,
+                "role": state["role"],
+                # CRITICAL: Clear old answer when role is already set and we're continuing pipeline
+                # This prevents preserving the welcome message from Turn 2 when Turn 3 runs
+                "answer": None,
+                "draft_answer": None
+            }
+            # If pipeline_halt was cleared (popped), explicitly set it to None in update
+            # This ensures LangGraph clears it from state
+            if not state.get("pipeline_halt"):
+                partial_update["pipeline_halt"] = None
+
+            return partial_update
 
         # Infer role from query content
         query_raw = state.get("query", "")
@@ -206,6 +289,24 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
                 state["answer"] = welcome_msg
                 state["pipeline_halt"] = True  # Wait for user's first real query
                 persona_hints["role_welcome_shown"] = True
+                # #region agent log
+                with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "location": "stage2_role_routing.py:252",
+                        "message": "Setting role welcome message",
+                        "data": {
+                            "role": normalized,
+                            "role_welcome_shown": persona_hints.get("role_welcome_shown"),
+                            "pipeline_halt": state.get("pipeline_halt"),
+                            "answer_length": len(welcome_msg)
+                        },
+                        "timestamp": int(time.time() * 1000),
+                        "sessionId": "debug-session",
+                        "runId": "run2",
+                        "hypothesisId": "F"
+                    }) + "\n")
+                # #endregion
                 return state
 
         # Merged: Handle technical HM routing (from route_hiring_manager_technical)

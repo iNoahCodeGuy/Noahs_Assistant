@@ -19,10 +19,13 @@ Exports:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple
 
 from assistant.state.conversation_state import ConversationState
+
+logger = logging.getLogger(__name__)
 
 
 ENGINEERING_INTENTS = {"technical", "engineering"}
@@ -103,6 +106,26 @@ def presentation_controller(state: ConversationState) -> ConversationState:
 
     state["depth_level"] = min(depth, 3)
     state["detail_strategy"] = reason
+
+    # Validate depth progression
+    session_memory = state.get("session_memory", {})
+    persona_hints = session_memory.setdefault("persona_hints", {})
+    previous_depth = persona_hints.get("previous_depth_level", 1)
+
+    # Store previous depth for next turn
+    persona_hints["previous_depth_level"] = state["depth_level"]
+
+    # Validate depth increases with turn count (or maintains)
+    if conversation_turn >= 2 and state["depth_level"] < 2:
+        logger.warning(
+            f"Depth not progressing: turn={conversation_turn}, depth={state['depth_level']}, "
+            f"previous={previous_depth}. Multi-turn conversations should have depth >= 2."
+        )
+    elif conversation_turn >= 3 and state["depth_level"] < previous_depth and previous_depth > 1:
+        logger.warning(
+            f"Depth decreased: turn={conversation_turn}, depth={state['depth_level']}, "
+            f"previous={previous_depth}. Depth should maintain or increase with conversation progression."
+        )
 
     # ========== LAYOUT VARIANT SELECTION ==========
     if intent in ENGINEERING_INTENTS:

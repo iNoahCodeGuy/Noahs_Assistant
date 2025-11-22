@@ -51,12 +51,15 @@ def _retry_generation_if_insufficient(state: ConversationState, rag_engine: RagE
 
     # Only retry for menu option 1 if quality warning exists
     if not quality_warning:
-        return state.get("draft_answer", state.get("answer", ""))
+        # Only use draft_answer - do NOT fall back to old answer
+        # Falling back to old answer would preserve welcome messages from previous turns
+        return state.get("draft_answer") or ""
 
     if not (state.get("query_type") == "menu_selection" and
             state.get("menu_choice") == "1" and
             state.get("role_mode") == "hiring_manager_technical"):
-        return state.get("draft_answer", state.get("answer", ""))
+        # Only use draft_answer - do NOT fall back to old answer
+        return state.get("draft_answer") or ""
 
     logger.info(f"🔄 Retrying generation due to quality issue: {quality_warning}")
 
@@ -459,12 +462,34 @@ def _analyze_conversation_flow(chat_history: List[Dict], session_memory: Dict) -
 
     # Get last few messages for pattern analysis
     recent_messages = chat_history[-4:] if len(chat_history) > 4 else chat_history
-    recent_content = " ".join([msg.get("content", "").lower() for msg in recent_messages])
+    # Extract content from messages (support both dict format and LangGraph message objects)
+    recent_contents = []
+    for msg in recent_messages:
+        if isinstance(msg, dict):
+            content = msg.get("content", "")
+        elif hasattr(msg, "content"):
+            content = msg.content if hasattr(msg, "content") else ""
+        else:
+            content = ""
+        recent_contents.append(content.lower())
+    recent_content = " ".join(recent_contents)
 
     # Detect pattern: orchestration → enterprise
     # User asked about orchestration (Turn 3), now asking about enterprise (Turn 4)
     if "orchestration" in topics_text or "orchestration" in recent_content:
-        if any("enterprise" in msg.get("content", "").lower() for msg in recent_messages[-2:]):
+        # Check recent messages for enterprise mentions (support both formats)
+        enterprise_mentioned = False
+        for msg in recent_messages[-2:]:
+            if isinstance(msg, dict):
+                content = msg.get("content", "").lower()
+            elif hasattr(msg, "content"):
+                content = msg.content.lower() if hasattr(msg, "content") else ""
+            else:
+                content = ""
+            if "enterprise" in content:
+                enterprise_mentioned = True
+                break
+        if enterprise_mentioned:
             patterns.append("orchestration_to_enterprise")
 
     # Detect pattern: architecture → implementation
@@ -476,9 +501,27 @@ def _analyze_conversation_flow(chat_history: List[Dict], session_memory: Dict) -
     # Detect pattern: general → specific
     # User started with general question, now asking specific follow-up
     if len(chat_history) >= 4:
-        # Compare first query vs recent queries
-        first_query = chat_history[0].get("content", "").lower() if chat_history[0].get("role") == "user" else ""
-        recent_query = chat_history[-1].get("content", "").lower() if chat_history[-1].get("role") == "user" else ""
+        # Compare first query vs recent queries (support both dict format and LangGraph message objects)
+        first_msg = chat_history[0]
+        recent_msg = chat_history[-1]
+
+        # Extract content and role from first message
+        if isinstance(first_msg, dict):
+            first_content = first_msg.get("content", "")
+            first_role = first_msg.get("role", "") or first_msg.get("type", "")
+        else:
+            first_content = getattr(first_msg, "content", "") if hasattr(first_msg, "content") else ""
+            first_role = getattr(first_msg, "role", "") or getattr(first_msg, "type", "") if hasattr(first_msg, "role") or hasattr(first_msg, "type") else ""
+        first_query = first_content.lower() if (first_role == "user" or first_role == "human") else ""
+
+        # Extract content and role from recent message
+        if isinstance(recent_msg, dict):
+            recent_content = recent_msg.get("content", "")
+            recent_role = recent_msg.get("role", "") or recent_msg.get("type", "")
+        else:
+            recent_content = getattr(recent_msg, "content", "") if hasattr(recent_msg, "content") else ""
+            recent_role = getattr(recent_msg, "role", "") or getattr(recent_msg, "type", "") if hasattr(recent_msg, "role") or hasattr(recent_msg, "type") else ""
+        recent_query = recent_content.lower() if (recent_role == "user" or recent_role == "human") else ""
 
         # First query is general (short, simple), recent query is specific (longer, more keywords)
         if first_query and recent_query:
@@ -646,32 +689,81 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
         >>> "**Teaching Takeaways**" in state["answer"]
         True
     """
+    # #region agent log
+    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        import json
+        import time
+        f.write(json.dumps({
+            "location": "stage6_formatting_nodes.py:652",
+            "message": "format_answer: Entry",
+            "data": {
+                "has_draft_answer": bool(state.get("draft_answer")),
+                "draft_answer_len": len(state.get("draft_answer", "")) if state.get("draft_answer") else 0,
+                "has_answer": bool(state.get("answer")),
+                "answer_len": len(state.get("answer", "")) if state.get("answer") else 0,
+                "draft_answer_preview": state.get("draft_answer", "")[:100] if state.get("draft_answer") else None
+            },
+            "timestamp": int(time.time() * 1000),
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": "C"
+        }) + "\n")
+    # #endregion
+
     # GUARDRAIL: Retry generation if quality check failed
     base_answer = _retry_generation_if_insufficient(state, rag_engine)
 
     if base_answer is None:
-        # Fallback to original answer
-        base_answer = state.get("draft_answer") or state.get("answer")
+        # Use draft_answer from generate_draft() - do NOT fall back to old answer
+        # Falling back to old answer would preserve welcome messages from previous turns
+        base_answer = state.get("draft_answer")
 
     if base_answer is None:
         logger.error("format_answer called without draft_answer")
-        return state
+
+        # #region agent log
+        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+            import json
+            import time
+            f.write(json.dumps({
+                "location": "stage6_formatting_nodes.py:681",
+                "message": "format_answer: Clearing answer because draft_answer is None",
+                "data": {
+                    "has_draft_answer": bool(state.get("draft_answer")),
+                    "has_answer": bool(state.get("answer")),
+                    "base_answer_after_retry": base_answer
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "C"
+            }) + "\n")
+        # #endregion
+
+        # Explicitly clear answer instead of returning empty dict
+        # Returning {} means no state update, which would preserve old answer
+        return {"answer": None, "draft_answer": None}
 
     if not base_answer:
-        return {}
+        # Empty answer - clear it explicitly
+        return {"answer": None, "draft_answer": None}
 
     # PRIORITY: Skip enrichments if answer is already a role welcome message
     # Prevents duplicate content when menu selection shows role-specific welcome
+    # BUT: Only skip if this is actually the CURRENT turn's answer, not an old one
+    # Check if draft_answer exists - if not, this is an old answer and should be cleared
     welcome_indicators = [
         "Since you selected",
         "You can choose where to start:",
         "Before we dive in, what best describes you?",
         "I can focus on the areas most relevant to you"
     ]
-    if any(indicator in base_answer for indicator in welcome_indicators):
-        # This is a welcome/menu message - don't add formatting
-        state["answer"] = base_answer
-        return state
+    # Only skip formatting if draft_answer exists (meaning this is a new welcome message)
+    # If draft_answer is None/missing, this is an old answer and should not be returned
+    if state.get("draft_answer") and any(indicator in base_answer for indicator in welcome_indicators):
+        # This is a welcome/menu message from generate_draft() - don't add formatting
+        # Return partial update dict (not full state) to avoid preserving old fields
+        return {"answer": base_answer}
 
     depth = state.get("depth_level", 1)
     layout_variant = state.get("layout_variant", "mixed")
@@ -1004,5 +1096,98 @@ def build_conversation_graph():
         state["followup_prompts"] = followups
 
     enriched_answer = "\n".join(section for section in sections if section is not None)
-    state["answer"] = enriched_answer.strip()
-    return state
+
+    # Validate answer for cross-turn references and memory demonstration
+    chat_history = state.get("chat_history", [])
+    if enriched_answer and chat_history and len(chat_history) >= 4:
+        # Validate cross-turn references
+        validation = _validate_cross_turn_references(enriched_answer, chat_history)
+        state.setdefault("answer_validation", {})["cross_turn_references"] = validation
+
+        # Validate memory demonstration (if query asks about inference/memory)
+        query_lower = state.get("query", "").lower()
+        is_memory_query = any(phrase in query_lower for phrase in [
+            "memory", "inference", "how do you", "progressive", "improve", "success criteria"
+        ])
+
+        if is_memory_query:
+            memory_validation = _validate_memory_demonstration(enriched_answer)
+            state.setdefault("answer_validation", {})["memory_demonstration"] = memory_validation
+
+    # Return partial update dict (not full state) to avoid preserving old fields
+    # In LangGraph StateGraph, nodes should return partial updates
+    partial_update: Dict[str, Any] = {
+        "answer": enriched_answer.strip()
+    }
+    if followups:
+        partial_update["followup_prompts"] = followups
+    return partial_update
+
+
+def _validate_cross_turn_references(answer: str, chat_history: List[Dict]) -> Dict[str, Any]:
+    """Check if answer references previous turns.
+
+    Args:
+        answer: The formatted answer text
+        chat_history: List of conversation messages
+
+    Returns:
+        Dict with validation results
+    """
+    if not chat_history or len(chat_history) < 4:
+        return {"has_references": False, "reference_count": 0, "chat_history_length": len(chat_history)}
+
+    answer_lower = answer.lower()
+    reference_phrases = [
+        "building on", "as we discussed", "turn 1", "turn 2", "turn 3", "turn 4",
+        "earlier", "previous conversation", "as we explored", "mentioned earlier",
+        "before", "previously", "we talked about"
+    ]
+
+    reference_count = sum(1 for phrase in reference_phrases if phrase in answer_lower)
+    has_references = reference_count > 0
+
+    if len(chat_history) >= 6 and not has_references:
+        logger.warning(
+            f"Answer missing cross-turn references: chat_history_len={len(chat_history)}, "
+            f"answer_preview={answer[:100]}"
+        )
+
+    return {
+        "has_references": has_references,
+        "reference_count": reference_count,
+        "chat_history_length": len(chat_history)
+    }
+
+
+def _validate_memory_demonstration(answer: str) -> Dict[str, Any]:
+    """Check if answer demonstrates memory accumulation (when asked).
+
+    Args:
+        answer: The formatted answer text
+
+    Returns:
+        Dict with validation results
+    """
+    answer_lower = answer.lower()
+    memory_phrases = [
+        "turn 1", "turn 2", "turn 3", "accumulated", "improved",
+        "similarity", "because", "enabled by", "depth_level",
+        "topics", "chat_history", "session_memory", "progressive",
+        "each turn", "over time", "as conversation", "builds on"
+    ]
+
+    memory_demo_count = sum(1 for phrase in memory_phrases if phrase in answer_lower)
+    has_demonstration = memory_demo_count >= 3  # At least 3 memory-related phrases
+
+    if not has_demonstration:
+        logger.warning(
+            f"Memory query missing demonstration: answer_preview={answer[:100]}, "
+            f"phrase_count={memory_demo_count}"
+        )
+
+    return {
+        "has_demonstration": has_demonstration,
+        "phrase_count": memory_demo_count,
+        "is_memory_query": True
+    }

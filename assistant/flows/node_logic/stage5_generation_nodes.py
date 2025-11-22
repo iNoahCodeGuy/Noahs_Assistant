@@ -19,6 +19,7 @@ See: docs/context/CONVERSATION_PERSONALITY.md for generation personality
 
 import logging
 import re
+import time
 from typing import Dict, Any, List, Optional
 
 from assistant.state.conversation_state import ConversationState
@@ -544,19 +545,38 @@ def _format_conversation_examples(chat_history: List[Dict[str, Any]]) -> str:
     turn_num = 0
 
     # Process messages in pairs (user + assistant = one turn)
+    # Handle both LangGraph format (type: "human"/"ai") and standard format (role: "user"/"assistant")
     i = 0
     while i < len(chat_history):
         msg = chat_history[i]
-        role = msg.get("role", "")
-        content = msg.get("content", "")
+        # Support both LangGraph format (type) and standard format (role)
+        # Handle both dict format and LangGraph message objects
+        if isinstance(msg, dict):
+            role = msg.get("role", "")
+            msg_type = msg.get("type", "")
+            content = msg.get("content", "")
+        else:
+            # Handle LangGraph message objects (Pydantic models)
+            role = getattr(msg, "role", "") if hasattr(msg, "role") else ""
+            msg_type = getattr(msg, "type", "") if hasattr(msg, "type") else ""
+            content = getattr(msg, "content", "") if hasattr(msg, "content") else ""
+
+        # Normalize to role format: "user" or "assistant"
+        is_user = role == "user" or msg_type == "human"
+        is_assistant = role == "assistant" or msg_type == "ai"
 
         # Truncate long messages for readability
         content_preview = content[:100] + "..." if len(content) > 100 else content
 
-        if role == "user":
+        if is_user:
             turn_num += 1
             # Look ahead for assistant response in same turn
-            if i + 1 < len(chat_history) and chat_history[i + 1].get("role") == "assistant":
+            next_msg = chat_history[i + 1] if i + 1 < len(chat_history) else {}
+            next_role = next_msg.get("role", "")
+            next_type = next_msg.get("type", "")
+            next_is_assistant = next_role == "assistant" or next_type == "ai"
+
+            if next_is_assistant:
                 examples.append(
                     f"Turn {turn_num}: User said '{content_preview}' | "
                     f"I responded with greeting/menu (guided conversation)"
@@ -565,7 +585,7 @@ def _format_conversation_examples(chat_history: List[Dict[str, Any]]) -> str:
             else:
                 examples.append(f"Turn {turn_num}: User said '{content_preview}'")
                 i += 1
-        elif role == "assistant" and i == 0:
+        elif is_assistant and i == 0:
             # First message is assistant greeting
             turn_num += 1
             examples.append(
@@ -580,6 +600,45 @@ def _format_conversation_examples(chat_history: List[Dict[str, Any]]) -> str:
         return "\n".join(examples)
     else:
         return "No previous turns yet - this is the first conversation turn."
+
+
+def _format_progressive_inference_metrics(session_memory: Dict[str, Any]) -> str:
+    """Format progressive inference metrics for LLM prompt.
+
+    Returns formatted string with metrics the LLM can reference in answers.
+
+    Args:
+        session_memory: Dict with progressive_inference_metrics
+
+    Returns:
+        Formatted string with metrics, or empty string if no metrics
+    """
+    metrics = session_memory.get("progressive_inference_metrics", {})
+    if not metrics:
+        return ""
+
+    turn_count = metrics.get("turn_count", 0)
+    topics_count = metrics.get("topics_count", 0)
+    chat_history_length = metrics.get("chat_history_length", 0)
+    depth_level = metrics.get("depth_level", 1)
+    similarity_history = metrics.get("retrieval_similarity_history", [])
+
+    parts = []
+    if turn_count:
+        parts.append(f"Turn count: {turn_count}")
+    if topics_count:
+        parts.append(f"Topics accumulated: {topics_count}")
+    if chat_history_length:
+        parts.append(f"Chat history length: {chat_history_length} messages")
+    if depth_level:
+        parts.append(f"Depth level: {depth_level}")
+
+    if similarity_history:
+        similarity_values = [f"Turn {s.get('turn', '?')}: {s.get('similarity', 0):.3f}"
+                           for s in similarity_history[-5:]]
+        parts.append(f"Similarity history: {' | '.join(similarity_values)}")
+
+    return " | ".join(parts) if parts else ""
 
 
 def _format_memory_context(session_memory: Dict[str, Any]) -> str:
@@ -918,6 +977,31 @@ def _remove_repeated_chunk_phrases(text: str) -> str:
     return result
 
 
+def _format_conversation_examples_for_inference(chat_history: List[Dict]) -> str:
+    """Format conversation history for inference explanation examples.
+
+    Args:
+        chat_history: List of message dicts with 'role' and 'content' keys
+
+    Returns:
+        Formatted string with conversation examples
+    """
+    if not chat_history:
+        return "No previous turns yet"
+
+    examples = []
+    turn_num = 1
+    for i, msg in enumerate(chat_history):
+        if msg.get("role") == "user":
+            examples.append(f"Turn {turn_num}: User asked '{msg.get('content', '')[:100]}'")
+            turn_num += 1
+        elif msg.get("role") == "assistant" and i > 0:
+            # Link assistant response to previous user query
+            examples.append(f"  → I responded with explanation about {msg.get('content', '')[:50]}...")
+
+    return " | ".join(examples[:6])  # Last 3 exchanges
+
+
 def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str, Any]:
     """Generate a draft assistant response using retrieved context.
 
@@ -965,6 +1049,28 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         logger.error("generate_draft called without query in state")
         raise KeyError("State must contain 'query' field for generation") from e
 
+    # #region agent log
+    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        import json
+        f.write(json.dumps({
+            "location": "stage5_generation_nodes.py:975",
+            "message": "generate_draft() entry",
+            "data": {
+                "query": query,
+                "query_type": state.get("query_type"),
+                "menu_choice": state.get("menu_choice"),
+                "role_mode": state.get("role_mode"),
+                "has_answer": bool(state.get("answer")),
+                "answer_preview": (state.get("answer", "")[:100] + "...") if state.get("answer") else None,
+                "retrieved_chunks_count": len(state.get("retrieved_chunks", []))
+            },
+            "timestamp": int(time.time() * 1000),
+            "sessionId": "debug-session",
+            "runId": "run2",
+            "hypothesisId": "E"
+        }) + "\n")
+    # #endregion
+
     # Access optional fields safely (Defensibility)
     retrieved_chunks = state.get("retrieved_chunks", [])
     role = state.get("role", "Just looking around")
@@ -983,12 +1089,70 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     update: Dict[str, Any] = {}
     state.setdefault("analytics_metadata", {})
 
+    # #region agent log
+    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        import json
+        f.write(json.dumps({
+            "location": "stage5_generation_nodes.py:1021",
+            "message": "Before pipeline_halt check",
+            "data": {
+                "pipeline_halt": state.get("pipeline_halt"),
+                "query": query,
+                "query_type": state.get("query_type"),
+                "menu_choice": state.get("menu_choice"),
+                "has_answer": bool(state.get("answer")),
+                "answer_preview": (state.get("answer", "")[:100] + "...") if state.get("answer") else None
+            },
+            "timestamp": int(time.time() * 1000),
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": "A"
+        }) + "\n")
+    # #endregion
+
     if state.get("pipeline_halt"):
-        return state
+        # #region agent log
+        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+            import json
+            f.write(json.dumps({
+                "location": "stage5_generation_nodes.py:1022",
+                "message": "Early return due to pipeline_halt",
+                "data": {
+                    "pipeline_halt": state.get("pipeline_halt"),
+                    "query": query
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "A"
+            }) + "\n")
+        # #endregion
+        # Return empty update dict (not state) to avoid preserving old answer
+        # In LangGraph StateGraph, nodes should return partial updates, not full state
+        # Explicitly clear answer when pipeline is halted to prevent preserving old answers
+        return {"answer": None, "draft_answer": None}
+
+    # #region agent log
+    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        import json
+        f.write(json.dumps({
+            "location": "stage5_generation_nodes.py:1024",
+            "message": "Pipeline_halt check passed, continuing",
+            "data": {
+                "pipeline_halt": state.get("pipeline_halt"),
+                "grounding_status": state.get("grounding_status")
+            },
+            "timestamp": int(time.time() * 1000),
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": "A"
+        }) + "\n")
+    # #endregion
 
     grounding_status = state.get("grounding_status")
     if grounding_status and grounding_status not in {"ok", "unknown"}:
-        return state
+        # Return empty update dict (not state) to avoid preserving old answer
+        return {}
 
     # For data display requests, we'll fetch live analytics later
     # Just set a placeholder for now
@@ -1088,19 +1252,69 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
             "- Provide API-level understanding\n"
         )
 
-    # Add conversation progression instructions if chat_history exists
+    # Phase 2: Enhanced Turn Reference Instructions - Add explicit turn numbers and examples
     if chat_history and len(chat_history) >= 2:
+        # Count turns for reference
+        user_turns = sum(1 for msg in chat_history
+                        if (isinstance(msg, dict) and msg.get("role") == "user") or
+                           (hasattr(msg, "type") and msg.type == "human"))
+        current_turn = user_turns + 1  # Next turn number
+
+        # Build turn-specific examples from actual conversation
+        turn_examples = []
+        turn_num = 1
+        for i, msg in enumerate(chat_history[-6:]):  # Last 3 exchanges (6 messages = 3 turns)
+            if isinstance(msg, dict):
+                role = msg.get("role", "")
+                content = msg.get("content", "")[:100]
+                msg_type = msg.get("type", "")
+                if msg_type == "human":
+                    role = "user"
+            elif hasattr(msg, "type"):
+                role = "user" if msg.type == "human" else "assistant"
+                content = getattr(msg, "content", "")[:100]
+            else:
+                continue
+
+            if role == "user":
+                turn_examples.append(f"Turn {turn_num}: User asked '{content}...'")
+                turn_num += 1
+
+        examples_text = "\n".join(turn_examples) if turn_examples else "Previous turns in conversation history"
+
+        # Get metrics for turn progression context
+        session_memory = state.get("session_memory", {})
+        metrics = session_memory.get("progressive_inference_metrics", {})
+        depth_level = metrics.get("depth_level", 1)
+        topics_count = metrics.get("topics_count", 0)
+
         progression_instructions = (
             "\n\nCRITICAL: CONVERSATION PROGRESSION\n"
-            "- Reference previous turns naturally: \"As we discussed earlier...\", \"Building on our previous conversation...\"\n"
-            "- Connect current query to previous topics: \"You asked about X, now you're asking about Y...\"\n"
-            "- Show inference: Explain how your answer builds on previous turns\n"
-            "- DO NOT just echo retrieved chunks - synthesize with conversation context\n"
-            "- Make decisions about where to take the conversation based on the inference from previous queries/turns\n"
-            "- Progress the conversation forward by connecting the current query to previous discussion\n"
+            f"- You are at Turn {current_turn}. Reference previous turns explicitly: \"In Turn 3, you asked about orchestration...\", \"As we discussed in Turn 4...\"\n"
+            f"- Previous turns: {examples_text}\n"
+            "- MUST reference specific turns when explaining progression: \"From Turn 3 to Turn 4...\", \"Building on Turn 3's orchestration discussion...\"\n"
+            "- Connect current query to previous topics with turn references: \"You asked about X in Turn N, now you're asking about Y...\"\n"
+            f"- Show inference with turn progression: Turn 1 had no context (0%), Turn 2 detected your role (20%), Turn 3 extracted topics (40%), Turn 4+ has full context (60-85%)\n"
+            f"- Current conversation state: Depth level {depth_level}, Topics accumulated: {topics_count}\n"
+            "- DO NOT just echo retrieved chunks - synthesize with conversation context and reference specific turns\n"
+            "- Progress the conversation forward by connecting current query to previous discussion using turn numbers\n"
         )
+
+        # Phase 4: Add synthesis instructions
+        synthesis_instructions = (
+            "\n\nCRITICAL: CROSS-TURN SYNTHESIS\n"
+            "- DO NOT treat each query as isolated - synthesize across multiple turns\n"
+            "- Example: If Turn 3 was about orchestration and Turn 4 is about enterprise, "
+            "say: 'Building on our orchestration discussion from Turn 3, enterprise relevance means...'\n"
+            "- Example: If Turn 5 is about implementation, say: 'From Turn 3's architecture discussion to Turn 4's enterprise value, "
+            "here's the implementation that bridges both...'\n"
+            "- Connect multiple previous turns: Reference 2-3 previous turns when synthesizing\n"
+            "- Show progression: Explain how the conversation evolved from Turn 1 → Turn 2 → Turn 3 → current turn\n"
+        )
+
         extra_instructions.append(progression_instructions)
-        logger.debug("Added conversation progression instructions based on chat_history")
+        extra_instructions.append(synthesis_instructions)
+        logger.debug(f"Added enhanced conversation progression instructions with turn numbers (Turn {current_turn})")
 
     # Detect self-referential queries about inference/abstraction (expanded)
     query_lower = query.lower()
@@ -1128,55 +1342,163 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         "context window",
         "abstraction level",
         "ambiguity resolution",
-        "performance optimization"
+        "performance optimization",
+        # Success criteria phrases
+        "success criteria",
+        "what are your goals",
+        "how do you measure success",
+        "what defines success",
+        "how do you validate",
+        "what are your metrics",
+        "progressive inference goals",
+        "inference success",
+        "validation criteria"
     ])
 
     if is_inference_query:
         # Get current conversation context for examples
         conversation_examples = _format_conversation_examples_for_inference(chat_history) if chat_history else "No previous turns yet"
 
-        inference_instructions = (
-            "\n\nCRITICAL: SELF-REFERENTIAL INFERENCE EXPLANATION\n"
-            "- Use CURRENT CONVERSATION as concrete examples to explain challenges\n"
-            f"- Conversation context: {conversation_examples}\n"
-            "- Explain systematically: Start with fundamental principle, then build to specific implementation\n"
-            "- Break down complex concepts: Present challenges in order (why they matter → how I address them → concrete examples)\n"
-            "- Use teaching approach: Show the problem first, then the solution, then the code that implements it\n"
-            "- Reference actual codebase components: Use file paths and function names (e.g., 'compose_query in stage3_query_composition.py')\n"
-            "- Connect to conversation: 'At Turn X, you asked... Here's how my code handled that...'\n"
-            "- Show progression: 'Turn 1 had no context (challenge), Turn 2 accumulated memory (solution), Turn 3 used it (result)'\n"
-            "- Format: Engaging, easy to follow, conversational (not academic)\n"
-            "- DO NOT just list features - explain WHY each challenge matters and HOW the code solves it\n"
-            "- Use concrete examples: 'When you asked about orchestration (Turn 3), my compose_query function enhanced the query with topics from Turn 2'\n"
-            "- Show measurable improvements: 'Query similarity improved from 0.43 to 0.56 because topics were added'\n"
-        )
+        # Check if query is about success criteria specifically
+        is_success_criteria_query = any(phrase in query_lower for phrase in [
+            "success criteria", "what are your goals", "how do you measure success",
+            "what defines success", "how do you validate", "what are your metrics"
+        ])
+
+        if is_success_criteria_query:
+            # Phase 3: Enhanced Memory Demonstration - Include progressive inference metrics
+            session_memory = state.get("session_memory", {})
+            metrics = session_memory.get("progressive_inference_metrics", {})
+            similarity_history = metrics.get("retrieval_similarity_history", [])
+
+            # Build metrics summary for LLM to reference
+            metrics_summary = []
+            if metrics.get("turn_count") is not None:
+                metrics_summary.append(f"Turn count: {metrics['turn_count']}")
+            if metrics.get("topics_count") is not None:
+                metrics_summary.append(f"Topics accumulated: {metrics['topics_count']}")
+            if metrics.get("chat_history_length") is not None:
+                metrics_summary.append(f"Chat history length: {metrics['chat_history_length']} messages")
+            if metrics.get("depth_level") is not None:
+                metrics_summary.append(f"Depth level: {metrics['depth_level']}")
+            if similarity_history:
+                similarity_progression = [f"Turn {s.get('turn', '?')}: {s.get('similarity', 0):.3f}"
+                                        for s in similarity_history[-5:]]
+                metrics_summary.append(f"Similarity progression: {' | '.join(similarity_progression)}")
+
+            metrics_text = "\n".join(f"- {m}" for m in metrics_summary) if metrics_summary else "No metrics available yet"
+
+            inference_instructions = (
+                "\n\nCRITICAL: PROGRESSIVE INFERENCE SUCCESS CRITERIA EXPLANATION\n"
+                "- Explain the core goal: Make smarter decisions with each turn by building on previous context\n"
+                "- Explain the three mechanisms: Memory accumulation, Query enhancement, Pattern detection\n"
+                "- Use CURRENT CONVERSATION as concrete examples to demonstrate success criteria\n"
+                f"- Conversation context: {conversation_examples}\n"
+                "- Explain turn-by-turn progression: Turn 1 (0% inference, baseline), Turn 2 (20%, role detected), "
+                "Turn 3 (40%, topic extracted), Turn 4 (60-85%, patterns detected), Turn 5+ (80%+, full synthesis)\n"
+                "- MUST include specific metrics from this conversation:\n"
+                f"{metrics_text}\n"
+                "- Explain validation: Chat history preservation, topic accumulation, query enhancement, pattern detection, "
+                "depth progression, cross-turn synthesis\n"
+                "- Use measurable examples: Show how similarity improved from Turn X to Turn Y, how topics accumulate, "
+                "how depth_level increases from 1 to 2 to 3\n"
+                "- Connect to current conversation: Reference specific turns from this conversation to demonstrate success criteria\n"
+                "- Include specific numbers: 'similarity improved from 0.43 to 0.564', 'topics accumulated from 0 to 3', 'depth_level increased from 1 to 2'\n"
+            )
+        else:
+            inference_instructions = (
+                "\n\nCRITICAL: SELF-REFERENTIAL INFERENCE EXPLANATION\n"
+                "- Use CURRENT CONVERSATION as concrete examples to explain challenges\n"
+                f"- Conversation context: {conversation_examples}\n"
+                "- Explain systematically: Start with fundamental principle, then build to specific implementation\n"
+                "- Break down complex concepts: Present challenges in order (why they matter → how I address them → concrete examples)\n"
+                "- Use teaching approach: Show the problem first, then the solution, then the code that implements it\n"
+                "- Reference actual codebase components: Use file paths and function names (e.g., 'compose_query in stage3_query_composition.py')\n"
+                "- Connect to conversation: 'At Turn X, you asked... Here's how my code handled that...'\n"
+                "- Show progression: 'Turn 1 had no context (challenge), Turn 2 accumulated memory (solution), Turn 3 used it (result)'\n"
+                "- Format: Engaging, easy to follow, conversational (not academic)\n"
+                "- DO NOT just list features - explain WHY each challenge matters and HOW the code solves it\n"
+                "- Use concrete examples: 'When you asked about orchestration (Turn 3), my compose_query function enhanced the query with topics from Turn 2'\n"
+                "- Show measurable improvements: 'Query similarity improved from 0.43 to 0.56 because topics were added'\n"
+            )
         extra_instructions.append(inference_instructions)
         logger.debug("Added expanded self-referential inference explanation instructions")
 
-def _format_conversation_examples_for_inference(chat_history: List[Dict]) -> str:
-    """Format conversation history for inference explanation examples.
+    # Phase 1: Automatic Metric Injection - Inject retrieval scores for measurable improvements
+    retrieval_scores = state.get("retrieval_scores", [])
+    session_memory = state.get("session_memory", {})
+    metrics = session_memory.get("progressive_inference_metrics", {})
 
-    Args:
-        chat_history: List of message dicts with 'role' and 'content' keys
+    if retrieval_scores and metrics.get("retrieval_similarity_history"):
+        similarity_history = metrics["retrieval_similarity_history"]
+        current_similarity = retrieval_scores[0] if retrieval_scores else None
 
-    Returns:
-        Formatted string with conversation examples
-    """
-    if not chat_history:
-        return "No previous turns yet"
+        # Build similarity improvement context
+        similarity_context = []
+        if len(similarity_history) > 1:
+            previous_similarity = similarity_history[-2].get("similarity")
+            current_similarity_val = similarity_history[-1].get("similarity") if similarity_history else current_similarity
+            if previous_similarity and current_similarity_val:
+                improvement = current_similarity_val - previous_similarity
+                similarity_context.append(
+                    f"Retrieval similarity improved from {previous_similarity:.3f} to {current_similarity_val:.3f} "
+                    f"(improvement: +{improvement:.3f})"
+                )
+        elif current_similarity:
+            similarity_context.append(
+                f"Current retrieval similarity: {current_similarity:.3f}"
+            )
 
-    examples = []
-    turn_num = 1
-    for i, msg in enumerate(chat_history):
-        if msg.get("role") == "user":
-            examples.append(f"Turn {turn_num}: User asked '{msg.get('content', '')[:100]}'")
-            turn_num += 1
-        elif msg.get("role") == "assistant" and i > 0:
-            # Link assistant response to previous user query
-            examples.append(f"  → I responded with explanation about {msg.get('content', '')[:50]}...")
+        if similarity_context:
+            extra_instructions.append(
+                "\n\nCRITICAL: MEASURABLE IMPROVEMENTS\n"
+                "- You MUST include specific metrics when explaining improvements\n"
+                f"- Retrieval similarity context: {' | '.join(similarity_context)}\n"
+                "- Reference these numbers in your answer (e.g., 'similarity improved from 0.43 to 0.564')\n"
+                "- Show concrete improvements: similarity scores, topic counts, depth progression\n"
+            )
 
-    return " | ".join(examples[:6])  # Last 3 exchanges
+    # Phase 1: Include progressive inference metrics in prompt
+    progressive_metrics = _format_progressive_inference_metrics(session_memory)
+    if progressive_metrics:
+        extra_instructions.append(
+            f"\n\nPROGRESSIVE INFERENCE METRICS (reference these in your answer):\n"
+            f"{progressive_metrics}\n"
+        )
 
+    # #region agent log
+    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        import json
+        f.write(json.dumps({
+            "location": "stage5_generation_nodes.py:1247",
+            "message": "After inference query check, before menu option detection",
+            "data": {
+                "is_inference_query": is_inference_query,
+                "extra_instructions_count": len(extra_instructions),
+                "continuing_to_menu_detection": True
+            },
+            "timestamp": int(time.time() * 1000),
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": "A"
+        }) + "\n")
+    # #endregion
+
+    # #region agent log
+    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        import json
+        f.write(json.dumps({
+            "location": "stage5_generation_nodes.py:1273",
+            "message": "After _format_conversation_examples_for_inference definition, continuing to menu option detection",
+            "data": {
+                "continuing": True
+            },
+            "timestamp": int(time.time() * 1000),
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": "A"
+        }) + "\n")
+    # #endregion
 
     is_menu_option_one = (
         state.get("query_type") == "menu_selection" and
@@ -1232,13 +1554,116 @@ def _format_conversation_examples_for_inference(chat_history: List[Dict]) -> str
         logger.warning(f"🚨 DEBUG: First 200 chars of extra_instructions = {(''.join(extra_instructions))[:200]}")
 
     # Special handling for menu option 2 (orchestration layer walkthrough) - comprehensive 7-stage pipeline explanation
+    # #region agent log
+    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        import json
+        f.write(json.dumps({
+            "location": "stage5_generation_nodes.py:1269",
+            "message": "Before menu option 2 check",
+            "data": {
+                "query_type": state.get("query_type"),
+                "menu_choice": state.get("menu_choice"),
+                "role_mode": state.get("role_mode"),
+                "query_type_match": state.get("query_type") == "menu_selection",
+                "menu_choice_match": state.get("menu_choice") == "2",
+                "role_mode_match": state.get("role_mode") == "hiring_manager_technical"
+            },
+            "timestamp": int(time.time() * 1000),
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": "B"
+        }) + "\n")
+    # #endregion
+
     is_menu_option_two = (
         state.get("query_type") == "menu_selection" and
         state.get("menu_choice") == "2" and
         state.get("role_mode") == "hiring_manager_technical"
     )
 
+    # #region agent log
+    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        import json
+        f.write(json.dumps({
+            "location": "stage5_generation_nodes.py:1355",
+            "message": "Menu option 2 detection result",
+            "data": {
+                "is_menu_option_two": is_menu_option_two,
+                "query_type": state.get("query_type"),
+                "menu_choice": state.get("menu_choice"),
+                "role_mode": state.get("role_mode"),
+                "query_type_match": state.get("query_type") == "menu_selection",
+                "menu_choice_match": state.get("menu_choice") == "2",
+                "role_mode_match": state.get("role_mode") == "hiring_manager_technical"
+            },
+            "timestamp": int(time.time() * 1000),
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": "A"
+        }) + "\n")
+    # #endregion
+
+    if not is_menu_option_two:
+        # #region agent log
+        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+            import json
+            f.write(json.dumps({
+                "location": "stage5_generation_nodes.py:1380",
+                "message": "Menu option 2 check failed - proceeding with normal generation",
+                "data": {
+                    "query_type": state.get("query_type"),
+                    "menu_choice": state.get("menu_choice"),
+                    "role_mode": state.get("role_mode"),
+                    "query_type_match": state.get("query_type") == "menu_selection",
+                    "menu_choice_match": state.get("menu_choice") == "2",
+                    "role_mode_match": state.get("role_mode") == "hiring_manager_technical"
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "B"
+            }) + "\n")
+        # #endregion
+
     if is_menu_option_two:
+        # #region agent log
+        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+            import json
+            f.write(json.dumps({
+                "location": "stage5_generation_nodes.py:1242",
+                "message": "Menu option 2 detected",
+                "data": {
+                    "query_type": state.get("query_type"),
+                    "menu_choice": state.get("menu_choice"),
+                    "role_mode": state.get("role_mode"),
+                    "pipeline_halt": state.get("pipeline_halt"),
+                    "chat_history_len": len(state.get("chat_history", []))
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "D"
+            }) + "\n")
+        # #endregion
+        logger.info("Menu option 2 (orchestration layer) detected - generating explanation")
+
+        # #region agent log
+        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+            import json
+            f.write(json.dumps({
+                "location": "stage5_generation_nodes.py:1296",
+                "message": "Menu option 2 detected - about to generate explanation",
+                "data": {
+                    "has_answer_before": bool(state.get("answer")),
+                    "answer_before_preview": (state.get("answer", "")[:100] + "...") if state.get("answer") else None
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "C"
+            }) + "\n")
+        # #endregion
+
         # Extract context for conversation logic explanation
         session_memory = state.get("session_memory", {})
         conversation_examples = _format_conversation_examples(chat_history)
@@ -1400,6 +1825,28 @@ def _format_conversation_examples_for_inference(chat_history: List[Dict]) -> str
     if is_menu_option_one:
         _log_instruction_preview(f"{attempt_label}-attempt-{attempt_counter}", instruction_suffix)
 
+    # #region agent log
+    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        import json
+        f.write(json.dumps({
+            "location": "stage5_generation_nodes.py:1599",
+            "message": "Before LLM generation call",
+            "data": {
+                "is_menu_option_two": is_menu_option_two,
+                "is_menu_option_one": is_menu_option_one,
+                "query": query[:100] if query else None,
+                "retrieved_chunks_count": len(retrieved_chunks),
+                "chat_history_len": len(chat_history),
+                "selected_model": selected_model,
+                "has_extra_instructions": bool(instruction_suffix)
+            },
+            "timestamp": int(time.time() * 1000),
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": "A"
+        }) + "\n")
+    # #endregion
+
     try:
         answer = rag_engine.response_generator.generate_contextual_response(
             query=query,
@@ -1409,8 +1856,47 @@ def _format_conversation_examples_for_inference(chat_history: List[Dict]) -> str
             extra_instructions=instruction_suffix,
             model_name=selected_model  # Pass selected model
         )
+
+        # #region agent log
+        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+            import json
+            f.write(json.dumps({
+                "location": "stage5_generation_nodes.py:1608",
+                "message": "After LLM generation call - success",
+                "data": {
+                    "answer_len": len(answer) if answer else 0,
+                    "answer_preview": answer[:200] if answer else None,
+                    "is_menu_option_two": is_menu_option_two
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "A"
+            }) + "\n")
+        # #endregion
+
     except Exception as e:
         logger.error(f"LLM generation failed: {e}")
+
+        # #region agent log
+        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+            import json
+            f.write(json.dumps({
+                "location": "stage5_generation_nodes.py:1644",
+                "message": "LLM generation failed with exception",
+                "data": {
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "is_menu_option_two": is_menu_option_two,
+                    "is_menu_option_one": is_menu_option_one
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "B"
+            }) + "\n")
+        # #endregion
+
         # Specific handling for menu option 2
         if is_menu_option_two:
             logger.error(f"Menu option 2 generation failed: {e}")
@@ -1596,6 +2082,24 @@ def _format_conversation_examples_for_inference(chat_history: List[Dict]) -> str
         answer = rag_engine.response_generator._enforce_first_person(answer)
         logger.debug("Applied post-generation first-person enforcement for menu option 2")
 
+        # #region agent log
+        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+            import json
+            f.write(json.dumps({
+                "location": "stage5_generation_nodes.py:1766",
+                "message": "Menu option 2 answer generated",
+                "data": {
+                    "answer_length": len(answer),
+                    "answer_preview": answer[:200] + "..." if len(answer) > 200 else answer,
+                    "word_count": len(answer.split())
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "C"
+            }) + "\n")
+        # #endregion
+
         # Detect and remove verbatim copying (same as menu option 1)
         if retrieved_chunks:
             verbatim_check = _detect_verbatim_copying(answer, retrieved_chunks)
@@ -1649,6 +2153,44 @@ def _format_conversation_examples_for_inference(chat_history: List[Dict]) -> str
     cleaned_answer = sanitize_generated_answer(answer)
     update["draft_answer"] = cleaned_answer
     update["answer"] = cleaned_answer
+
+    # #region agent log
+    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        import json
+        f.write(json.dumps({
+            "location": "stage5_generation_nodes.py:1926",
+            "message": "generate_draft: Returning final answer",
+            "data": {
+                "answer_len": len(cleaned_answer) if cleaned_answer else 0,
+                "answer_preview": cleaned_answer[:200] if cleaned_answer else None,
+                "is_menu_option_two": is_menu_option_two,
+                "is_menu_option_one": is_menu_option_one,
+                "update_keys": list(update.keys())
+            },
+            "timestamp": int(time.time() * 1000),
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": "A"
+        }) + "\n")
+    # #endregion
+
+    # #region agent log
+    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        import json
+        f.write(json.dumps({
+            "location": "stage5_generation_nodes.py:1821",
+            "message": "Answer set in update dict",
+            "data": {
+                "answer_length": len(cleaned_answer),
+                "answer_preview": cleaned_answer[:200] + "..." if len(cleaned_answer) > 200 else cleaned_answer,
+                "is_menu_option_two": is_menu_option_two if 'is_menu_option_two' in locals() else False
+            },
+            "timestamp": int(time.time() * 1000),
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": "C"
+        }) + "\n")
+    # #endregion
 
     # Return partial update - LangGraph will merge into state
     return update

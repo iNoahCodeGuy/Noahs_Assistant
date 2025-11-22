@@ -40,8 +40,11 @@ Performance characteristics remain consistent with Week 1 launch targets:
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Callable, Optional, Sequence, TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from langgraph.graph import CompiledGraph
@@ -210,12 +213,69 @@ def run_conversation_flow(
     for node in pipeline:
         state = node(state)
         if state.get("pipeline_halt") or state.get("is_greeting"):
+            # #region agent log
+            with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+                import json
+                f.write(json.dumps({
+                    "location": "conversation_flow.py:215",
+                    "message": "Pipeline break detected",
+                    "data": {
+                        "pipeline_halt": state.get("pipeline_halt"),
+                        "is_greeting": state.get("is_greeting"),
+                        "has_answer": bool(state.get("answer")),
+                        "chat_history_len": len(state.get("chat_history", []))
+                    },
+                    "timestamp": int(time.time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "A"
+                }) + "\n")
+            # #endregion
             break
 
     # Append user query and assistant answer to chat_history for conversation continuity
-    # Skip for greetings or pipeline halts (no real conversation yet)
-    if state.get("answer") and not state.get("is_greeting") and not state.get("pipeline_halt"):
+    # Skip only for actual greetings (initial greeting before role selection)
+    # Role welcome messages and menu selections are part of conversation and should be preserved
+    # #region agent log
+    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        import json
+        f.write(json.dumps({
+            "location": "conversation_flow.py:221",
+            "message": "Before chat_history append check",
+            "data": {
+                "has_answer": bool(state.get("answer")),
+                "is_greeting": state.get("is_greeting"),
+                "pipeline_halt": state.get("pipeline_halt"),
+                "chat_history_len": len(state.get("chat_history", [])),
+                "condition_passes": bool(state.get("answer") and not state.get("is_greeting"))
+            },
+            "timestamp": int(time.time() * 1000),
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": "B"
+        }) + "\n")
+    # #endregion
+
+    if state.get("answer") and not state.get("is_greeting"):
         chat_history = state.get("chat_history", [])
+        # #region agent log
+        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+            import json
+            f.write(json.dumps({
+                "location": "conversation_flow.py:228",
+                "message": "Inside chat_history append block",
+                "data": {
+                    "chat_history_before": len(chat_history),
+                    "has_query": bool(state.get("query")),
+                    "query": state.get("query", "")
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "B"
+            }) + "\n")
+        # #endregion
+
         # Append user query if present and not already in history
         if state.get("query"):
             # Check if this query was already added (avoid duplicates)
@@ -225,6 +285,23 @@ def run_conversation_flow(
         # Append assistant answer
         chat_history.append({"role": "assistant", "content": state["answer"]})
         state["chat_history"] = chat_history
+        # #region agent log
+        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+            import json
+            f.write(json.dumps({
+                "location": "conversation_flow.py:246",
+                "message": "After chat_history append",
+                "data": {
+                    "chat_history_after": len(chat_history),
+                    "messages": chat_history
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "B"
+            }) + "\n")
+        # #endregion
+        logger.debug(f"Appended to chat_history: {len(chat_history)} messages total")
 
     elapsed_ms = int((time.time() - start) * 1000)
     state = log_and_notify(state, session_id=session_id, latency_ms=elapsed_ms)
