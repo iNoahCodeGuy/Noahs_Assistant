@@ -20,6 +20,9 @@ See: docs/context/CONVERSATION_PERSONALITY.md for generation personality
 import logging
 import re
 import time
+import os
+import sys
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from assistant.state.conversation_state import ConversationState
@@ -27,6 +30,27 @@ from assistant.core.rag_engine import RagEngine
 from assistant.flows import content_blocks
 from assistant.flows.node_logic.util_code_validation import sanitize_generated_answer
 from assistant.config.supabase_config import supabase_settings
+
+# Module-level verification - this will print when module is imported
+print(">>> stage5_generation_nodes.py MODULE LOADED <<<", file=sys.stderr, flush=True)
+
+# Get debug log path - try multiple locations
+def _get_debug_log_path():
+    """Get the debug log file path, trying multiple locations."""
+    # Try absolute path first
+    abs_path = Path('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log')
+    if abs_path.parent.exists():
+        return str(abs_path)
+
+    # Try relative to current working directory
+    cwd_path = Path(os.getcwd()) / '.cursor' / 'debug.log'
+    if cwd_path.parent.exists() or Path(os.getcwd()).exists():
+        cwd_path.parent.mkdir(parents=True, exist_ok=True)
+        return str(cwd_path)
+
+    # Fallback: use absolute path anyway (will create directory if needed)
+    abs_path.parent.mkdir(parents=True, exist_ok=True)
+    return str(abs_path)
 
 logger = logging.getLogger(__name__)
 
@@ -571,9 +595,18 @@ def _format_conversation_examples(chat_history: List[Dict[str, Any]]) -> str:
         if is_user:
             turn_num += 1
             # Look ahead for assistant response in same turn
-            next_msg = chat_history[i + 1] if i + 1 < len(chat_history) else {}
-            next_role = next_msg.get("role", "")
-            next_type = next_msg.get("type", "")
+            next_msg = chat_history[i + 1] if i + 1 < len(chat_history) else None
+            # Handle both dict format and LangChain message objects
+            if next_msg is None:
+                next_role = ""
+                next_type = ""
+            elif isinstance(next_msg, dict):
+                next_role = next_msg.get("role", "")
+                next_type = next_msg.get("type", "")
+            else:
+                # Handle LangChain message objects (Pydantic models)
+                next_role = getattr(next_msg, "role", "") if hasattr(next_msg, "role") else ""
+                next_type = getattr(next_msg, "type", "") if hasattr(next_msg, "type") else ""
             next_is_assistant = next_role == "assistant" or next_type == "ai"
 
             if next_is_assistant:
@@ -808,19 +841,19 @@ def select_model_for_task(state: ConversationState) -> str:
 
     if (query_type in technical_query_types or role_mode in technical_roles):
         if query_complexity == "simple":
-            # Simple queries → faster model
+            # Simple queries → faster model (but still high quality)
             selected_model = "gpt-4o-mini"
             logger.info(f"Model routing: complexity=simple, model={selected_model}")
             return selected_model
         elif query_complexity == "complex":
-            # Complex queries → deeper model
+            # Complex queries → best model for quality
             selected_model = "gpt-4o"
             logger.info(f"Model routing: complexity=complex, model={selected_model}")
             return selected_model
         else:
-            # Medium complexity → default
-            logger.info(f"Using gpt-4o-mini for technical query (type={query_type}, role={role_mode}, complexity=medium)")
-            return "gpt-4o-mini"
+            # Medium complexity → use gpt-4o for best quality (portfolio priority)
+            logger.info(f"Using gpt-4o for technical query (type={query_type}, role={role_mode}, complexity=medium)")
+            return "gpt-4o"
 
     # Use reasoning model for complex tasks requiring extended thinking
     complex_keywords = [
@@ -981,7 +1014,7 @@ def _format_conversation_examples_for_inference(chat_history: List[Dict]) -> str
     """Format conversation history for inference explanation examples.
 
     Args:
-        chat_history: List of message dicts with 'role' and 'content' keys
+        chat_history: List of message dicts with 'role' and 'content' keys, or LangChain message objects
 
     Returns:
         Formatted string with conversation examples
@@ -992,14 +1025,74 @@ def _format_conversation_examples_for_inference(chat_history: List[Dict]) -> str
     examples = []
     turn_num = 1
     for i, msg in enumerate(chat_history):
-        if msg.get("role") == "user":
-            examples.append(f"Turn {turn_num}: User asked '{msg.get('content', '')[:100]}'")
+        # Handle both dict format and LangChain message objects
+        if isinstance(msg, dict):
+            role = msg.get("role", "")
+            msg_type = msg.get("type", "")
+            content = msg.get("content", "")
+        else:
+            # Handle LangChain message objects (Pydantic models)
+            role = getattr(msg, "role", "") if hasattr(msg, "role") else ""
+            msg_type = getattr(msg, "type", "") if hasattr(msg, "type") else ""
+            content = getattr(msg, "content", "") if hasattr(msg, "content") else ""
+
+        # Normalize to role format
+        is_user = role == "user" or msg_type == "human"
+        is_assistant = role == "assistant" or msg_type == "ai"
+
+        if is_user:
+            examples.append(f"Turn {turn_num}: User asked '{content[:100]}'")
             turn_num += 1
-        elif msg.get("role") == "assistant" and i > 0:
+        elif is_assistant and i > 0:
             # Link assistant response to previous user query
-            examples.append(f"  → I responded with explanation about {msg.get('content', '')[:50]}...")
+            examples.append(f"  → I responded with explanation about {content[:50]}...")
 
     return " | ".join(examples[:6])  # Last 3 exchanges
+
+
+def _build_context_management_explanation(chat_history: List[Dict], current_turn: int) -> str:
+    """Build educational explanation about context management for long conversations.
+
+    This is a teaching moment where Portfolia explains how she manages context
+    in long conversations, demonstrating real production GenAI patterns.
+
+    Args:
+        chat_history: Full conversation history
+        current_turn: Current turn number (1-indexed)
+
+    Returns:
+        Educational explanation string, or empty if not needed
+    """
+    # Only explain at turn 15+ and every 5 turns after that
+    if current_turn < 15:
+        return ""
+
+    # Don't repeat too frequently (every 5 turns)
+    if current_turn % 5 != 0:
+        return ""
+
+    total_messages = len(chat_history)
+    recent_window = min(6, total_messages)  # Last 3 exchanges (6 messages)
+
+    explanation = (
+        "\n\n---\n"
+        f"**🧠 Quick Technical Note (Turn {current_turn}):**\n\n"
+        f"We've had {total_messages} messages so far — that's a great conversation! "
+        "I wanted to share something interesting about how I manage context in long conversations like this.\n\n"
+        "**How I Handle Long Conversations:**\n"
+        f"- I keep the full conversation history ({total_messages} messages) for analytics and pattern detection\n"
+        f"- But for generating responses, I use a **sliding window** of the last {recent_window} messages (last 3 exchanges)\n"
+        "- This keeps my responses fast and focused on recent context, while still maintaining conversation continuity\n"
+        "- I also prune retrieved chunks to fit within a 4,000-token budget to stay within model limits\n\n"
+        "**Why This Matters for Production AI:**\n"
+        "This same pattern — sliding windows + token budgets — is how enterprise chatbots handle long customer support conversations. "
+        "It balances context richness with performance and cost. The alternative (sending all 40+ messages to the LLM) would be slower, "
+        "more expensive, and often less relevant since recent context matters most.\n\n"
+        "This is a real production pattern you'd see in systems handling thousands of conversations daily. "
+        "Want me to show you the code that implements this, or explain how we tune the window size?"
+    )
+
+    return explanation
 
 
 def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str, Any]:
@@ -1042,6 +1135,33 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         >>> len(state["draft_answer"])  # Should have LLM-generated answer
         342
     """
+    # CRITICAL: Entry point verification - this should ALWAYS print
+    import sys
+    print(f"\n>>> generate_draft() CALLED - Query: {state.get('query', 'NO QUERY')[:50]} <<<\n", file=sys.stderr, flush=True)
+
+    # #region agent log - Entry point
+    try:
+        log_path = _get_debug_log_path()
+        with open(log_path, 'a') as f:
+            import json
+            f.write(json.dumps({
+                "location": "stage5_generation_nodes.py:1029",
+                "message": "generate_draft ENTRY",
+                "data": {
+                    "query": state.get('query', 'NO QUERY')[:50],
+                    "has_retrieved_chunks": bool(state.get('retrieved_chunks')),
+                    "retrieved_chunks_count": len(state.get('retrieved_chunks', [])),
+                    "role_mode": state.get('role_mode')
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "ALL"
+            }) + "\n")
+    except Exception as log_err:
+        print(f"DEBUG LOG FAILED in generate_draft: {log_err}", file=sys.stderr, flush=True)
+    # #endregion
+
     # Fail-fast: Validate required fields (Defensibility)
     try:
         query = state["query"]
@@ -1050,31 +1170,61 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         raise KeyError("State must contain 'query' field for generation") from e
 
     # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-        import json
-        f.write(json.dumps({
-            "location": "stage5_generation_nodes.py:975",
-            "message": "generate_draft() entry",
-            "data": {
-                "query": query,
-                "query_type": state.get("query_type"),
-                "menu_choice": state.get("menu_choice"),
-                "role_mode": state.get("role_mode"),
-                "has_answer": bool(state.get("answer")),
-                "answer_preview": (state.get("answer", "")[:100] + "...") if state.get("answer") else None,
-                "retrieved_chunks_count": len(state.get("retrieved_chunks", []))
-            },
-            "timestamp": int(time.time() * 1000),
-            "sessionId": "debug-session",
-            "runId": "run2",
-            "hypothesisId": "E"
-        }) + "\n")
+    try:
+        log_path = _get_debug_log_path()
+        with open(log_path, 'a') as f:
+            import json
+            f.write(json.dumps({
+                "location": "stage5_generation_nodes.py:1045",
+                "message": "generate_draft() entry",
+                "data": {
+                    "query": query,
+                    "query_type": state.get("query_type"),
+                    "menu_choice": state.get("menu_choice"),
+                    "role_mode": state.get("role_mode"),
+                    "has_answer": bool(state.get("answer")),
+                    "answer_preview": (state.get("answer", "")[:100] + "...") if state.get("answer") else None,
+                    "retrieved_chunks_count": len(state.get("retrieved_chunks", []))
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run2",
+                "hypothesisId": "E"
+            }) + "\n")
+    except Exception as log_err:
+        # Don't fail on logging errors
+        pass
     # #endregion
+
+    # Check if user is asking about edge case detection (meta-teaching)
+    # This happens when user asks "how did you detect" after an edge case was handled
+    query_lower = query.lower()
+    session_memory = state.get("session_memory", {})
+
+    if session_memory.get("last_edge_case") and any(
+        phrase in query_lower for phrase in [
+            "how did you detect", "how do you handle", "explain the detection",
+            "how does that work", "show me how", "meta", "explain how you",
+            "how did you know", "why did you", "explain your reasoning"
+        ]
+    ):
+        # Generate meta-teaching explanation
+        from assistant.flows.node_logic.util_edge_case_meta_teaching import generate_meta_teaching_explanation
+        try:
+            explanation = generate_meta_teaching_explanation(state)
+            update["draft_answer"] = explanation
+            update["answer"] = explanation
+            logger.info(f"Meta-teaching explanation generated for edge case: {session_memory.get('last_edge_case')}")
+            return update
+        except Exception as e:
+            logger.warning(f"Failed to generate meta-teaching explanation: {e}")
+            # Fall through to normal generation
 
     # Access optional fields safely (Defensibility)
     retrieved_chunks = state.get("retrieved_chunks", [])
     role = state.get("role", "Just looking around")
     chat_history = state.get("chat_history", [])
+    retrieval_scores = state.get("retrieval_scores", [])
 
     # Limit context window to prevent token bloat
     if retrieved_chunks:
@@ -1112,7 +1262,8 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
 
     if state.get("pipeline_halt"):
         # #region agent log
-        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        log_path = _get_debug_log_path()
+        with open(log_path, 'a') as f:
             import json
             f.write(json.dumps({
                 "location": "stage5_generation_nodes.py:1022",
@@ -1223,6 +1374,26 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     # Add display intelligence based on query classification
     extra_instructions = []
 
+    # Check retrieval quality and add synthesis instructions for moderate scores
+    if retrieval_scores:
+        top_similarity = max(retrieval_scores) if retrieval_scores else 0.0
+        avg_similarity = sum(retrieval_scores) / len(retrieval_scores) if retrieval_scores else 0.0
+
+        # Moderate similarity range (0.4-0.7) needs better synthesis
+        # Low scores (<0.4) should trigger clarification, but moderate scores need synthesis help
+        if 0.4 <= top_similarity < 0.7:
+            extra_instructions.append(
+                "\n\nCRITICAL: MODERATE RETRIEVAL QUALITY - ENHANCE SYNTHESIS\n"
+                f"- Retrieval similarity is moderate ({top_similarity:.3f}) - retrieved chunks are somewhat relevant but not perfect matches\n"
+                "- DO NOT just echo or list the retrieved chunks verbatim\n"
+                "- Instead, SYNTHESIZE the information: connect ideas, explain relationships, provide context\n"
+                "- If chunks mention examples or documentation structure, extract the underlying concepts and explain them\n"
+                "- Bridge gaps: if chunks don't directly answer the question, use your knowledge to connect them to the user's query\n"
+                "- Be explicit about what you're inferring vs. what's directly in the chunks\n"
+                "- For enterprise adaptation queries: explain HOW the architecture adapts, not just that it can adapt\n"
+            )
+            logger.debug(f"Added moderate similarity synthesis instructions (top_similarity={top_similarity:.3f})")
+
     # Multi-scale explanation generation based on abstraction level
     abstraction_level = _detect_abstraction_level(query, role, chat_history)
 
@@ -1264,17 +1435,25 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         turn_examples = []
         turn_num = 1
         for i, msg in enumerate(chat_history[-6:]):  # Last 3 exchanges (6 messages = 3 turns)
+            # Handle both dict format and LangChain message objects
             if isinstance(msg, dict):
                 role = msg.get("role", "")
                 content = msg.get("content", "")[:100]
                 msg_type = msg.get("type", "")
                 if msg_type == "human":
                     role = "user"
-            elif hasattr(msg, "type"):
-                role = "user" if msg.type == "human" else "assistant"
-                content = getattr(msg, "content", "")[:100]
+                elif msg_type == "ai":
+                    role = "assistant"
             else:
-                continue
+                # Handle LangChain message objects (Pydantic models)
+                msg_type = getattr(msg, "type", "") if hasattr(msg, "type") else ""
+                role = getattr(msg, "role", "") if hasattr(msg, "role") else ""
+                content = getattr(msg, "content", "") if hasattr(msg, "content") else ""
+                content = content[:100] if content else ""
+                if msg_type == "human":
+                    role = "user"
+                elif msg_type == "ai":
+                    role = "assistant"
 
             if role == "user":
                 turn_examples.append(f"Turn {turn_num}: User asked '{content}...'")
@@ -1299,6 +1478,12 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
             "- DO NOT just echo retrieved chunks - synthesize with conversation context and reference specific turns\n"
             "- Progress the conversation forward by connecting current query to previous discussion using turn numbers\n"
         )
+
+        # Add context management explanation for long conversations (teaching moment)
+        if current_turn >= 15:
+            context_note = _build_context_management_explanation(chat_history, current_turn)
+            if context_note:
+                extra_instructions.append(context_note)
 
         # Phase 4: Add synthesis instructions
         synthesis_instructions = (
@@ -1605,7 +1790,8 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
 
     if not is_menu_option_two:
         # #region agent log
-        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        log_path = _get_debug_log_path()
+        with open(log_path, 'a') as f:
             import json
             f.write(json.dumps({
                 "location": "stage5_generation_nodes.py:1380",
@@ -1627,7 +1813,8 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
 
     if is_menu_option_two:
         # #region agent log
-        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        log_path = _get_debug_log_path()
+        with open(log_path, 'a') as f:
             import json
             f.write(json.dumps({
                 "location": "stage5_generation_nodes.py:1242",
@@ -1648,7 +1835,8 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         logger.info("Menu option 2 (orchestration layer) detected - generating explanation")
 
         # #region agent log
-        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        log_path = _get_debug_log_path()
+        with open(log_path, 'a') as f:
             import json
             f.write(json.dumps({
                 "location": "stage5_generation_nodes.py:1296",
@@ -1826,28 +2014,52 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         _log_instruction_preview(f"{attempt_label}-attempt-{attempt_counter}", instruction_suffix)
 
     # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-        import json
-        f.write(json.dumps({
-            "location": "stage5_generation_nodes.py:1599",
-            "message": "Before LLM generation call",
-            "data": {
-                "is_menu_option_two": is_menu_option_two,
-                "is_menu_option_one": is_menu_option_one,
-                "query": query[:100] if query else None,
-                "retrieved_chunks_count": len(retrieved_chunks),
-                "chat_history_len": len(chat_history),
-                "selected_model": selected_model,
-                "has_extra_instructions": bool(instruction_suffix)
-            },
-            "timestamp": int(time.time() * 1000),
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "A"
-        }) + "\n")
+    try:
+        log_path = _get_debug_log_path()
+        with open(log_path, 'a') as f:
+            import json
+            f.write(json.dumps({
+                "location": "stage5_generation_nodes.py:1599",
+                "message": "Before LLM generation call",
+                "data": {
+                    "is_menu_option_two": is_menu_option_two,
+                    "is_menu_option_one": is_menu_option_one,
+                    "query": query[:100] if query else None,
+                    "retrieved_chunks_count": len(retrieved_chunks),
+                    "chat_history_len": len(chat_history),
+                    "selected_model": selected_model,
+                    "has_extra_instructions": bool(instruction_suffix)
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "A"
+            }) + "\n")
+    except: pass
     # #endregion
 
     try:
+        # #region agent log - Before generate_contextual_response call
+        try:
+            log_path = _get_debug_log_path()
+            with open(log_path, 'a') as f:
+                import json
+                f.write(json.dumps({
+                    "location": "stage5_generation_nodes.py:1914",
+                    "message": "Before generate_contextual_response call",
+                    "data": {
+                        "query": query[:50] if query else None,
+                        "chat_history_len": len(chat_history) if chat_history else 0,
+                        "selected_model": selected_model
+                    },
+                    "timestamp": int(time.time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "ALL"
+                }) + "\n")
+        except: pass
+        # #endregion
+
         answer = rag_engine.response_generator.generate_contextual_response(
             query=query,
             context=retrieved_chunks,
@@ -1857,44 +2069,80 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
             model_name=selected_model  # Pass selected model
         )
 
-        # #region agent log
-        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-            import json
-            f.write(json.dumps({
-                "location": "stage5_generation_nodes.py:1608",
-                "message": "After LLM generation call - success",
-                "data": {
-                    "answer_len": len(answer) if answer else 0,
-                    "answer_preview": answer[:200] if answer else None,
-                    "is_menu_option_two": is_menu_option_two
-                },
-                "timestamp": int(time.time() * 1000),
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "A"
-            }) + "\n")
+        # #region agent log - After generate_contextual_response call
+        try:
+            log_path = _get_debug_log_path()
+            with open(log_path, 'a') as f:
+                import json
+                f.write(json.dumps({
+                    "location": "stage5_generation_nodes.py:1945",
+                    "message": "After generate_contextual_response call",
+                    "data": {
+                        "answer_type": type(answer).__name__ if answer else None,
+                        "answer_is_none": answer is None,
+                        "answer_len": len(answer) if answer and isinstance(answer, str) else 0,
+                        "answer_preview": str(answer)[:200] if answer else None,
+                        "is_menu_option_two": is_menu_option_two,
+                        "is_fallback_message": "I'm having trouble" in str(answer) if answer else False
+                    },
+                    "timestamp": int(time.time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "A,B"
+                }) + "\n")
+        except Exception as log_err:
+            import sys
+            print(f"DEBUG LOG FAILED after call: {log_err}", file=sys.stderr, flush=True)
         # #endregion
 
     except Exception as e:
+        import traceback
+        import sys
+        error_traceback = traceback.format_exc()
         logger.error(f"LLM generation failed: {e}")
+        # CRITICAL: Print to stderr immediately - this will show in terminal
+        print(f"\n{'='*60}\nCRITICAL ERROR IN GENERATION (stage5):\nType: {type(e).__name__}\nMessage: {str(e)}\nTraceback:\n{error_traceback}\n{'='*60}\n", file=sys.stderr, flush=True)
 
-        # #region agent log
-        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-            import json
-            f.write(json.dumps({
-                "location": "stage5_generation_nodes.py:1644",
-                "message": "LLM generation failed with exception",
-                "data": {
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "is_menu_option_two": is_menu_option_two,
-                    "is_menu_option_one": is_menu_option_one
-                },
-                "timestamp": int(time.time() * 1000),
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "B"
-            }) + "\n")
+        # #region agent log - Multiple fallback strategies
+        error_data = {
+            "location": "stage5_generation_nodes.py:1878",
+            "message": "LLM generation failed with exception (outer handler)",
+            "data": {
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "error_traceback": error_traceback,
+                "query": query[:100] if query else None,
+                "selected_model": selected_model,
+                "retrieved_chunks_count": len(retrieved_chunks) if retrieved_chunks else 0,
+                "is_menu_option_two": is_menu_option_two,
+                "is_menu_option_one": is_menu_option_one,
+                "has_instruction_suffix": bool(instruction_suffix),
+                "instruction_suffix_len": len(instruction_suffix) if instruction_suffix else 0
+            },
+            "timestamp": int(time.time() * 1000),
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": "A,B,C,D,E,F"
+        }
+
+        # Try file logging first
+        try:
+            log_path = _get_debug_log_path()
+            with open(log_path, 'a') as f:
+                import json
+                f.write(json.dumps(error_data) + "\n")
+        except Exception as log_err:
+            # Fallback 1: Try stderr (always works)
+            try:
+                import json
+                print(f"\n=== DEBUG LOG (stderr fallback) ===\n{json.dumps(error_data, indent=2)}\n=== END DEBUG LOG ===\n", file=sys.stderr, flush=True)
+            except:
+                pass
+            # Fallback 2: Standard logger with full details
+            logger.error(f"Failed to write debug log: {log_err}")
+            logger.error(f"Original error: {e}")
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"Full traceback:\n{error_traceback}")
         # #endregion
 
         # Specific handling for menu option 2
@@ -2083,7 +2331,8 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         logger.debug("Applied post-generation first-person enforcement for menu option 2")
 
         # #region agent log
-        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        log_path = _get_debug_log_path()
+        with open(log_path, 'a') as f:
             import json
             f.write(json.dumps({
                 "location": "stage5_generation_nodes.py:1766",

@@ -23,10 +23,12 @@ Design Principles Applied:
 
 import re
 import logging
+import time
 from typing import Dict, Any
 
 # Import NEW TypedDict state (Phase 3A migration)
 from assistant.state.conversation_state import ConversationState
+from assistant.flows.node_logic.util_edge_case_detection import detect_edge_cases
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +200,11 @@ def _is_ambiguous_query(query: str) -> tuple[bool, dict | None]:
     Ambiguous queries are too broad and should prompt Portfolia to ask
     clarifying questions about what specific aspect the user wants to explore.
 
+    Only flags queries that are:
+    - Exactly the ambiguous word (e.g., "architecture")
+    - Very short queries that are just the ambiguous word with minimal context
+    - Does NOT flag specific questions that happen to contain the word (e.g., "architecture adapts to customer support")
+
     Args:
         query: Original user query
 
@@ -209,13 +216,31 @@ def _is_ambiguous_query(query: str) -> tuple[bool, dict | None]:
     lowered = query.lower().strip()
     clean_query = re.sub(r'[^\w\s]', '', lowered)
 
+    # Split into words for more precise matching
+    words = clean_query.split()
+    word_count = len(words)
+
+    # Exact match (single word or very short phrase)
     if clean_query in AMBIGUOUS_QUERIES:
         return True, AMBIGUOUS_QUERIES[clean_query]
 
-    # Also check if query is a longer phrase that matches
-    for pattern, config in AMBIGUOUS_QUERIES.items():
-        if pattern in lowered:
-            return True, config
+    # Check for ambiguous patterns, but only if query is short (1-3 words)
+    # This prevents "architecture adapts to customer support" from being flagged
+    # while still catching "show me architecture" or "architecture overview"
+    if word_count <= 3:
+        for pattern, config in AMBIGUOUS_QUERIES.items():
+            # Only match if pattern is the main focus (first word or standalone)
+            if pattern == words[0] or pattern == clean_query:
+                return True, config
+
+    # For longer queries, only flag if it's a very generic pattern match
+    # (e.g., "how does architecture work" but not "architecture adapts to customer support")
+    if word_count > 3:
+        # Check for very generic ambiguous patterns that indicate broad questions
+        generic_patterns = ["how does this work", "show me how you work", "how do you work"]
+        for pattern in generic_patterns:
+            if pattern in lowered:
+                return True, AMBIGUOUS_QUERIES.get(pattern)
 
     return False, None
 
@@ -317,6 +342,33 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         # DEBUG: Verify state update will propagate
         logger.info(f"✅ Menu choice SET in update dict: menu_choice={menu_choice}, query_type={update['query_type']}")
         return update  # Return partial update - LangGraph will merge into state
+
+    # Track query timestamp for rapid-fire detection
+    session_memory = state.setdefault("session_memory", {})
+    query_timestamps = session_memory.setdefault("query_timestamps", [])
+    query_timestamps.append(time.time())
+    # Keep only last 10 timestamps to avoid memory bloat
+    if len(query_timestamps) > 10:
+        query_timestamps[:] = query_timestamps[-10:]
+    session_memory["query_timestamps"] = query_timestamps
+
+    # PRIORITY: Detect edge cases BEFORE other classification
+    # Edge cases need early detection to provide conversational responses
+    edge_cases = detect_edge_cases(state)
+    if edge_cases.get("edge_case_type"):
+        # Edge case detected - flag it and return early
+        update = {
+            "edge_case_detected": True,
+            "edge_case_type": edge_cases["edge_case_type"],
+            **edge_cases  # Include all edge case flags and metadata
+        }
+
+        # Store in session memory for meta-teaching context (session_memory already initialized above)
+        session_memory["last_edge_case"] = edge_cases["edge_case_type"]
+        session_memory["last_edge_case_query"] = query
+
+        logger.info(f"Edge case detected: {edge_cases['edge_case_type']} for query: '{query[:50]}...'")
+        return update  # Return early, skip normal classification
 
     chat_history = state.get("chat_history", [])
     # Count user messages (support both dict format and LangGraph message objects)

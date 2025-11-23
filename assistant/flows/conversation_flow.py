@@ -279,8 +279,27 @@ def run_conversation_flow(
         # Append user query if present and not already in history
         if state.get("query"):
             # Check if this query was already added (avoid duplicates)
-            last_user_msg = chat_history[-1] if chat_history and chat_history[-1].get("role") == "user" else None
-            if not last_user_msg or last_user_msg.get("content") != state["query"]:
+            # Support both dict format and LangChain message objects
+            last_user_msg = None
+            if chat_history:
+                last_msg = chat_history[-1]
+                # Check if last message is a user message (both formats)
+                if isinstance(last_msg, dict):
+                    if last_msg.get("role") == "user" or last_msg.get("type") == "human":
+                        last_user_msg = last_msg
+                elif hasattr(last_msg, "type"):
+                    if last_msg.type == "human" or getattr(last_msg, "role", None) == "user":
+                        last_user_msg = last_msg
+
+            # Check if query content matches (avoid duplicates)
+            query_matches = False
+            if last_user_msg:
+                if isinstance(last_user_msg, dict):
+                    query_matches = last_user_msg.get("content") == state["query"]
+                elif hasattr(last_user_msg, "content"):
+                    query_matches = last_user_msg.content == state["query"]
+
+            if not query_matches:
                 chat_history.append({"role": "user", "content": state["query"]})
         # Append assistant answer
         chat_history.append({"role": "assistant", "content": state["answer"]})

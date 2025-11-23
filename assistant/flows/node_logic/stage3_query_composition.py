@@ -147,6 +147,20 @@ def compose_query(state: ConversationState) -> ConversationState:
                     composed = f"{composed} {' '.join(topics[-2:])} detailed"
                     logger.debug("Enhanced query with pattern: general_to_specific")
 
+        # Special handling for enterprise adaptation queries
+        # Detect queries about adapting architecture to use cases (customer support, enterprise, etc.)
+        base_lower = base_query.lower()
+        if "adapt" in base_lower or "adapts" in base_lower:
+            # Add enterprise adaptation keywords to improve retrieval
+            if "customer support" in base_lower or "support" in base_lower:
+                if "enterprise adaptation" not in composed.lower() and "customer support" not in composed.lower():
+                    composed = f"{composed} enterprise adaptation customer support chatbot use case"
+                    logger.debug("Enhanced query with enterprise adaptation pattern for customer support")
+            elif "enterprise" in base_lower:
+                if "enterprise adaptation" not in composed.lower():
+                    composed = f"{composed} enterprise adaptation patterns deployment customization"
+                    logger.debug("Enhanced query with enterprise adaptation pattern")
+
         # Enhance query with previous topics for progressive inference
         # Include last 2-3 topics to maintain context without query bloat
         if topics:
