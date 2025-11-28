@@ -151,19 +151,33 @@ def compose_query(state: ConversationState) -> ConversationState:
         # Detect queries about adapting architecture to use cases (customer support, enterprise, etc.)
         base_lower = base_query.lower()
         if "adapt" in base_lower or "adapts" in base_lower:
-            # Add enterprise adaptation keywords to improve retrieval
+            # PRESERVE original terms + add enhancement (don't replace)
+            # Extract key terms from original query to ensure they're preserved
+            original_key_terms = []
             if "customer support" in base_lower or "support" in base_lower:
-                if "enterprise adaptation" not in composed.lower() and "customer support" not in composed.lower():
-                    composed = f"{composed} enterprise adaptation customer support chatbot use case"
-                    logger.debug("Enhanced query with enterprise adaptation pattern for customer support")
+                original_key_terms.extend(["customer", "support", "adapt"])
+                if "customer support" not in composed.lower():
+                    composed = f"{composed} customer support adaptation enterprise chatbot use case"
+                    logger.debug("Enhanced query with customer support adaptation")
             elif "enterprise" in base_lower:
+                original_key_terms.extend(["enterprise", "adapt"])
                 if "enterprise adaptation" not in composed.lower():
                     composed = f"{composed} enterprise adaptation patterns deployment customization"
                     logger.debug("Enhanced query with enterprise adaptation pattern")
 
+            # VALIDATION: Ensure original key terms are preserved
+            if original_key_terms:
+                missing_terms = [term for term in original_key_terms
+                                if term not in composed.lower()]
+                if missing_terms:
+                    logger.warning(f"Composed query missing original terms: {missing_terms}. Adding them back.")
+                    composed = f"{composed} {' '.join(missing_terms)}"
+
         # Enhance query with previous topics for progressive inference
         # Include last 2-3 topics to maintain context without query bloat
+        # SCALABILITY: Only use last 3 topics (bounded memory for indefinite conversations)
         if topics:
+            # Use sliding window: last 3 topics only (scalable for 100+ turns)
             recent_topics = topics[-3:] if len(topics) > 3 else topics
             topic_context = " ".join(recent_topics)
             # Only add topics if they're not already in composed query

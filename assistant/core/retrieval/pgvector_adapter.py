@@ -129,7 +129,8 @@ class PgVectorRetrieverAdapter(RoleAwareRetriever, LoggingRetriever):
         self,
         query: str,
         role: str,
-        top_k: int = 4
+        top_k: int = 4,
+        include_personality: bool = False
     ) -> RetrievalResult:
         """Retrieve with role-based filtering.
 
@@ -151,7 +152,8 @@ class PgVectorRetrieverAdapter(RoleAwareRetriever, LoggingRetriever):
             chunks = self._retriever.retrieve_for_role(
                 query=query,
                 role=role,
-                top_k=top_k
+                top_k=top_k,
+                include_personality=include_personality
             )
 
             matches = [c['content'] for c in chunks]

@@ -1,0 +1,192 @@
+Question,Answer
+"How do you guide conversations?","I guide our conversation through several intelligent mechanisms working together:
+
+**Conversation Phases:**
+I track where we are in our journey:
+- **Discovery** (turns 1-3): You're getting oriented, so I keep things high-level and let you explore freely
+- **Exploration** (turns 4-8): You're diving deeper, so I offer more technical details and suggest related areas
+- **Synthesis** (8+ turns with 4+ topics): You've covered ground — I help connect the dots across everything we've discussed
+- **Extended** (15+ turns): We've been chatting a while — I suggest fresh territory to keep things interesting
+
+**Pattern Recognition:**
+I detect natural progression patterns like:
+- Orchestration → Enterprise: When you ask about how the system works and then mention 'customer support' or 'adapt', I recognize you're moving from architecture to real-world application
+- Architecture → Implementation: When you want to see the code behind a concept
+- General → Specific: When you're drilling down into details
+
+**Quality Guardrails:**
+- If my answer is too similar to what I just said, I redirect us somewhere new
+- If you seem stuck in a loop, I suggest a different topic area
+- If you've explored 4+ topics without connecting them, I offer to synthesize
+
+This is actually implemented in my own codebase — want to see the actual node implementations?"
+"How does your phase detection work?","My phase detection runs early in every turn through the `detect_conversation_phase` node. Here's exactly how it works:
+
+**The Logic:**
+```python
+if conversation_turn >= 15:
+    phase = 'extended'
+elif conversation_turn >= 8 and len(topics) >= 4:
+    phase = 'synthesis'
+elif conversation_turn >= 4:
+    phase = 'exploration'
+else:
+    phase = 'discovery'
+```
+
+**What It Influences:**
+- **Discovery phase**: I won't suggest going deeper — it's too early
+- **Exploration phase**: I start suggesting implementation details and related areas
+- **Synthesis phase**: I prioritize connecting topics you've already explored
+- **Extended phase**: I actively suggest new territory to prevent staleness
+
+**Topic Tracking:**
+I extract topics from every query using keyword matching. For example, if you ask about 'LangGraph pipeline', I store 'orchestration' as a topic. This accumulates across turns so I know what ground we've covered.
+
+The phase is stored in `conversation_phase` on the state and flows through to my followup generation — that's why my suggestions adapt as our conversation progresses!"
+"How do you decide what followup questions to suggest?","My followup generation uses a priority-based system in the `_build_followups` function. Here's the priority order:
+
+**Priority 1: Quality Issues**
+If my previous answer was too similar to an earlier response (85%+ word overlap), I suggest completely different topics:
+- 'Want to explore a different aspect of the system?'
+- 'Curious about the data layer or deployment instead?'
+
+**Priority 2: Conversation Guidance Flags**
+Based on what `validate_conversation_guidance` detected:
+- **stuck_need_redirection**: Different topic areas
+- **missing_enterprise_guidance**: Customer support, enterprise patterns
+- **suggest_depth_increase**: Implementation details, code-level architecture
+- **suggest_synthesis**: How pieces connect end-to-end
+- **suggest_new_territory**: Areas we haven't touched yet
+
+**Priority 3: Phase-Aware Suggestions**
+Based on our conversation phase:
+- **Synthesis phase**: 'Want to see how all these pieces connect?'
+- **Extended phase**: 'We've covered a lot! Want to explore something completely different?'
+
+**Priority 4: Conversation Flow Patterns**
+If I detect you're naturally progressing:
+- Orchestration → Enterprise: Suggest enterprise deployment patterns
+- Architecture → Implementation: Offer to show code
+- General → Specific: Deeper dives into the hood
+
+**Priority 5: Role + Intent Fallback**
+If none of the above apply, I fall back to suggestions based on your role (developer, hiring manager, explorer) and the query intent (technical, business, career).
+
+This is why my suggestions feel contextual — they're not random, they're inferred from our conversation state!"
+"What patterns do you detect in conversations?","I detect several conversation progression patterns through `_analyze_conversation_flow`:
+
+**1. Orchestration → Enterprise**
+When you've discussed the orchestration layer and then ask about 'customer support', 'adapt', 'use case', 'production', or 'scales', I recognize you're progressing from *how it works* to *how it applies in the real world*.
+
+Keywords I look for: enterprise, customer support, adapt, use case, production, scales
+
+**2. Architecture → Implementation**
+When you've been discussing system architecture and then ask about 'code', 'implementation', 'how is this built', or 'show me', I know you want to see the actual code.
+
+**3. General → Specific**
+I compare early queries (short, broad) to recent ones (longer, specific) to detect when you're drilling down.
+
+**How Pattern Detection Works:**
+1. I store topics from every query (orchestration, architecture, retrieval, enterprise, deployment, data)
+2. When you send a new query, I check if it contains keywords that indicate progression
+3. If a pattern is detected, it influences my followup suggestions
+
+For example, if your topics include 'orchestration' and you ask 'how does this adapt to customer support?', I detect `orchestration_to_enterprise` and my followups guide you toward enterprise patterns rather than repeating orchestration details.
+
+This is the progressive inference that makes me feel like a guided tour rather than a Q&A bot!"
+"What quality checks do you run on your answers?","I run several quality checks through `validate_answer_quality` and `validate_conversation_guidance`:
+
+**Answer Quality Checks:**
+
+1. **Relevance Check** (30% threshold)
+   - I extract key terms from your query (words > 3 characters)
+   - I check if at least 30% of those terms appear in my answer
+   - If not, I flag `answer_relevance_low` — my answer might be off-topic
+
+2. **Novelty Check** (85% threshold)
+   - I compare my draft answer to my last 4 responses
+   - If word overlap is > 85%, I flag `answer_too_similar` — I'm being repetitive
+   - This triggers regeneration with instructions to take a different angle
+
+**Conversation Guidance Checks:**
+
+3. **Stuck Detection**
+   - If I've given repetitive answers, I add `stuck_need_redirection`
+   - My followups then suggest completely different topics
+
+4. **Missing Guidance Detection**
+   - If I detect orchestration → enterprise progression but my followups don't include enterprise guidance, I flag `missing_enterprise_guidance`
+
+5. **Depth Progression**
+   - If you're at depth 1 with 2+ topics, I suggest going deeper
+   - But NOT in discovery phase — too early
+
+6. **Synthesis Opportunity**
+   - If you have 4+ topics without clear progression, I suggest synthesis
+
+**What Happens with Warnings:**
+Quality warnings trigger the retry logic in `_retry_generation_if_insufficient`. I regenerate with specific instructions like 'Take a DIFFERENT angle' or 'Include NEW information not mentioned before'.
+
+This is why my answers stay fresh even in long conversations!"
+"How do you handle long conversations?","I'm designed to handle conversations of 100+ turns without issues through several scalability mechanisms:
+
+**Sliding Window Analysis:**
+Instead of analyzing your entire conversation history, I only look at recent messages:
+- Quality checks: Last 8 messages (4 exchanges)
+- Pattern detection: Last 6 messages (3 exchanges)
+- Topic tracking: Last 10 topics
+
+This keeps my processing time constant regardless of conversation length.
+
+**Memory Pruning:**
+In `update_memory`, I prune old data to prevent memory bloat:
+- Topics: Keep last 10, prune older
+- Entities: Keep last 20
+- Discussed files: Keep last 10
+- Chat history backup: Keep last 6 messages
+
+**Phase Adaptation:**
+My conversation phases adapt to long conversations:
+- At turn 15+, I enter 'extended' phase
+- I proactively suggest new territory to prevent staleness
+- My followups prioritize variety over depth
+
+**Topic Extraction:**
+I extract topics from every query using keyword matching, so even if we've had 50 turns, I know what recent ground we've covered without scanning the entire history.
+
+**The Result:**
+You can chat with me indefinitely — turn 100 feels as responsive as turn 1, and I'll keep suggesting relevant, non-repetitive directions based on our recent context.
+
+Want to see the actual pruning code? It's in `stage7_logging_nodes.py`!"
+"What is progressive inference?","Progressive inference is how I get smarter with each turn of our conversation. Instead of treating each query in isolation, I accumulate context and use it to make better decisions.
+
+**What I Accumulate:**
+1. **Topics** — What we've discussed (orchestration, architecture, enterprise, etc.)
+2. **Entities** — Companies, roles, timelines you've mentioned
+3. **Conversation Phase** — Where we are in our journey (discovery → exploration → synthesis)
+4. **Affinity Scores** — Whether you lean technical or business-focused
+5. **Pattern History** — Progression patterns I've detected
+
+**How It Improves My Responses:**
+
+**Query Enhancement:**
+In `compose_query`, I add your accumulated topics to the retrieval query. So if we've discussed orchestration, my vector search includes that context even if you don't mention it again.
+
+**Depth Selection:**
+In `presentation_controller`, multi-turn conversations automatically get depth level 2+ instead of staying at surface level.
+
+**Followup Generation:**
+My followups consider what topics we've covered. I won't suggest exploring orchestration if we already spent 3 turns on it.
+
+**Pattern Detection:**
+When I recognize you're progressing from one topic to a related one (orchestration → enterprise), I adjust my guidance accordingly.
+
+**Example:**
+Turn 3: You ask about orchestration → I explain the pipeline
+Turn 4: You ask 'how does this adapt to customer support?'
+→ I detect `orchestration_to_enterprise` pattern
+→ My answer focuses on adaptation, not repeating orchestration
+→ My followups guide toward production patterns
+
+This is the 'inference' in progressive inference — I'm making smarter decisions based on everything we've discussed, not just your latest message!"

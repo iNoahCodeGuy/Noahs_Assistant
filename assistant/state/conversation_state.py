@@ -173,6 +173,10 @@ class ConversationState(TypedDict, total=False):
     depth_level: int
     """Presentation depth chosen by depth_controller (1=overview, 2=guided, 3=deep dive)."""
 
+    conversation_phase: str
+    """Current conversation phase: 'discovery' (turns 1-3), 'exploration' (turns 4-8),
+    'synthesis' (turns 8-15 with 4+ topics), 'extended' (turns 15+)."""
+
     detail_strategy: str
     """Explanation of why the current depth level was selected (for analytics/QA)."""
 

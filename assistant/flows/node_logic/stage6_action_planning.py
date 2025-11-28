@@ -81,6 +81,7 @@ def plan_actions(state: ConversationState) -> ConversationState:
     _detect_hiring_signals(state)  # Scan for "we're hiring", "looking for engineers"
     _check_explicit_resume_request(state)  # Detect "send me your resume"
     _handle_direct_requests(state)  # Handle resume/LinkedIn/contact requests
+    _handle_edge_case_meta_teaching(state)  # Offer meta-teaching for edge cases
 
     # ============================================================================
     # PHASE 2: ROLE-SPECIFIC - Main action planning
@@ -151,6 +152,31 @@ def _handle_direct_requests(state: ConversationState) -> None:
     if data_requested:
         state["pending_actions"].append({"type": "render_live_analytics"})
         state["data_display_requested"] = True
+
+
+def _handle_edge_case_meta_teaching(state: ConversationState) -> None:
+    """Offer meta-teaching explanation for edge cases (technical users only).
+
+    When an edge case is detected, offer to explain how the detection works
+    to technical users. This turns edge cases into teaching moments.
+
+    Args:
+        state: Conversation state with edge_case_detected flag
+    """
+    if not state.get("edge_case_detected"):
+        return
+
+    # Only offer to technical users
+    role_mode = state.get("role_mode", "")
+    is_technical = role_mode in ["software_developer", "hiring_manager_technical"]
+
+    if is_technical:
+        edge_case_type = state.get("edge_case_type", "edge_case")
+        state["pending_actions"].append({
+            "type": "offer_edge_case_meta_teaching",
+            "edge_case_type": edge_case_type
+        })
+        logger.info(f"Meta-teaching offer added for edge case: {edge_case_type}")
 
 
 # ==============================================================================

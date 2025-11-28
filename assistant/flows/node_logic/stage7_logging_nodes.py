@@ -258,11 +258,35 @@ def update_memory(state: ConversationState) -> ConversationState:
     """
     memory = state.setdefault("session_memory", {})
 
-    # Store topics
+    # Store topics with pruning for scalability (100+ turns)
     topics = memory.setdefault("topics", [])
     intent = state.get("query_intent")
     if intent and intent not in topics:
         topics.append(intent)
+
+    # Extract topic keywords from query for natural language queries
+    # This ensures topics accumulate even for non-menu queries
+    query = state.get("query", "").lower()
+    topic_keywords = {
+        "orchestration": ["orchestration", "langgraph", "pipeline", "flow", "nodes"],
+        "architecture": ["architecture", "system", "design", "structure", "how it works"],
+        "retrieval": ["retrieval", "rag", "vector", "embedding", "search", "pgvector"],
+        "enterprise": ["enterprise", "customer support", "adapt", "production", "use case"],
+        "deployment": ["deployment", "vercel", "production", "deploy", "hosting"],
+        "data": ["data", "supabase", "database", "storage", "analytics"],
+    }
+
+    for topic, keywords in topic_keywords.items():
+        if any(kw in query for kw in keywords) and topic not in topics:
+            topics.append(topic)
+            logger.info(f"📝 Extracted topic from query: {topic}")
+
+    # SCALABILITY: Prune old topics (keep last 10 only)
+    # This ensures bounded memory usage for indefinite conversations
+    if len(topics) > 10:
+        pruned_count = len(topics) - 10
+        topics[:] = topics[-10:]
+        logger.debug(f"Pruned {pruned_count} old topics for memory efficiency (kept last 10)")
 
     # Extract topics from menu selections for progressive inference
     query_type = state.get("query_type")
@@ -426,6 +450,7 @@ def update_memory(state: ConversationState) -> ConversationState:
 
     # Backup chat_history to session_memory for persistence
     # This ensures conversation context persists even if frontend doesn't send it back
+    # SCALABILITY: Only store last 6 messages (bounded for 100+ turns)
     if chat_history:
         # Store last 6 messages (3 exchanges) for context continuity
         memory["chat_history_backup"] = chat_history[-6:]
@@ -476,7 +501,50 @@ def update_memory(state: ConversationState) -> ConversationState:
     # Log success criteria status
     _log_success_criteria(state, memory)
 
+    # SCALABILITY: Comprehensive memory pruning for indefinite conversations (100+ turns)
+    # This ensures bounded memory usage regardless of conversation length
+    _prune_session_memory(memory)
+
     return state
+
+
+def _prune_session_memory(memory: Dict) -> None:
+    """Prune session memory to prevent unbounded growth in long conversations.
+
+    Implements sliding window approach for all memory structures to ensure
+    conversations can continue indefinitely (100+ turns) without memory bloat.
+
+    Pruning strategy:
+    - Topics: Keep last 10 (already done inline)
+    - Discussed files: Keep last 10 (already done inline)
+    - Retrieval similarity history: Keep last 10 (already done inline)
+    - Entities: Keep last 20 (prune oldest)
+    - Chat history backup: Keep last 6 messages (already done inline)
+
+    This function consolidates all pruning logic for maintainability.
+
+    Args:
+        memory: Session memory dict to prune
+    """
+    # Prune entities (keep last 20)
+    entities = memory.get("entities", {})
+    if len(entities) > 20:
+        # Convert to list of tuples, keep last 20, convert back to dict
+        entity_items = list(entities.items())
+        pruned_count = len(entity_items) - 20
+        memory["entities"] = dict(entity_items[-20:])
+        logger.debug(f"Pruned {pruned_count} old entities for memory efficiency (kept last 20)")
+
+    # Note: Topics, discussed_files, retrieval_similarity_history, and chat_history_backup
+    # are already pruned inline in update_memory function
+
+    logger.debug(
+        f"Memory pruning complete: "
+        f"topics={len(memory.get('topics', []))}, "
+        f"entities={len(memory.get('entities', {}))}, "
+        f"discussed_files={len(memory.get('discussed_files', []))}, "
+        f"chat_backup={len(memory.get('chat_history_backup', []))}"
+    )
 
 
 def _log_success_criteria(state: ConversationState, session_memory: Dict) -> None:

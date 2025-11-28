@@ -297,7 +297,8 @@ class PgVectorRetriever:
         query: str,
         role: str,
         top_k: int = 3,
-        threshold: Optional[float] = None
+        threshold: Optional[float] = None,
+        include_personality: bool = False
     ) -> List[Dict[str, Any]]:
         """Retrieve with role-specific filtering.
 
@@ -348,6 +349,17 @@ class PgVectorRetriever:
         else:
             # No filtering, use as-is
             filtered = candidates
+
+        # Retrieve personality context if requested
+        if include_personality:
+            personality_query = "What is Noah's personality like? How does Noah approach problems?"
+            personality_chunks = self.retrieve(personality_query, top_k=2, threshold=threshold)
+            if personality_chunks:
+                personality_filtered = self._filter_personality(personality_chunks)
+                # Add personality chunks to results (limit to 2)
+                filtered.extend(personality_filtered[:2])
+                # Re-sort by similarity if needed
+                filtered.sort(key=lambda c: c.get('_boosted_similarity', c.get('similarity', 0)), reverse=True)
 
         # Return top_k after filtering
         return filtered[:top_k]
@@ -427,6 +439,33 @@ class PgVectorRetriever:
 
             chunk['_casual_score'] = casual_score
             chunk['_boosted_similarity'] = chunk['similarity'] + (casual_score * 0.03)
+            scored.append(chunk)
+
+        scored.sort(key=lambda c: c['_boosted_similarity'], reverse=True)
+        return scored
+
+    def _filter_personality(self, chunks: List[Dict]) -> List[Dict]:
+        """Boost personality-related content when relevant.
+
+        Personality indicators:
+        - Personality traits, communication style, work style
+        - Motivations, values, approach to problems
+        - How personality shows in code/work
+        """
+        personality_keywords = [
+            'personality', 'trait', 'characteristic', 'motivation',
+            'approach', 'style', 'value', 'preference', 'philosophy',
+            'thoughtful', 'playful', 'systematic', 'authentic',
+            'teaching', 'enterprise', 'work style', 'cultural fit'
+        ]
+
+        scored = []
+        for chunk in chunks:
+            content_lower = chunk['content'].lower()
+            personality_score = sum(1 for kw in personality_keywords if kw in content_lower)
+
+            chunk['_personality_score'] = personality_score
+            chunk['_boosted_similarity'] = chunk['similarity'] + (personality_score * 0.02)
             scored.append(chunk)
 
         scored.sort(key=lambda c: c['_boosted_similarity'], reverse=True)

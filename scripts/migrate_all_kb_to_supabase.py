@@ -1,9 +1,10 @@
+# -*- coding: utf-8 -*-
 """Enhanced data migration script for all Noah's AI Assistant knowledge bases.
 
 This script migrates ALL knowledge bases to Supabase:
-- career_kb.csv → Career history, achievements, experience
-- technical_kb.csv → Technical implementations, RAG details, system design
-- architecture_kb.csv → System architecture diagrams, code examples
+- career_kb.csv -> Career history, achievements, experience
+- technical_kb.csv -> Technical implementations, RAG details, system design
+- architecture_kb.csv -> System architecture diagrams, code examples
 
 Usage:
     python scripts/migrate_all_kb_to_supabase.py
@@ -23,7 +24,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from openai import OpenAI
-from src.config.supabase_config import get_supabase_client, supabase_settings
+from assistant.config.supabase_config import get_supabase_client, supabase_settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,6 +55,16 @@ KNOWLEDGE_BASES = {
         'path': 'data/architecture_kb.csv',
         'description': 'System architecture, diagrams, code examples',
         'doc_id': 'architecture_kb'
+    },
+    'personality_kb': {
+        'path': 'data/personality_kb.csv',
+        'description': 'Personality traits, values, work style',
+        'doc_id': 'personality_kb'
+    },
+    'conversation_guidance_kb': {
+        'path': 'data/conversation_guidance_kb.csv',
+        'description': 'How Portfolia guides conversations, phase detection, pattern recognition',
+        'doc_id': 'conversation_guidance_kb'
     }
 }
 

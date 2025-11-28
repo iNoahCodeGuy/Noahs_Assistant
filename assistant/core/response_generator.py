@@ -16,9 +16,23 @@ from __future__ import annotations
 
 import logging
 import re
+import time
+import os
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from .langchain_compat import RetrievalQA, PromptTemplate, ChatOpenAI
+
+# Get debug log path - try multiple locations
+def _get_debug_log_path():
+    """Get the debug log file path, trying multiple locations."""
+    # Always use absolute path and ensure directory exists
+    abs_path = Path('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log')
+    try:
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass  # If mkdir fails, try anyway
+    return str(abs_path)
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +144,34 @@ Please provide a helpful and accurate answer based on the information provided. 
         extra_instructions: str = None,
         model_name: str = None
     ) -> str:
+        # #region agent log - Entry point
+        import sys
+        try:
+            log_path = _get_debug_log_path()
+            log_entry = {
+                "location": "response_generator.py:145",
+                "message": "generate_contextual_response ENTRY",
+                "data": {
+                    "query": query[:50] if query else None,
+                    "context_count": len(context) if context else 0,
+                    "chat_history_len": len(chat_history) if chat_history else 0,
+                    "role": role,
+                    "model_name": model_name
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "ALL"
+            }
+            with open(log_path, 'a') as f:
+                import json
+                f.write(json.dumps(log_entry) + "\n")
+            print(f"DEBUG: Logged to {log_path}", file=sys.stderr, flush=True)
+        except Exception as log_err:
+            print(f"DEBUG LOG FAILED: {log_err}", file=sys.stderr, flush=True)
+            import traceback
+            print(f"DEBUG LOG TRACEBACK: {traceback.format_exc()}", file=sys.stderr, flush=True)
+        # #endregion
         """Generate response with explicit context and role awareness.
 
         Args:
@@ -195,28 +237,289 @@ Please provide a helpful and accurate answer based on the information provided. 
             if cached:
                 return cached
 
-        prompt = self._build_role_prompt(query, context_str, role, chat_history, extra_instructions)
+        # #region agent log - Before prompt building
+        try:
+            log_path = _get_debug_log_path()
+            with open(log_path, 'a') as f:
+                import json
+                chat_history_sample = None
+                if chat_history and len(chat_history) > 0:
+                    first_msg = chat_history[0]
+                    chat_history_sample = {
+                        "has_role_key": "role" in first_msg if isinstance(first_msg, dict) else False,
+                        "has_type_key": "type" in first_msg if isinstance(first_msg, dict) else False,
+                        "first_msg_keys": list(first_msg.keys())[:5] if isinstance(first_msg, dict) else None,
+                        "first_msg_type": type(first_msg).__name__
+                    }
+                f.write(json.dumps({
+                    "location": "response_generator.py:219",
+                    "message": "Before _build_role_prompt call",
+                    "data": {
+                        "query": query[:100] if query else None,
+                        "chat_history_len": len(chat_history) if chat_history else 0,
+                        "chat_history_sample": chat_history_sample
+                    },
+                    "timestamp": int(time.time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "C,E"
+                }) + "\n")
+        except: pass
+        # #endregion
+
+        # #region agent log - Before _build_role_prompt with exception handling
+        try:
+            prompt = self._build_role_prompt(query, context_str, role, chat_history, extra_instructions)
+        except Exception as prompt_err:
+            log_path = _get_debug_log_path()
+            with open(log_path, 'a') as f:
+                import json
+                import traceback
+                f.write(json.dumps({
+                    "location": "response_generator.py:250",
+                    "message": "EXCEPTION in _build_role_prompt",
+                    "data": {
+                        "error_type": type(prompt_err).__name__,
+                        "error_message": str(prompt_err),
+                        "error_traceback": traceback.format_exc()[:1000]
+                    },
+                    "timestamp": int(time.time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "C,E"
+                }) + "\n")
+            raise  # Re-raise to be caught by outer handler
+        # #endregion
+
+        # #region agent log
+        import traceback
+        try:
+            log_path = _get_debug_log_path()
+            with open(log_path, 'a') as f:
+                import json
+                f.write(json.dumps({
+                    "location": "response_generator.py:250",
+                    "message": "After _build_role_prompt, before LLM call",
+                    "data": {
+                        "query": query[:100] if query else None,
+                        "context_str_len": len(context_str),
+                        "context_chunks_count": len(context),
+                        "role": role,
+                        "model_name": model_name,
+                        "prompt_len": len(prompt) if prompt else 0,
+                        "has_qa_chain": bool(self.qa_chain),
+                        "degraded_mode": getattr(self, 'degraded_mode', None),
+                        "has_extra_instructions": bool(extra_instructions),
+                        "chat_history_len": len(chat_history) if chat_history else 0
+                    },
+                    "timestamp": int(time.time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "A"
+                }) + "\n")
+        except Exception as log_err:
+            # Don't fail on logging errors
+            pass
+        # #endregion
 
         try:
             if self.qa_chain and not self.degraded_mode:
                 # Use provided model or default LLM
                 if model_name and model_name != getattr(self.llm, 'model_name', None):
+                    # #region agent log
+                    try:
+                        log_path = _get_debug_log_path()
+                        with open(log_path, 'a') as f:
+                            import json
+                            f.write(json.dumps({
+                                "location": "response_generator.py:220",
+                                "message": "Creating temp LLM with model override",
+                                "data": {
+                                    "model_name": model_name,
+                                    "default_model": getattr(self.llm, 'model_name', None)
+                                },
+                                "timestamp": int(time.time() * 1000),
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "C"
+                            }) + "\n")
+                    except: pass
+                    # #endregion
                     # Create temporary LLM with specified model
                     from assistant.core.rag_factory import RagEngineFactory
                     factory = RagEngineFactory(self.llm._openai_api_key if hasattr(self.llm, '_openai_api_key') else None)
                     temp_llm, _ = factory.create_llm(model_name=model_name)
+                    # #region agent log
+                    try:
+                        log_path = _get_debug_log_path()
+                        with open(log_path, 'a') as f:
+                            import json
+                            f.write(json.dumps({
+                                "location": "response_generator.py:230",
+                                "message": "Before temp_llm.predict call",
+                                "data": {
+                                    "model_name": model_name,
+                                    "prompt_len": len(prompt)
+                                },
+                                "timestamp": int(time.time() * 1000),
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "C"
+                            }) + "\n")
+                    except: pass
+                    # #endregion
                     response = temp_llm.predict(prompt)
+                    # #region agent log - After temp_llm.predict
+                    try:
+                        log_path = _get_debug_log_path()
+                        with open(log_path, 'a') as f:
+                            import json
+                            f.write(json.dumps({
+                                "location": "response_generator.py:298",
+                                "message": "After temp_llm.predict call",
+                                "data": {
+                                    "response_type": type(response).__name__ if response else None,
+                                    "response_is_none": response is None,
+                                    "response_len": len(response) if response and isinstance(response, str) else 0,
+                                    "response_preview": str(response)[:100] if response else None
+                                },
+                                "timestamp": int(time.time() * 1000),
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "B"
+                            }) + "\n")
+                    except: pass
+                    # #endregion
                 else:
+                    # #region agent log
+                    try:
+                        log_path = _get_debug_log_path()
+                        with open(log_path, 'a') as f:
+                            import json
+                            f.write(json.dumps({
+                                "location": "response_generator.py:240",
+                                "message": "Before self.llm.predict call",
+                                "data": {
+                                    "default_model": getattr(self.llm, 'model_name', None),
+                                    "prompt_len": len(prompt)
+                                },
+                                "timestamp": int(time.time() * 1000),
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "A"
+                            }) + "\n")
+                    except: pass
+                    # #endregion
                     response = self.llm.predict(prompt)
+                    # #region agent log - After self.llm.predict
+                    try:
+                        log_path = _get_debug_log_path()
+                        with open(log_path, 'a') as f:
+                            import json
+                            f.write(json.dumps({
+                                "location": "response_generator.py:319",
+                                "message": "After self.llm.predict call",
+                                "data": {
+                                    "response_type": type(response).__name__ if response else None,
+                                    "response_is_none": response is None,
+                                    "response_len": len(response) if response and isinstance(response, str) else 0,
+                                    "response_preview": str(response)[:100] if response else None
+                                },
+                                "timestamp": int(time.time() * 1000),
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "B"
+                            }) + "\n")
+                    except: pass
+                    # #endregion
             else:
+                # #region agent log
+                try:
+                    log_path = _get_debug_log_path()
+                    with open(log_path, 'a') as f:
+                        import json
+                        f.write(json.dumps({
+                            "location": "response_generator.py:250",
+                            "message": "Using fallback synthesis",
+                            "data": {
+                                "has_qa_chain": bool(self.qa_chain),
+                                "degraded_mode": getattr(self, 'degraded_mode', None)
+                            },
+                            "timestamp": int(time.time() * 1000),
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "F"
+                        }) + "\n")
+                except: pass
+                # #endregion
                 response = self._synthesize_fallback(query, context_str)
 
             # REMOVED: _enforce_third_person() - Portfolia should speak in first person about itself
             # Only apply third-person conversion to career/Noah-specific questions (handled elsewhere)
 
+            # #region agent log - Before post-processing
+            try:
+                log_path = _get_debug_log_path()
+                with open(log_path, 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "location": "response_generator.py:347",
+                        "message": "Before post-processing",
+                        "data": {
+                            "response_type": type(response).__name__ if response else None,
+                            "response_is_none": response is None,
+                            "response_is_str": isinstance(response, str),
+                            "response_len": len(response) if response and isinstance(response, str) else 0
+                        },
+                        "timestamp": int(time.time() * 1000),
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "B,D"
+                    }) + "\n")
+            except: pass
+            # #endregion
+
             # POST-PROCESSING SAFETY NET: Convert any remaining third-person references to first person
             # This catches cases where the LLM copied source material verbatim despite system prompts
+            # #region agent log - Before _enforce_first_person
+            try:
+                log_path = _get_debug_log_path()
+                with open(log_path, 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "location": "response_generator.py:365",
+                        "message": "Before _enforce_first_person call",
+                        "data": {
+                            "response_type": type(response).__name__ if response else None,
+                            "response_is_none": response is None
+                        },
+                        "timestamp": int(time.time() * 1000),
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "D"
+                    }) + "\n")
+            except: pass
+            # #endregion
             response = self._enforce_first_person(response)
+            # #region agent log - After _enforce_first_person
+            try:
+                log_path = _get_debug_log_path()
+                with open(log_path, 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "location": "response_generator.py:380",
+                        "message": "After _enforce_first_person call",
+                        "data": {
+                            "response_type": type(response).__name__ if response else None,
+                            "response_is_none": response is None
+                        },
+                        "timestamp": int(time.time() * 1000),
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "D"
+                    }) + "\n")
+            except: pass
+            # #endregion
 
             # Add follow-up suggestions for ALL roles to promote interaction
             response = self._add_technical_followup(response, query, role)
@@ -226,9 +529,98 @@ Please provide a helpful and accurate answer based on the information provided. 
                 context_hash = str(hash(str(context)[:100]))  # Hash first 100 chars
                 self._cache_response(query, role or "", context_hash, response)
 
+            # #region agent log
+            try:
+                log_path = _get_debug_log_path()
+                with open(log_path, 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "location": "response_generator.py:260",
+                        "message": "LLM generation succeeded",
+                        "data": {
+                            "response_len": len(response) if response else 0,
+                            "response_preview": response[:200] if response else None
+                        },
+                        "timestamp": int(time.time() * 1000),
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "A"
+                    }) + "\n")
+            except: pass
+            # #endregion
             return response
         except Exception as e:
+            import traceback
+            import sys
+            error_traceback = traceback.format_exc()
             logger.error(f"Response generation (context) failed: {e}")
+            # CRITICAL: Print to stderr immediately - this will show in terminal
+            print(f"\n{'='*60}\nCRITICAL ERROR IN GENERATION:\nType: {type(e).__name__}\nMessage: {str(e)}\n{'='*60}\n", file=sys.stderr, flush=True)
+            # #region agent log - Exception caught
+            try:
+                log_path = _get_debug_log_path()
+                with open(log_path, 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "location": "response_generator.py:377",
+                        "message": "EXCEPTION CAUGHT in generate_contextual_response",
+                        "data": {
+                            "error_type": type(e).__name__,
+                            "error_message": str(e),
+                            "error_traceback": error_traceback[:1000]  # First 1000 chars
+                        },
+                        "timestamp": int(time.time() * 1000),
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "A,B,C,D,E"
+                    }) + "\n")
+            except: pass
+            # #endregion
+            # #region agent log - Multiple fallback strategies
+            import sys
+            error_data = {
+                "location": "response_generator.py:275",
+                "message": "LLM generation exception caught",
+                "data": {
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "error_traceback": error_traceback,
+                    "query": query[:100] if query else None,
+                    "model_name": model_name,
+                    "prompt_len": len(prompt) if prompt else 0,
+                    "context_str_len": len(context_str) if context_str else 0,
+                    "has_qa_chain": bool(self.qa_chain),
+                    "degraded_mode": getattr(self, 'degraded_mode', None),
+                    "llm_model_name": getattr(self.llm, 'model_name', None) if hasattr(self.llm, 'model_name') else None
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "A,B,C,D,E,F"
+            }
+
+            # Try file logging first
+            try:
+                log_path = _get_debug_log_path()
+                with open(log_path, 'a') as f:
+                    import json
+                    f.write(json.dumps(error_data) + "\n")
+            except Exception as log_err:
+                # Fallback 1: Try stderr (always works)
+                try:
+                    import json
+                    print(f"\n=== DEBUG LOG (stderr fallback) ===\n{json.dumps(error_data, indent=2)}\n=== END DEBUG LOG ===\n", file=sys.stderr, flush=True)
+                except:
+                    pass
+                # Fallback 2: Standard logger with full details
+                logger.error(f"Failed to write debug log: {log_err}")
+                logger.error(f"Original error: {e}")
+                logger.error(f"Error type: {type(e).__name__}")
+                logger.error(f"Full traceback:\n{error_traceback}")
+            # #endregion
+            # CRITICAL: Also print to stderr so we can see it even if logging fails
+            import sys
+            print(f"\n{'='*60}\nRESPONSE_GENERATOR EXCEPTION:\nType: {type(e).__name__}\nMessage: {str(e)}\n{'='*60}\n", file=sys.stderr, flush=True)
             return "I'm having trouble generating a response right now. Please try again."
 
     def generate_technical_response(self, query: str, career_matches: List[str], code_snippets: List[Dict[str, Any]], role: str) -> str:
@@ -295,17 +687,111 @@ Please provide a helpful and accurate answer based on the information provided. 
         # Build conversation history string for context continuity
         history_context = ""
         if chat_history and len(chat_history) > 0:
+            # #region agent log - Chat history processing
+            try:
+                log_path = _get_debug_log_path()
+                with open(log_path, 'a') as f:
+                    import json
+                    first_msg_keys = list(chat_history[0].keys())[:10] if chat_history and isinstance(chat_history[0], dict) else None
+                    f.write(json.dumps({
+                        "location": "response_generator.py:491",
+                        "message": "Processing chat_history",
+                        "data": {
+                            "chat_history_len": len(chat_history),
+                            "first_msg_keys": first_msg_keys,
+                            "first_msg_has_role": "role" in chat_history[0] if chat_history and isinstance(chat_history[0], dict) else False,
+                            "first_msg_has_type": "type" in chat_history[0] if chat_history and isinstance(chat_history[0], dict) else False
+                        },
+                        "timestamp": int(time.time() * 1000),
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "C,E"
+                    }) + "\n")
+            except: pass
+            # #endregion
             # Get last 4 messages for context (last 2 exchanges)
             recent_history = chat_history[-4:] if len(chat_history) > 4 else chat_history
             history_parts = []
-            for msg in recent_history:
-                if msg["role"] == "user":
-                    history_parts.append(f"User: {msg['content']}")
-                elif msg["role"] == "assistant":
-                    # Truncate long assistant messages for token efficiency
-                    content = msg['content'][:300] + "..." if len(msg['content']) > 300 else msg['content']
-                    history_parts.append(f"Assistant: {content}")
-            if history_context:
+            for i, msg in enumerate(recent_history):
+                # #region agent log - Processing each message
+                try:
+                    log_path = _get_debug_log_path()
+                    with open(log_path, 'a') as f:
+                        import json
+                        msg_keys = list(msg.keys())[:10] if isinstance(msg, dict) else None
+                        f.write(json.dumps({
+                            "location": "response_generator.py:510",
+                            "message": f"Processing message {i}",
+                            "data": {
+                                "msg_type": type(msg).__name__,
+                                "msg_keys": msg_keys,
+                                "has_role": "role" in msg if isinstance(msg, dict) else False,
+                                "has_type": "type" in msg if isinstance(msg, dict) else False,
+                                "has_content": "content" in msg if isinstance(msg, dict) else False
+                            },
+                            "timestamp": int(time.time() * 1000),
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "C,E"
+                        }) + "\n")
+                except: pass
+                # #endregion
+                # Handle both LangChain message format (type: "human"/"ai") and simple dict format (role: "user"/"assistant")
+                msg_role = None
+                msg_content = None
+
+                try:
+                    if isinstance(msg, dict):
+                        # Try LangChain format first
+                        if "type" in msg:
+                            if msg["type"] == "human":
+                                msg_role = "user"
+                            elif msg["type"] == "ai":
+                                msg_role = "assistant"
+                        # Fall back to simple dict format
+                        elif "role" in msg:
+                            msg_role = msg["role"]
+
+                        # Get content - handle both direct content and nested content
+                        if "content" in msg:
+                            msg_content = msg["content"]
+                        elif hasattr(msg, "content"):
+                            msg_content = getattr(msg, "content", None)
+                        else:
+                            msg_content = None
+
+                    if msg_role == "user" and msg_content:
+                        history_parts.append(f"User: {msg_content}")
+                    elif msg_role == "assistant" and msg_content:
+                        # Truncate long assistant messages for token efficiency
+                        content = msg_content[:300] + "..." if len(msg_content) > 300 else msg_content
+                        history_parts.append(f"Assistant: {content}")
+                except Exception as msg_err:
+                    # #region agent log - Message processing error
+                    try:
+                        log_path = _get_debug_log_path()
+                        with open(log_path, 'a') as f:
+                            import json
+                            import traceback
+                            f.write(json.dumps({
+                                "location": "response_generator.py:755",
+                                "message": "Error processing chat_history message",
+                                "data": {
+                                    "error_type": type(msg_err).__name__,
+                                    "error_message": str(msg_err),
+                                    "msg_type": type(msg).__name__,
+                                    "msg_keys": list(msg.keys())[:10] if isinstance(msg, dict) else None
+                                },
+                                "timestamp": int(time.time() * 1000),
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "C,E"
+                            }) + "\n")
+                    except: pass
+                    # #endregion
+                    # Skip this message and continue
+                    continue
+            if history_parts:
                 history_context = "\n\nPrevious conversation:\n" + "\n".join(history_parts) + "\n"
 
         # Add extra instructions if provided (for display intelligence)
@@ -640,6 +1126,30 @@ Please provide a helpful and accurate answer based on the information provided. 
             - Soft profiling through technical curiosity, not interrogation
             - If user is learning → be a mentor, don't push hiring angle
             - If user is hiring → naturally transition to demonstrating Noah's skills
+
+            ## NOAH'S PERSONALITY CONTEXT (Use Naturally, Not Forced)
+
+            When relevant, let Noah's personality traits inform how you describe him:
+            - **Teaching-oriented**: "Noah built this with education in mind—he genuinely wants people to understand how GenAI works"
+            - **Thoughtful**: "This architecture reflects Noah's systematic approach to problem-solving"
+            - **Playful but professional**: "Noah's playful side shows in features like the confess crush easter egg, but he takes technical excellence seriously"
+            - **Enterprise-minded**: "Noah thinks about scalability and production patterns even in personal projects"
+
+            **When to use personality context:**
+            - ✅ When explaining *why* something was built a certain way
+            - ✅ When connecting work choices to underlying values
+            - ✅ When hiring managers ask about work style or cultural fit
+            - ✅ When providing anecdotes that make responses more engaging
+
+            **When NOT to force it:**
+            - ❌ Don't add personality traits to purely technical explanations
+            - ❌ Don't make every response about personality
+            - ❌ Don't use personality to avoid answering technical questions
+
+            **Integration pattern:**
+            - Lead with technical/career facts
+            - Weave in personality naturally: "This reflects Noah's [trait] approach..."
+            - Use as bridge: "His [personality trait] shows in how he [behavior]..."
 
             ## RUNTIME AWARENESS (Technical Deep Dives)
             **GOAL**: Use yourself as a live case study for production GenAI systems.
@@ -991,6 +1501,49 @@ Please provide a helpful and accurate answer based on the information provided. 
         Returns:
             Text with third-person patterns replaced with first person
         """
+        # #region agent log - _enforce_first_person entry
+        try:
+            log_path = _get_debug_log_path()
+            with open(log_path, 'a') as f:
+                import json
+                f.write(json.dumps({
+                    "location": "response_generator.py:1199",
+                    "message": "_enforce_first_person entry",
+                    "data": {
+                        "text_type": type(text).__name__ if text else None,
+                        "text_is_none": text is None,
+                        "text_len": len(text) if text and isinstance(text, str) else 0
+                    },
+                    "timestamp": int(time.time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "D"
+                }) + "\n")
+        except: pass
+        # #endregion
+
+        if not text or not isinstance(text, str):
+            # #region agent log - Invalid input to _enforce_first_person
+            try:
+                log_path = _get_debug_log_path()
+                with open(log_path, 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "location": "response_generator.py:1220",
+                        "message": "_enforce_first_person received invalid input",
+                        "data": {
+                            "text_type": type(text).__name__ if text else None,
+                            "text_is_none": text is None
+                        },
+                        "timestamp": int(time.time() * 1000),
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "D"
+                    }) + "\n")
+            except: pass
+            # #endregion
+            return text if text else ""
+
         result = text
 
         # Use regex for longer phrases that may have variable content

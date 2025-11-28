@@ -28,6 +28,8 @@ from typing import Dict, Any, List
 from assistant.state.conversation_state import ConversationState
 from assistant.core.rag_engine import RagEngine
 from assistant.observability.langsmith_tracer import create_custom_span
+from assistant.flows.node_logic.util_conversational_edge_case_handler import generate_edge_case_response
+from assistant.utils.personality_injection import should_include_personality
 
 logger = logging.getLogger(__name__)
 
@@ -221,15 +223,50 @@ def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int 
         metadata["file_priority"] = True  # Boost codebase chunks
         logger.debug("File priority enabled for code-related query")
 
+    # Determine if personality context would add value
+    role = state.get("role", "")
+    include_personality = should_include_personality(
+        query=query,
+        context=[],
+        role=role
+    )
+
+    # Track personality usage in analytics
+    if include_personality:
+        metadata["has_personality_context"] = True
+        logger.debug("Including personality context in retrieval")
+
     with create_custom_span("retrieve_chunks", {
         "query": query[:120],
         "top_k": top_k,
         "active_subcategories": active_subcats,
         "source_hints": retrieval_hints,
-        "mentioned_files": mentioned_files
+        "mentioned_files": mentioned_files,
+        "include_personality": include_personality
     }):
         try:
-            chunks = rag_engine.retrieve(query, top_k=top_k) or {}
+            # Use role-aware retrieval with personality if appropriate
+            chunks = {}
+            if include_personality and rag_engine.pgvector_retriever and role:
+                # Directly call pgvector retriever with personality context
+                raw_chunks = rag_engine.pgvector_retriever.retrieve_for_role(
+                    query=query,
+                    role=role,
+                    top_k=top_k,
+                    include_personality=True
+                )
+                # Ensure raw_chunks is a list (retrieve_for_role returns List[Dict])
+                if not isinstance(raw_chunks, list):
+                    raw_chunks = []
+                # Build chunks dict for consistency with standard path
+                chunks = {
+                    "chunks": raw_chunks,
+                    "scores": [c.get("similarity", 0.0) for c in raw_chunks if isinstance(c, dict)]
+                }
+            else:
+                # Standard retrieval path
+                chunks = rag_engine.retrieve(query, top_k=top_k) or {}
+
             raw_chunks = chunks.get("chunks", [])
             normalized: List[Dict[str, Any]] = []
 
@@ -400,28 +437,94 @@ def validate_grounding(state: ConversationState, threshold: float = 0.45) -> Con
     return state
 
 
+def validate_retrieval_relevance(state: ConversationState) -> ConversationState:
+    """Check if retrieved chunks match query intent keywords.
+
+    Quality gate that detects when retrieval results don't match the query intent.
+    This helps identify cases where the query was misunderstood or retrieval
+    failed to find relevant content.
+
+    Performance: <1ms (keyword matching only)
+
+    Design Principles:
+    - Defensibility: Early detection of retrieval mismatches
+    - Observability: Logs when chunks don't match intent
+    - SRP: Only validates retrieval relevance, doesn't modify chunks
+
+    Args:
+        state: ConversationState with query and retrieved_chunks
+
+    Returns:
+        Updated state with retrieval_quality_warning if chunks don't match intent
+
+    Example:
+        >>> state = {"query": "customer support", "retrieved_chunks": [...]}
+        >>> validate_retrieval_relevance(state)
+        >>> state.get("retrieval_quality_warning")
+        "chunks_dont_match_intent"
+    """
+    query = state.get("query", "").lower()
+    chunks = state.get("retrieved_chunks", [])
+
+    if not query or not chunks:
+        return state
+
+    # Extract intent keywords (words > 3 chars, excluding common words)
+    common_words = {"what", "how", "when", "where", "why", "who", "this", "that", "with", "from", "have", "does"}
+    intent_keywords = [
+        w for w in query.split()
+        if len(w) > 3 and w not in common_words
+    ]
+
+    if not intent_keywords:
+        # Query too short to extract intent
+        return state
+
+    # Check if any chunk contains intent keywords
+    relevant_chunks = 0
+    for chunk in chunks:
+        content = chunk.get("content", "").lower() if isinstance(chunk, dict) else str(chunk).lower()
+        if any(keyword in content for keyword in intent_keywords):
+            relevant_chunks += 1
+
+    # If NO chunks match intent, flag as quality issue
+    if relevant_chunks == 0:
+        state["retrieval_quality_warning"] = "chunks_dont_match_intent"
+        logger.warning(
+            f"No chunks match query intent. Query: {query[:50]}, "
+            f"Intent keywords: {intent_keywords[:5]}"
+        )
+
+    return state
+
+
 def handle_grounding_gap(state: ConversationState) -> ConversationState:
-    """Respond gracefully when grounding is insufficient.
+    """Respond gracefully when grounding is insufficient OR edge case detected.
 
     This node short-circuits the pipeline when validate_grounding detects
-    low-confidence retrieval. Instead of generating a potentially hallucinated
-    answer, we provide a helpful fallback message and halt the pipeline.
+    low-confidence retrieval OR when an edge case was detected in classification.
+    Instead of generating a potentially hallucinated answer, we provide a helpful
+    fallback message and halt the pipeline.
 
-    Performance: <1ms (template response, no LLM call)
+    For edge cases, uses conversational response handler to generate warm,
+    inference-rich responses (not templates).
+
+    Performance: <1ms (template response) or ~800ms (LLM-generated edge case response)
 
     Design Principles:
     - Defensibility: Prevents hallucinations by stopping generation early
     - UX: Provides helpful guidance instead of error message
     - SRP: Only handles grounding gap response, doesn't retry retrieval
+    - Conversational: Edge cases get LLM-generated responses, not templates
 
     Args:
-        state: ConversationState with grounding_status
+        state: ConversationState with grounding_status and/or edge_case_detected
 
     Returns:
         Updated state with:
         - answer: Fallback message explaining the issue
         - pipeline_halt: Flag to stop downstream nodes
-        - (no changes if grounding_status == "ok")
+        - (no changes if grounding_status == "ok" and no edge case)
 
     Example:
         >>> state = {"grounding_status": "insufficient"}
@@ -431,16 +534,29 @@ def handle_grounding_gap(state: ConversationState) -> ConversationState:
         >>> "could not find context" in state["answer"]
         True
     """
-    if state.get("grounding_status") == "ok":
+    if state.get("grounding_status") == "ok" and not state.get("edge_case_detected"):
         return state
 
-    message = (
-        "I could not find context precise enough to stay factual yet. "
-        "Tell me a little more about what you want to explore and I will pull "
-        "the exact architecture notes or data you need."
-    )
+    # Check if edge case was detected (priority over normal grounding gap)
+    if state.get("edge_case_detected"):
+        # Generate conversational edge case response using LLM
+        message = generate_edge_case_response(state)
+        span_name = "edge_case_response"
+        span_data = {
+            "edge_case_type": state.get("edge_case_type"),
+            "grounding_status": state.get("grounding_status")
+        }
+    else:
+        # Normal grounding gap (insufficient context, still on-topic)
+        message = (
+            "I could not find context precise enough to stay factual yet. "
+            "Tell me a little more about what you want to explore and I will pull "
+            "the exact architecture notes or data you need."
+        )
+        span_name = "grounding_gap_response"
+        span_data = {"status": state.get("grounding_status")}
 
-    with create_custom_span("grounding_gap_response", {"status": state.get("grounding_status")}):
+    with create_custom_span(span_name, span_data):
         state["answer"] = message
         state["pipeline_halt"] = True
 

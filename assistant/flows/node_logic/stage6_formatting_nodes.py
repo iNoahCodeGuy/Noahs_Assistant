@@ -35,50 +35,146 @@ logger = logging.getLogger(__name__)
 
 
 def _retry_generation_if_insufficient(state: ConversationState, rag_engine: RagEngine) -> str:
-    """Retry generation with reinforced instructions if answer too short or missing sections.
+    """Retry generation with reinforced instructions if answer has quality issues.
 
-    This is a guardrail for menu option 1 (full tech stack) to ensure comprehensive coverage.
-    Only triggers if generation_quality_warning is set by generate_draft.
+    Enhanced to handle:
+    1. Original menu option 1 quality checks (comprehensive coverage)
+    2. Answer quality warnings (relevance, novelty)
+    3. Conversation guidance needs (stuck patterns, progression)
 
     Args:
-        state: Conversation state with draft_answer and quality warning
+        state: Conversation state with draft_answer and quality warnings
         rag_engine: RAG engine for LLM access
 
     Returns:
         Enhanced answer (or original if retry fails)
     """
-    quality_warning = state.get("generation_quality_warning")
+    generation_quality_warning = state.get("generation_quality_warning")
+    answer_quality_warning = state.get("answer_quality_warning")
+    guidance_needed = state.get("conversation_guidance_needed", [])
 
-    # Only retry for menu option 1 if quality warning exists
-    if not quality_warning:
-        # Only use draft_answer - do NOT fall back to old answer
-        # Falling back to old answer would preserve welcome messages from previous turns
+    # Check if ANY quality issue exists
+    has_quality_issue = (generation_quality_warning or
+                        answer_quality_warning or
+                        guidance_needed)
+
+    if not has_quality_issue:
+        # No quality issues - return draft as-is
         return state.get("draft_answer") or ""
 
-    if not (state.get("query_type") == "menu_selection" and
-            state.get("menu_choice") == "1" and
-            state.get("role_mode") == "hiring_manager_technical"):
-        # Only use draft_answer - do NOT fall back to old answer
-        return state.get("draft_answer") or ""
-
-    logger.info(f"🔄 Retrying generation due to quality issue: {quality_warning}")
-
+    # Determine which type of retry is needed
     original_answer = state.get("draft_answer", "")
     retrieved_chunks = state.get("retrieved_chunks", [])
 
-    # Build reinforced prompt
-    retry_instructions = (
-        "RETRY ATTEMPT - Previous response failed quality check.\n\n"
-        f"Issue detected: {quality_warning}\n\n"
-        "YOU MUST include ALL 5 layers with these EXACT headings:\n"
-        "**Frontend Layer:**\n"
-        "**Backend/Orchestration Layer:**\n"
-        "**Data Layer:**\n"
-        "**Observability Layer:**\n"
-        "**Deployment Layer:**\n\n"
-        "Each layer needs 2-3 complete sentences. Total target: 300-350 words.\n"
-        "DO NOT skip any layer. DO NOT copy verbatim from context."
-    )
+    # CASE 1: Original menu option 1 quality check
+    if (generation_quality_warning and
+        state.get("query_type") == "menu_selection" and
+        state.get("menu_choice") == "1" and
+        state.get("role_mode") == "hiring_manager_technical"):
+
+        logger.info(f"🔄 Retrying generation due to menu quality issue: {generation_quality_warning}")
+
+        retry_instructions = (
+            "RETRY ATTEMPT - Previous response failed quality check.\n\n"
+            f"Issue detected: {generation_quality_warning}\n\n"
+            "YOU MUST include ALL 5 layers with these EXACT headings:\n"
+            "**Frontend Layer:**\n"
+            "**Backend/Orchestration Layer:**\n"
+            "**Data Layer:**\n"
+            "**Observability Layer:**\n"
+            "**Deployment Layer:**\n\n"
+            "Each layer needs 2-3 complete sentences. Total target: 300-350 words.\n"
+            "DO NOT skip any layer. DO NOT copy verbatim from context."
+        )
+
+    # CASE 2: Answer quality warning (relevance or novelty)
+    elif answer_quality_warning:
+        logger.info(f"🔄 Retrying generation due to answer quality issue: {answer_quality_warning}")
+
+        retry_instructions = "RETRY ATTEMPT - Previous answer had quality issues.\n\n"
+
+        if "answer_relevance_low" in answer_quality_warning:
+            # Answer didn't address query properly
+            query = state.get("query", "")
+            retry_instructions += f"""
+CRITICAL: Previous answer was not relevant to the query.
+
+Query: "{query}"
+
+Your answer MUST:
+1. Directly address the query's key terms
+2. Use specific examples from the retrieved context
+3. Stay focused on what the user asked about
+
+DO NOT go off on tangents or repeat previous responses.
+"""
+
+        if "answer_too_similar" in answer_quality_warning:
+            # Answer was too similar to previous response
+            retry_instructions += """
+CRITICAL: Previous answer was too similar to an earlier response.
+
+Your answer MUST:
+1. Take a DIFFERENT angle or perspective
+2. Include NEW information not mentioned before
+3. Provide fresh examples or details
+
+DO NOT repeat what you've already said.
+"""
+
+    # CASE 3: Conversation guidance needed
+    elif guidance_needed:
+        logger.info(f"🔄 Retrying generation with conversation guidance: {guidance_needed}")
+
+        retry_instructions = "RETRY ATTEMPT - Conversation guidance needed.\n\n"
+
+        if "stuck_need_redirection" in guidance_needed:
+            retry_instructions += """
+CRITICAL: User seems stuck in repetitive pattern.
+
+Generate a fresh answer that:
+1. Acknowledges the previous discussion briefly
+2. Takes the conversation in a NEW direction
+3. Offers specific, different followup options
+
+Example: "We've covered the orchestration layer pretty thoroughly. Want to see how this pattern adapts to enterprise use cases like customer support?"
+"""
+
+        if "missing_enterprise_guidance" in guidance_needed:
+            retry_instructions += """
+CRITICAL: User is progressing from orchestration to enterprise adaptation.
+
+Your answer MUST include:
+1. Enterprise adaptation examples (customer support, internal docs)
+2. How the architecture scales to production
+3. Specific guidance on next steps
+
+Followups must guide to customer support, internal docs, or production patterns.
+"""
+
+        if "suggest_depth_increase" in guidance_needed:
+            retry_instructions += """
+CRITICAL: User is ready to go deeper.
+
+Your answer should:
+1. Provide more technical depth than previous responses
+2. Include code-level details or implementation specifics
+3. Offer to show actual node implementations or architecture diagrams
+"""
+
+        if "suggest_synthesis" in guidance_needed:
+            retry_instructions += """
+CRITICAL: User has explored multiple topics - time to synthesize.
+
+Your answer should:
+1. Connect the dots between topics they've explored
+2. Show the end-to-end flow
+3. Explain how the pieces work together
+"""
+
+    else:
+        # No retry needed for other cases
+        return original_answer
 
     try:
         enhanced_answer = rag_engine.response_generator.generate_contextual_response(
@@ -475,9 +571,11 @@ def _analyze_conversation_flow(chat_history: List[Dict], session_memory: Dict) -
     recent_content = " ".join(recent_contents)
 
     # Detect pattern: orchestration → enterprise
-    # User asked about orchestration (Turn 3), now asking about enterprise (Turn 4)
+    # User asked about orchestration (Turn 3), now asking about enterprise/adaptation (Turn 4)
     if "orchestration" in topics_text or "orchestration" in recent_content:
-        # Check recent messages for enterprise mentions (support both formats)
+        # Check recent messages for enterprise/adaptation mentions (support both formats)
+        # Expanded keywords to catch "customer support", "adapt", etc.
+        enterprise_keywords = ["enterprise", "customer support", "adapt", "use case", "production", "scales"]
         enterprise_mentioned = False
         for msg in recent_messages[-2:]:
             if isinstance(msg, dict):
@@ -486,7 +584,7 @@ def _analyze_conversation_flow(chat_history: List[Dict], session_memory: Dict) -
                 content = msg.content.lower() if hasattr(msg, "content") else ""
             else:
                 content = ""
-            if "enterprise" in content:
+            if any(kw in content for kw in enterprise_keywords):
                 enterprise_mentioned = True
                 break
         if enterprise_mentioned:
@@ -537,35 +635,104 @@ def _analyze_conversation_flow(chat_history: List[Dict], session_memory: Dict) -
     }
 
 
-def _build_followups(variant: str, intent: str = "general", active_subcats: List[str] = None, role_mode: str = "explorer", chat_history: List[Dict] = None, session_memory: Dict = None) -> List[str]:
-    """Generate role-specific followup prompt suggestions with subcategory awareness.
+def _build_followups(variant: str, intent: str = "general", active_subcats: List[str] = None, role_mode: str = "explorer", chat_history: List[Dict] = None, session_memory: Dict = None, quality_warnings: str = None, guidance_flags: List[str] = None, conversation_phase: str = None) -> List[str]:
+    """Generate role-specific followup prompt suggestions with conversation guidance and phase awareness.
 
-    Merged logic from logging_nodes.suggest_followups for inline followup generation.
+    Enhanced with conversation guidance for quality issues, natural progression, and phase-aware suggestions.
+    Uses sliding window analysis (last 6 messages) for scalability with 100+ turns.
 
     Args:
         variant: "engineering" | "business" | "mixed" (layout variant)
         intent: Query intent/type (technical, data, career, etc.)
         active_subcats: Active technical subcategories for precision targeting
         role_mode: User's role (explorer, software_developer, etc.)
+        chat_history: Conversation history (only last 6 messages analyzed)
+        session_memory: Session memory with topics (only last 10 topics used)
+        quality_warnings: Quality warning string from validate_answer_quality
+        guidance_flags: List of guidance flags from validate_conversation_guidance
+        conversation_phase: Current phase: discovery/exploration/synthesis/extended
 
     Returns:
         List of 3 followup prompt strings
 
     Example:
-        >>> _build_followups("engineering", "technical", ["architecture_depth"])
-        ["Want the LangGraph node flow diagram?", ...]
+        >>> _build_followups("engineering", "technical", guidance_flags=["stuck_need_redirection"])
+        ["Want to explore a different aspect?", ...]
     """
     active_subcats = active_subcats or []
     chat_history = chat_history or []
     session_memory = session_memory or {}
+    guidance_flags = guidance_flags or []
 
     # Confession mode gets no followups (privacy)
     if role_mode == "confession":
         return []
 
-    # NEW: Conversation flow analysis for inference-based followup generation
+    # PRIORITY 1: Quality-based guidance (if user is stuck or answer was repetitive)
+    if quality_warnings and "answer_too_similar" in quality_warnings:
+        # User is stuck - suggest completely different topics
+        return [
+            "Want to explore a different aspect of the system?",
+            "Curious about the data layer or deployment instead?",
+            "Should we look at production patterns or enterprise use cases?"
+        ]
+
+    # PRIORITY 2: Conversation guidance flags (from validate_conversation_guidance)
+    if guidance_flags:
+        if "stuck_need_redirection" in guidance_flags:
+            return [
+                "Want to explore a different topic area?",
+                "Curious about the backend architecture or data pipeline?",
+                "Should we look at testing strategies or deployment patterns?"
+            ]
+
+        if "missing_enterprise_guidance" in guidance_flags:
+            return [
+                "Want to see how this adapts to customer support?",
+                "Curious about enterprise deployment patterns?",
+                "Should I show the production safeguards that make this enterprise-ready?"
+            ]
+
+        if "suggest_depth_increase" in guidance_flags:
+            return [
+                "Want to go deeper into the implementation details?",
+                "Curious about the code-level architecture?",
+                "Should I show the actual node implementations?"
+            ]
+
+        if "suggest_synthesis" in guidance_flags:
+            return [
+                "Want to see how these pieces connect together?",
+                "Curious about the end-to-end flow across all these topics?",
+                "Should I synthesize how the architecture, data, and deployment work together?"
+            ]
+
+        if "suggest_new_territory" in guidance_flags:
+            return [
+                "We've covered a lot! Want to explore something completely different?",
+                "Curious about an area we haven't touched yet?",
+                "Should we revisit any topic with a fresh perspective?"
+            ]
+
+    # PRIORITY 3: Phase-aware suggestions (when no specific guidance flags)
+    if conversation_phase == "synthesis":
+        return [
+            "Want to see how all these pieces connect end-to-end?",
+            "Ready for a synthesis of what we've covered?",
+            "Should I map out how the architecture, data, and deployment work together?"
+        ]
+
+    if conversation_phase == "extended":
+        return [
+            "We've covered a lot! Want to explore something completely different?",
+            "Curious about an area we haven't touched yet?",
+            "Should we revisit any topic with fresh perspective?"
+        ]
+
+    # PRIORITY 3: Conversation flow analysis for natural progression
+    # Use sliding window: only analyze last 6 messages (scalable for 100+ turns)
     if chat_history and len(chat_history) >= 2:
-        # Analyze conversation pattern to infer progression
+        # Analyze conversation pattern to infer progression (scalable version)
         flow_analysis = _analyze_conversation_flow(chat_history, session_memory)
 
         # Generate context-aware followups based on progression pattern
@@ -1080,13 +1247,21 @@ def build_conversation_graph():
     chat_history = state.get("chat_history", [])
     session_memory = state.get("session_memory", {})
 
+    # Pass quality warnings, guidance flags, and conversation phase for context-aware followups
+    quality_warnings = state.get("answer_quality_warning")
+    guidance_flags = state.get("conversation_guidance_needed", [])
+    conversation_phase = state.get("conversation_phase")
+
     followups = _build_followups(
         variant=followup_variant,
         intent=intent,
         active_subcats=active_subcats,
         role_mode=role_mode,
         chat_history=chat_history,
-        session_memory=session_memory
+        session_memory=session_memory,
+        quality_warnings=quality_warnings,
+        guidance_flags=guidance_flags,
+        conversation_phase=conversation_phase
     )
 
     if followups:
