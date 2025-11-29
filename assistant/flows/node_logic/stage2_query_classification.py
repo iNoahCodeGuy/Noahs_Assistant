@@ -333,6 +333,21 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
     if menu_match:
         # Extract just the number (remove emoji suffix if present)
         menu_choice = query.strip().rstrip('️⃣').lower().replace('option', '').strip()
+
+        # Detect repeated menu selection
+        session_memory = state.setdefault("session_memory", {})
+        last_menu_choice = session_memory.get("last_menu_choice")
+        if last_menu_choice == menu_choice:
+            # User selected same menu option twice
+            update["is_repeated_menu_selection"] = True
+            session_memory["repeated_menu_count"] = session_memory.get("repeated_menu_count", 0) + 1
+            logger.info(f"Repeated menu selection detected: option {menu_choice} selected again (count: {session_memory['repeated_menu_count']})")
+        else:
+            session_memory["repeated_menu_count"] = 0
+            update["is_repeated_menu_selection"] = False
+
+        session_memory["last_menu_choice"] = menu_choice
+
         update["query_type"] = "menu_selection"
         update["menu_choice"] = menu_choice
         update["intent_confidence"] = 1.0

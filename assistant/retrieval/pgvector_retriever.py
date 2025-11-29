@@ -351,15 +351,28 @@ class PgVectorRetriever:
             filtered = candidates
 
         # Retrieve personality context if requested
+        # CRITICAL: Skip personality for enterprise/technical queries - personality chunks
+        # can have artificially high similarity scores that override topic-relevant content
         if include_personality:
-            personality_query = "What is Noah's personality like? How does Noah approach problems?"
-            personality_chunks = self.retrieve(personality_query, top_k=2, threshold=threshold)
-            if personality_chunks:
-                personality_filtered = self._filter_personality(personality_chunks)
-                # Add personality chunks to results (limit to 2)
-                filtered.extend(personality_filtered[:2])
-                # Re-sort by similarity if needed
-                filtered.sort(key=lambda c: c.get('_boosted_similarity', c.get('similarity', 0)), reverse=True)
+            # Check if query is about enterprise/technical topics - don't add personality
+            enterprise_keywords = [
+                "adapt", "adapts", "adaptation", "customer support", "enterprise",
+                "use case", "chatbot", "internal docs", "sales enablement",
+                "what to change", "code changes", "scales to", "applies to"
+            ]
+            is_enterprise_query = any(kw in query.lower() for kw in enterprise_keywords)
+
+            if is_enterprise_query:
+                logger.debug("Skipping personality retrieval for enterprise query")
+            else:
+                personality_query = "What is Noah's personality like? How does Noah approach problems?"
+                personality_chunks = self.retrieve(personality_query, top_k=2, threshold=threshold)
+                if personality_chunks:
+                    personality_filtered = self._filter_personality(personality_chunks)
+                    # Add personality chunks to results (limit to 2)
+                    filtered.extend(personality_filtered[:2])
+                    # Re-sort by similarity if needed
+                    filtered.sort(key=lambda c: c.get('_boosted_similarity', c.get('similarity', 0)), reverse=True)
 
         # Return top_k after filtering
         return filtered[:top_k]

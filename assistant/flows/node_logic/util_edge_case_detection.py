@@ -230,76 +230,316 @@ def _is_empty_or_whitespace(query: str) -> bool:
     return not query or not query.strip()
 
 
-def _detect_reformulation_loop(chat_history: list, threshold: float = 0.3) -> bool:
-    """Detect if user is repeatedly asking same question differently.
+def _extract_query_topic_words(query: str) -> set:
+    """Extract key topic words from a query (excluding stop words).
 
-    Compares last 3 user messages using word overlap to detect if user
-    is reformulating the same question multiple times.
+    Args:
+        query: User query text
+
+    Returns:
+        Set of important topic words
+    """
+    import re
+    stop_words = {"the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+                  "have", "has", "had", "do", "does", "did", "will", "would", "could",
+                  "should", "may", "might", "can", "what", "how", "why", "when", "where",
+                  "who", "to", "for", "of", "in", "on", "at", "see", "me", "tell", "about",
+                  "explain", "you", "please", "i", "want", "need", "know", "it", "this",
+                  "that", "program", "programs", "be", "adapted"}
+
+    # Remove punctuation before extracting words
+    normalized = re.sub(r'[^\w\s]', '', query.lower())
+    words = set(normalized.split())
+    return words - stop_words
+
+
+def _get_answer_after_query(chat_history: list, query_index: int) -> str:
+    """Get the assistant answer that followed a user query at a given index.
 
     Args:
         chat_history: Full conversation history
-        threshold: Similarity threshold (0.3 = 30% word overlap, catches semantic similarity)
+        query_index: Index of the user message in chat_history
+
+    Returns:
+        The assistant's answer content, or empty string if not found
+    """
+    # Look for the next assistant message after the query
+    for i in range(query_index + 1, len(chat_history)):
+        msg = chat_history[i]
+        if isinstance(msg, dict):
+            role = msg.get("role") or msg.get("type", "")
+            if role in ("assistant", "ai"):
+                return msg.get("content", "")
+        elif hasattr(msg, "type"):
+            if msg.type == "ai" or getattr(msg, "role", None) == "assistant":
+                return getattr(msg, "content", "")
+    return ""
+
+
+def _answer_addresses_topic(answer: str, query_topics: set, original_query: str = "") -> bool:
+    """Check if an answer actually addresses the topic words from a query.
+
+    STRICTER for enterprise queries: Must contain enterprise-specific content markers,
+    not just generic word overlap.
+
+    Args:
+        answer: The assistant's answer text
+        query_topics: Set of topic words from the user's query
+        original_query: The original query text (for enterprise detection)
+
+    Returns:
+        True if the answer contains enough topic words AND enterprise-specific content if applicable
+    """
+    if not answer or not query_topics:
+        return False
+
+    answer_lower = answer.lower()
+
+    # Check if this is an enterprise query - requires stricter matching
+    if _is_enterprise_query(original_query):
+        return _enterprise_answer_is_valid(answer_lower, query_topics)
+
+    # Standard matching for non-enterprise queries
+    matching_topics = sum(1 for topic in query_topics if topic in answer_lower)
+
+    # For short queries (1 topic word), require 1 match
+    # For longer queries (2+ topic words), require 2 matches
+    required_matches = min(2, len(query_topics))
+    return matching_topics >= required_matches
+
+
+def _is_enterprise_query(query: str) -> bool:
+    """Check if a query is about enterprise adaptation/use cases.
+
+    Args:
+        query: User query text
+
+    Returns:
+        True if query is about enterprise topics
+    """
+    if not query:
+        return False
+
+    query_lower = query.lower()
+    enterprise_markers = [
+        "customer support", "use case", "chatbot", "enterprise",
+        "adapt", "adaptation", "internal docs", "sales enablement",
+        "what to change", "code changes", "how would", "how could",
+        "apply", "applies", "works for", "scales to"
+    ]
+    return any(marker in query_lower for marker in enterprise_markers)
+
+
+def _enterprise_answer_is_valid(answer_lower: str, query_topics: set) -> bool:
+    """Check if an answer properly addresses an enterprise query.
+
+    Enterprise answers MUST contain specific content markers - not just generic
+    overlap with words like "enterprise" that appear in orchestration explanations.
+
+    Args:
+        answer_lower: Lowercased answer text
+        query_topics: Set of topic words from the query
+
+    Returns:
+        True if answer contains enterprise-specific content
+    """
+    # Enterprise answers must contain at least ONE of these specific content markers
+    enterprise_content_markers = [
+        # Specific enterprise adaptation content
+        "knowledge base", "replace", "data sources", "product docs",
+        "roles", "actions", "create ticket", "escalate",
+        # ROI/business value
+        "roi", "$", "savings", "cost", "reduction",
+        # Code changes
+        "code changes", "roles.py", "roles =",
+        # Specific use cases
+        "customer support", "internal documentation", "sales enablement",
+        # What changes
+        "what to change", "what stays"
+    ]
+
+    # Check for enterprise content markers
+    has_enterprise_content = any(marker in answer_lower for marker in enterprise_content_markers)
+
+    if not has_enterprise_content:
+        # Check if answer is just a reformulation response (not a real answer)
+        if "i notice you've asked" in answer_lower:
+            return False
+        # Check if it's about orchestration (wrong topic for enterprise query)
+        if "orchestration" in answer_lower and "adapt" not in answer_lower:
+            return False
+
+    # Also require 3+ topic word matches for stricter validation
+    matching_topics = sum(1 for topic in query_topics if topic in answer_lower)
+
+    return has_enterprise_content or matching_topics >= 3
+
+
+def _detect_reformulation_loop(chat_history: list, threshold: float = 0.2) -> bool:
+    """Detect if user is repeatedly asking same question differently.
+
+    Compares last 2 user messages using word overlap to detect if user
+    is reformulating the same question. Changed from 3 to 2 messages for
+    faster detection. Includes typo correction and exact duplicate detection.
+
+    CRITICAL: Only triggers if the previous similar query was ACTUALLY ANSWERED
+    with relevant content. If the previous answer didn't address the topic,
+    the user is legitimately re-asking.
+
+    Args:
+        chat_history: Full conversation history
+        threshold: Similarity threshold (0.2 = 20% word overlap, lowered for better detection with typos)
 
     Returns:
         True if reformulation loop detected, False otherwise
     """
-    if len(chat_history) < 6:  # Need at least 3 user messages
+    if len(chat_history) < 4:  # Need at least 2 user messages (changed from 6)
         return False
 
-    # Get last 3 user messages
+    # Get last 2-3 user messages with their indices (changed from 3)
     user_messages = []
-    for msg in chat_history[-6:]:
+    user_message_indices = []
+    for i, msg in enumerate(chat_history[-6:]):  # Look at recent history
+        actual_index = len(chat_history) - 6 + i if len(chat_history) >= 6 else i
         if isinstance(msg, dict):
             if msg.get("role") == "user" or msg.get("type") == "human":
                 user_messages.append(msg.get("content", ""))
+                user_message_indices.append(actual_index)
         elif hasattr(msg, "type") and (msg.type == "human" or getattr(msg, "role", None) == "user"):
             content = getattr(msg, "content", str(msg))
             user_messages.append(content)
+            user_message_indices.append(actual_index)
 
-    user_messages = user_messages[-3:]  # Last 3 only
+    # Keep last 2 messages and their indices
+    if len(user_messages) > 2:
+        user_messages = user_messages[-2:]
+        user_message_indices = user_message_indices[-2:]
 
-    if len(user_messages) < 3:
+    if len(user_messages) < 2:  # Changed from 3 to 2
         return False
 
-    # Simple similarity check (word overlap)
-    # Normalize words by removing punctuation
+    # Normalize messages: lowercase, remove punctuation, correct common typos
     import re
-    words_sets = []
+    corrections = {
+        # Architecture typos
+        "archexture": "architecture",
+        "archetecture": "architecture",
+        "architechture": "architecture",
+        "architecure": "architecture",
+        "architectxure": "architecture",  # 'x' typo
+        "architexture": "architecture",   # 'x' typo variant
+        "archtecture": "architecture",    # missing 'i'
+        "architeture": "architecture",    # missing 'c'
+        "architectre": "architecture",    # missing 'u'
+        # Other typos
+        "custmer": "customer",
+        "cusotmer": "customer",
+        "suport": "support",
+        "supprot": "support",
+        "enterpise": "enterprise",
+        "enterprize": "enterprise",
+        "adaptaion": "adaptation",
+        "adaption": "adaptation",
+    }
+
+    normalized_messages = []
     for msg in user_messages:
         if msg:
-            # Remove punctuation and split into words
+            # Normalize: lowercase, remove punctuation
             normalized = re.sub(r'[^\w\s]', '', msg.lower())
+            # Apply same typo corrections as query composition
+            for typo, correct in corrections.items():
+                normalized = normalized.replace(typo, correct)
+            normalized_messages.append(normalized)
+
+    # Check for exact duplicates (after normalization) - now works with 2 messages
+    similar_detected = False
+    if len(normalized_messages) >= 2:
+        if normalized_messages[-1] == normalized_messages[-2]:
+            similar_detected = True
+            logger.info("Similar queries detected: exact duplicate")
+
+    # Build word sets from normalized messages
+    words_sets = []
+    for normalized in normalized_messages:
+        if normalized:
             words_sets.append(set(normalized.split()))
 
-    if len(words_sets) < 3:
+    if len(words_sets) < 2 and not similar_detected:  # Changed from 3 to 2
         return False
 
-    # Check if all messages share at least one common word (strong indicator of reformulation)
-    common_words = words_sets[0]
-    for words in words_sets[1:]:
-        common_words = common_words & words
+    # Define stop words to exclude from important word matching
+    stop_words = {"the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+                  "have", "has", "had", "do", "does", "did", "will", "would", "could",
+                  "should", "may", "might", "can", "what", "how", "why", "when", "where",
+                  "who", "to", "for", "of", "in", "on", "at", "see", "me", "tell", "about",
+                  "explain", "you", "please", "i", "want", "need", "know"}
 
-    # If all queries share at least one word, likely reformulation
-    if common_words:
-        # Filter out common stop words
-        stop_words = {"the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did", "will", "would", "could", "should", "may", "might", "can", "what", "how", "why", "when", "where", "who"}
-        important_common_words = common_words - stop_words
-        if important_common_words:
-            return True
+    if not similar_detected:
+        # Check if all messages share at least one important common word
+        common_words = words_sets[0]
+        for words in words_sets[1:]:
+            common_words = common_words & words
 
-    # Fallback: check word overlap with threshold
-    overlaps = []
-    for i in range(len(words_sets) - 1):
-        if not words_sets[i] or not words_sets[i+1]:
-            continue
-        overlap = len(words_sets[i] & words_sets[i+1]) / max(len(words_sets[i] | words_sets[i+1]), 1)
-        overlaps.append(overlap)
+        # If all queries share at least one important (non-stop) word, likely reformulation
+        if common_words:
+            important_common_words = common_words - stop_words
+            # Need at least 1 important common word for reformulation detection
+            if important_common_words:
+                similar_detected = True
+                logger.info(f"Similar queries detected: shared words {important_common_words}")
 
-    # If all overlaps are high, likely reformulation loop
-    if overlaps:
-        return all(overlap > threshold for overlap in overlaps)
+        if not similar_detected:
+            # Fallback: check word overlap with threshold (excluding stop words)
+            # Create word sets without stop words
+            important_word_sets = []
+            for words in words_sets:
+                important_words = words - stop_words
+                important_word_sets.append(important_words)
 
-    return False
+            # Need at least 1 important word in each message to compare
+            if all(ws for ws in important_word_sets):
+                overlaps = []
+                for i in range(len(important_word_sets) - 1):
+                    if important_word_sets[i] and important_word_sets[i+1]:
+                        overlap = len(important_word_sets[i] & important_word_sets[i+1]) / max(len(important_word_sets[i] | important_word_sets[i+1]), 1)
+                        overlaps.append(overlap)
+
+                # If all overlaps are high (at least 50%), likely reformulation loop
+                if overlaps and all(overlap >= 0.5 for overlap in overlaps):
+                    similar_detected = True
+
+    # CRITICAL CHECK: If similar queries detected, verify the previous answer addressed the topic
+    if similar_detected and len(user_message_indices) >= 2:
+        first_similar_query = user_messages[0]
+        first_query_index = user_message_indices[0]
+
+        # Extract topic words from the query
+        query_topics = _extract_query_topic_words(first_similar_query)
+
+        # Get the answer that followed the first similar query
+        previous_answer = _get_answer_after_query(chat_history, first_query_index)
+
+        if previous_answer:
+            # Check if the previous answer actually addressed the query topic
+            # Pass the original query for enterprise-specific validation
+            if not _answer_addresses_topic(previous_answer, query_topics, first_similar_query):
+                # The previous answer didn't address the topic - user is legitimately re-asking
+                logger.info(
+                    f"Similar query detected but previous answer didn't address topic. "
+                    f"Query topics: {query_topics}. Not triggering reformulation."
+                )
+                return False
+        else:
+            # No previous answer found - don't trigger reformulation
+            logger.info("Similar query detected but no previous answer found. Not triggering reformulation.")
+            return False
+
+        # Previous answer DID address the topic - this is a genuine reformulation
+        logger.info(f"Reformulation loop detected: similar queries and previous answer addressed topic")
+        return True
+
+    return similar_detected
 
 
 def _detect_conversation_loop(chat_history: list) -> bool:

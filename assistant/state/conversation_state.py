@@ -173,6 +173,36 @@ class ConversationState(TypedDict, total=False):
     depth_level: int
     """Presentation depth chosen by depth_controller (1=overview, 2=guided, 3=deep dive)."""
 
+    # --- Chain-of-Thought Reasoning ---
+    cot_reasoning: Dict[str, Any]
+    """Structured reasoning from Chain-of-Thought analysis phase.
+
+    Contains:
+        - user_intent: Explicit/implicit intent and confidence
+        - response_plan: Depth level, style, key points, structure
+        - clarification_needed: Whether to ask clarifying question
+        - user_state: Confusion signals, expertise level
+        - context_relevance: Chunk relevance, missing info, confidence
+    """
+
+    cot_metadata: Dict[str, Any]
+    """Metadata from CoT generation.
+
+    Contains:
+        - type: 'answer' or 'clarification'
+        - reasoning_time_ms: Time spent on reasoning phase
+        - generation_time_ms: Time spent on generation phase
+        - depth_level: Selected depth (1-3)
+        - user_confused: Whether user seemed confused
+    """
+
+    cot_enabled: bool
+    """Whether Chain-of-Thought was used for this turn.
+
+    True when query triggered CoT (enterprise queries, confusion signals,
+    complex questions, deep conversations, explanation requests).
+    """
+
     conversation_phase: str
     """Current conversation phase: 'discovery' (turns 1-3), 'exploration' (turns 4-8),
     'synthesis' (turns 8-15 with 4+ topics), 'extended' (turns 15+)."""

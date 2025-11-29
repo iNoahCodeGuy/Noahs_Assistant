@@ -107,6 +107,65 @@ def _extract_mentioned_files(chat_history: List[Dict]) -> List[str]:
     return list(set(mentioned_files))  # Deduplicate
 
 
+def _extract_topic_words(query: str) -> List[str]:
+    """Extract key topic words from a query (excluding stop words).
+
+    Reuses logic from util_edge_case_detection for consistency.
+
+    Args:
+        query: User query text
+
+    Returns:
+        List of important topic words
+    """
+    stop_words = {"the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+                  "have", "has", "had", "do", "does", "did", "will", "would", "could",
+                  "should", "may", "might", "can", "what", "how", "why", "when", "where",
+                  "who", "to", "for", "of", "in", "on", "at", "see", "me", "tell", "about",
+                  "explain", "you", "please", "i", "want", "need", "know", "it", "this",
+                  "that", "program", "programs", "be", "adapted", "could", "would"}
+
+    # Remove punctuation before extracting words
+    normalized = re.sub(r'[^\w\s]', '', query.lower())
+    words = normalized.split()
+    return [w for w in words if w not in stop_words and len(w) > 2]
+
+
+def _check_chunk_relevance(chunks: List[Dict], query: str) -> bool:
+    """Check if any retrieved chunk contains query topic words.
+
+    This validation ensures retrieved chunks actually match the query intent,
+    preventing cases where retrieval returns off-topic results.
+
+    Args:
+        chunks: List of retrieved chunk dicts
+        query: Original user query
+
+    Returns:
+        True if at least one chunk (in top 3) contains query topic words, False otherwise
+    """
+    if not query or not chunks:
+        return True  # Skip validation if no query or chunks
+
+    query_topics = _extract_topic_words(query)
+    if not query_topics:
+        # Query too short or all stop words - skip validation
+        return True
+
+    # Check top 3 chunks for topic relevance
+    for chunk in chunks[:3]:
+        content = chunk.get("content", "").lower() if isinstance(chunk, dict) else str(chunk).lower()
+        if any(topic in content for topic in query_topics):
+            return True
+
+    # No chunks match topic
+    logger.warning(
+        f"Retrieved chunks don't match query topic. Query: {query[:50]}, "
+        f"Query topics: {query_topics[:5]}, Top chunk section: {chunks[0].get('section', 'unknown') if chunks else 'none'}"
+    )
+    return False
+
+
 def _build_retrieval_hints(active_subcategories: List[str]) -> List[str]:
     """Map active technical subcategories to preferred retrieval sources.
 
@@ -338,12 +397,60 @@ def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int 
                     # Re-sort by boosted similarity
                     diversified = sorted(diversified, key=lambda c: c.get("similarity", 0.0), reverse=True)
 
+                # Boost enterprise adaptation chunks for enterprise queries
+                enterprise_keywords = ["adapt", "adapts", "adaptation", "customer support", "enterprise",
+                                       "use case", "chatbot", "internal docs", "sales enablement"]
+                if any(kw in query.lower() for kw in enterprise_keywords):
+                    # CRITICAL FIX: Cap all similarity scores at 0.95 BEFORE boosting
+                    # This prevents personality chunks (which get 1.0 similarity) from
+                    # always outranking enterprise content after boosting
+                    for chunk in diversified:
+                        chunk["similarity"] = min(0.95, chunk.get("similarity", 0.0))
+
+                    boosted_count = 0
+                    for chunk in diversified:
+                        # Boost chunks from enterprise adaptation guide
+                        section = chunk.get("section", "").lower()
+                        content = (chunk.get("content", "") or "").lower()
+
+                        # Expanded pattern matching for enterprise adaptation content
+                        is_enterprise_related = (
+                            "enterprise" in section or "enterprise" in content or
+                            "customer support" in content or "customer support" in section or
+                            "adaptation" in section or "adaptation" in content or
+                            "use case" in content or "chatbot" in content or
+                            "internal docs" in content or "internal knowledge" in content or
+                            "sales enablement" in content or "sales enablement" in section or
+                            "what to change" in content or "code changes" in content or
+                            "expected roi" in content or "roi" in section or
+                            "common enterprise" in content or "enterprise use" in content
+                        )
+
+                        if is_enterprise_related:
+                            current_sim = chunk.get("similarity", 0.0)
+                            # Increased boost from 0.25 to 0.35 so enterprise content outranks generic
+                            chunk["similarity"] = min(1.0, current_sim + 0.35)
+                            boosted_count += 1
+                            logger.debug(f"Boosted enterprise adaptation chunk: {chunk.get('section', 'unknown')} (similarity: {current_sim:.3f} → {chunk['similarity']:.3f})")
+
+                    if boosted_count > 0:
+                        logger.info(f"Boosted {boosted_count} enterprise adaptation chunks for query")
+
+                    # Re-sort by boosted similarity
+                    diversified = sorted(diversified, key=lambda c: c.get("similarity", 0.0), reverse=True)
+
                 state["retrieved_chunks"] = diversified
                 state["retrieval_scores"] = [c.get("similarity", 0.0) for c in diversified]
                 metadata["post_rank_count"] = len(diversified)
 
                 if len(diversified) < len(normalized):
                     logger.info("Deduplicated %d → %d chunks", len(normalized), len(diversified))
+
+                # Check topic relevance after retrieval
+                if not _check_chunk_relevance(diversified, query):
+                    logger.warning(f"Retrieved chunks don't match query topic: {query[:50]}")
+                    state["retrieval_topic_mismatch"] = True
+                    metadata["retrieval_topic_mismatch"] = True
 
         except Exception as e:
             logger.error(

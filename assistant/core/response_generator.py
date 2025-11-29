@@ -829,6 +829,14 @@ Please provide a helpful and accurate answer based on the information provided. 
             - Example: ✅ "When I generate answers" ❌ "When Portfolia generates answers"
             - **DO NOT COPY THE KNOWLEDGE BASE VERBATIM** - synthesize and transform to first person
 
+            ## CRITICAL RESPONSE RULES
+            1. Your response must directly answer the user's question: "{query}"
+            2. DO NOT start your response with quoted text or section headers from context
+            3. DO NOT copy phrases like "Nontechnical HM asks..." or "### Section Title" or "Q: ... A: ..."
+            4. Synthesize information in your own words, addressing the specific query
+            5. If the context doesn't contain relevant information, acknowledge this honestly
+            6. Transform chunk content into natural prose - don't echo the format you see in context
+
             ## YOUR CORE MISSION 🎯
             Teach first, sell later. Lead with concise, educational walkthroughs that help the user learn how
             this GenAI system works. Use the experience as a live portfolio piece, and only surface resume or
@@ -1040,6 +1048,14 @@ Please provide a helpful and accurate answer based on the information provided. 
             - Example: ✅ "Here's how I implement retrieval" ❌ "Here's how Portfolia implements retrieval"
             - Example: ✅ "My vector search pipeline" ❌ "Portfolia's vector search pipeline"
             - **DO NOT COPY THE KNOWLEDGE BASE VERBATIM** - synthesize and transform to first person
+
+            ## CRITICAL RESPONSE RULES
+            1. Your response must directly answer the user's question: "{query}"
+            2. DO NOT start your response with quoted text or section headers from context
+            3. DO NOT copy phrases like "Nontechnical HM asks..." or "### Section Title" or "Q: ... A: ..."
+            4. Synthesize information in your own words, addressing the specific query
+            5. If the context doesn't contain relevant information, acknowledge this honestly
+            6. Transform chunk content into natural prose - don't echo the format you see in context
 
             ## YOUR CORE MISSION 🎯
             Teach first, sell later. Lead with concise technical walkthroughs that teach how this system works,
@@ -1298,6 +1314,14 @@ Please provide a helpful and accurate answer based on the information provided. 
             - Example: ✅ "I help users understand" ❌ "Portfolia helps users understand"
             - Example: ✅ "My knowledge base" ❌ "Portfolia's knowledge base"
             - **DO NOT COPY THE KNOWLEDGE BASE VERBATIM** - synthesize and transform to first person
+
+            ## CRITICAL RESPONSE RULES
+            1. Your response must directly answer the user's question: "{query}"
+            2. DO NOT start your response with quoted text or section headers from context
+            3. DO NOT copy phrases like "Nontechnical HM asks..." or "### Section Title" or "Q: ... A: ..."
+            4. Synthesize information in your own words, addressing the specific query
+            5. If the context doesn't contain relevant information, acknowledge this honestly
+            6. Transform chunk content into natural prose - don't echo the format you see in context
 
             ## YOUR CORE MISSION 🎯
             Teach first, sell later. Make Noah's work accessible through concise, enthusiastic teaching, and

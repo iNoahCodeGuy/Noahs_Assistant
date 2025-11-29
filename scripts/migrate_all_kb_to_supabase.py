@@ -17,6 +17,7 @@ import os
 import csv
 import time
 import logging
+import re
 from typing import List, Dict, Any
 from datetime import datetime
 
@@ -65,6 +66,15 @@ KNOWLEDGE_BASES = {
         'path': 'data/conversation_guidance_kb.csv',
         'description': 'How Portfolia guides conversations, phase detection, pattern recognition',
         'doc_id': 'conversation_guidance_kb'
+    }
+}
+
+# Documentation files (markdown)
+DOCUMENTATION_FILES = {
+    'enterprise_guide': {
+        'path': 'docs/ENTERPRISE_ADAPTATION_GUIDE.md',
+        'doc_id': 'documentation',
+        'chunk_by_header': True
     }
 }
 
@@ -124,6 +134,101 @@ class EnhancedMigration:
             chunks.append(chunk)
 
         logger.info(f"   ✅ Created {len(chunks)} chunks")
+        return chunks
+
+    def chunk_markdown_by_headers(self, content: str) -> List[Dict[str, str]]:
+        """Split markdown content by ## headers for better retrieval granularity.
+
+        Each section becomes a separate chunk, making it easier to retrieve
+        specific topics like "Customer Support Chatbot" or "Expected ROI".
+
+        Args:
+            content: Full markdown file content
+
+        Returns:
+            List of dicts with 'section' (header) and 'content' (section body)
+        """
+        sections = []
+
+        # Split by ## headers (level 2 headers)
+        # Pattern: ## Header Title\n\nContent...
+        # Use a more robust pattern that captures header and content
+        pattern = r'^##\s+(.+?)$'
+        parts = re.split(pattern, content, flags=re.MULTILINE)
+
+        if len(parts) > 1:
+            # First part might be intro content before first header
+            first_part = parts[0].strip()
+            if first_part and len(first_part) > 50:  # Only add if substantial
+                sections.append({
+                    'section': 'Introduction',
+                    'content': first_part
+                })
+
+            # Process header-content pairs
+            for i in range(1, len(parts), 2):
+                if i < len(parts):
+                    header = parts[i].strip()
+                    # Get content up to next header (or end)
+                    if i + 1 < len(parts):
+                        body = parts[i + 1].strip()
+                        # Stop at next ## header if present
+                        next_header_match = re.search(r'^##\s+', body, flags=re.MULTILINE)
+                        if next_header_match:
+                            body = body[:next_header_match.start()].strip()
+                    else:
+                        body = ""
+
+                    # Normalize whitespace
+                    body = re.sub(r'\n{3,}', '\n\n', body)
+
+                    if body:  # Only add non-empty sections
+                        sections.append({
+                            'section': header,
+                            'content': body
+                        })
+        else:
+            # No headers found, treat entire content as one section
+            sections.append({
+                'section': 'Introduction',
+                'content': content.strip()
+            })
+
+        logger.info(f"   ✅ Split into {len(sections)} sections by headers")
+        return sections
+
+    def read_markdown_file(self, file_path: str) -> str:
+        """Read markdown file content."""
+        logger.info(f"📄 Reading {file_path}...")
+
+        if not os.path.exists(file_path):
+            logger.warning(f"⚠️  File not found: {file_path}")
+            return ""
+
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        logger.info(f"   ✅ Read {len(content)} characters")
+        return content
+
+    def create_documentation_chunks(self, sections: List[Dict[str, str]], doc_id: str) -> List[Dict[str, Any]]:
+        """Create chunks from markdown sections."""
+        chunks = []
+
+        for i, section in enumerate(sections):
+            chunk = {
+                'doc_id': doc_id,
+                'section': section['section'],
+                'content': section['content'],
+                'metadata': {
+                    'section': section['section'],
+                    'index': i,
+                    'source': 'markdown'
+                }
+            }
+            chunks.append(chunk)
+
+        logger.info(f"   ✅ Created {len(chunks)} chunks from markdown")
         return chunks
 
     def generate_embeddings(self, chunks: List[Dict]) -> List[Dict]:
@@ -249,6 +354,45 @@ class EnhancedMigration:
         self.total_stats['kbs_migrated'] += 1
         logger.info(f"✅ {kb_name} migration complete!\n")
 
+    def migrate_documentation(self, doc_name: str, force: bool = False):
+        """Migrate a markdown documentation file."""
+        doc_config = DOCUMENTATION_FILES[doc_name]
+        file_path = doc_config['path']
+        doc_id = doc_config['doc_id']
+
+        logger.info(f"\n{'='*60}")
+        logger.info(f"📚 Migrating Documentation: {doc_name}")
+        logger.info(f"   Path: {file_path}")
+        logger.info(f"{'='*60}\n")
+
+        # Check if file exists
+        if not os.path.exists(file_path):
+            logger.warning(f"⚠️  File not found: {file_path}, skipping...")
+            return
+
+        # Check for existing data
+        existing_count = self.check_existing(doc_id)
+        if existing_count > 0:
+            if not force:
+                logger.warning(f"⚠️  Found {existing_count} existing chunks, skipping (use --force to re-import)")
+                return
+            else:
+                self.delete_existing(doc_id)
+
+        # Migration pipeline
+        content = self.read_markdown_file(file_path)
+        if not content:
+            logger.warning(f"⚠️  Empty file: {file_path}, skipping...")
+            return
+
+        sections = self.chunk_markdown_by_headers(content)
+        chunks = self.create_documentation_chunks(sections, doc_id)
+        chunks = self.generate_embeddings(chunks)
+        self.insert_chunks(chunks, doc_id)
+
+        self.total_stats['kbs_migrated'] += 1
+        logger.info(f"✅ {doc_name} migration complete!\n")
+
     def migrate_all(self, force: bool = False, specific_kb: str = None):
         """Migrate all knowledge bases."""
         logger.info("\n" + "="*60)
@@ -271,6 +415,14 @@ class EnhancedMigration:
                 self.migrate_kb(kb_name, force)
             except Exception as e:
                 logger.error(f"❌ Failed to migrate {kb_name}: {e}")
+                continue
+
+        # Migrate documentation files
+        for doc_name in DOCUMENTATION_FILES.keys():
+            try:
+                self.migrate_documentation(doc_name, force)
+            except Exception as e:
+                logger.error(f"❌ Failed to migrate documentation {doc_name}: {e}")
                 continue
 
         # Summary

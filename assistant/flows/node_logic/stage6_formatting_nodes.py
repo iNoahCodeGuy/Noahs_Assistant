@@ -635,6 +635,139 @@ def _analyze_conversation_flow(chat_history: List[Dict], session_memory: Dict) -
     }
 
 
+def _should_offer_synthesis(session_memory: Dict, conversation_turn: int, conversation_phase: str) -> bool:
+    """Check if we should offer to synthesize across topics.
+
+    Synthesis is offered:
+    - In synthesis phase (8+ turns, 4+ topics)
+    - OR at 5+ turns with 3+ topics (if not in synthesis phase yet)
+    - But not too frequently (wait 3 turns between offers)
+
+    Args:
+        session_memory: Session memory with topics
+        conversation_turn: Current conversation turn
+        conversation_phase: Current conversation phase
+
+    Returns:
+        True if synthesis should be offered, False otherwise
+    """
+    topics = session_memory.get("topics", []) if session_memory else []
+
+    # Always offer in synthesis phase
+    if conversation_phase == "synthesis":
+        last_synthesis = session_memory.get("last_synthesis_turn", 0) if session_memory else 0
+        if conversation_turn - last_synthesis >= 3:
+            return True
+
+    # Offer at 5+ turns with 3+ topics
+    if conversation_turn >= 5 and len(topics) >= 3:
+        last_synthesis = session_memory.get("last_synthesis_turn", 0) if session_memory else 0
+        if conversation_turn - last_synthesis >= 3:
+            return True
+
+    return False
+
+
+CONVERSATION_ARCS = {
+    "hiring_manager_technical": [
+        ("orchestration", ["enterprise_adaptation", "cost_analysis", "implementation"]),
+        ("enterprise_adaptation", ["cost_analysis", "implementation", "deployment"]),
+        ("cost_analysis", ["implementation", "deployment", "testing"]),
+        ("implementation", ["testing", "deployment", "monitoring"]),
+    ],
+    "software_developer": [
+        ("architecture", ["implementation", "code_walkthrough", "debugging"]),
+        ("implementation", ["debugging", "testing", "performance"]),
+        ("testing", ["deployment", "monitoring", "scaling"]),
+    ],
+    "hiring_manager_nontechnical": [
+        ("career", ["business_impact", "team_fit", "resume"]),
+        ("business_impact", ["team_fit", "resume", "contact"]),
+    ],
+    "explorer": [
+        ("casual", ["architecture", "behind_scenes", "fun_facts"]),
+        ("architecture", ["implementation", "behind_scenes"]),
+    ]
+}
+
+
+def _predict_next_topics(role_mode: str, current_topics: List[str], conversation_phase: str) -> List[str]:
+    """Predict likely next topics based on conversation arc and phase.
+
+    Args:
+        role_mode: User's role mode
+        current_topics: List of current topics (use last 3-5)
+        conversation_phase: Current conversation phase
+
+    Returns:
+        List of predicted next topics
+    """
+    arcs = CONVERSATION_ARCS.get(role_mode, [])
+
+    # Use most recent topic to predict next
+    if current_topics:
+        recent_topic = current_topics[-1].lower()
+        for topic, next_topics in arcs:
+            if topic in recent_topic:
+                # Filter based on phase
+                if conversation_phase == "synthesis":
+                    # In synthesis phase, suggest connecting topics
+                    return ["synthesis", "big_picture", "connect_dots"]
+                return next_topics
+
+    return []
+
+
+def _generate_synthesis_response(state: ConversationState) -> str:
+    """Generate synthesis response connecting multiple turns.
+
+    Uses conversational style (not teaching) to connect dots.
+
+    Args:
+        state: Conversation state with chat_history, session_memory
+
+    Returns:
+        Synthesis response string
+    """
+    session_memory = state.get("session_memory", {})
+    topics = session_memory.get("topics", [])
+    chat_history = state.get("chat_history", [])
+
+    # Extract turn-by-turn summary
+    turn_summaries = []
+    turn_num = 1
+    for i in range(0, len(chat_history), 2):
+        if i < len(chat_history):
+            user_msg = chat_history[i]
+            if isinstance(user_msg, dict):
+                query = user_msg.get("content", "")[:100]
+            else:
+                query = getattr(user_msg, "content", "")[:100] if hasattr(user_msg, "content") else ""
+
+            if query:
+                turn_summaries.append(f"Turn {turn_num}: {query}")
+                turn_num += 1
+
+    # Synthesize topics
+    topics_text = ", ".join(topics[-5:]) if topics else "various topics"
+
+    response = f"""**Connecting the Dots**
+
+We've covered a lot of ground! Let me synthesize:
+
+{chr(10).join(turn_summaries[-5:]) if turn_summaries else "We've explored several topics."}
+
+**The Big Picture:**
+We've explored {topics_text}. These topics connect because [synthesis explanation].
+
+**What's Left to Explore:**
+- [Suggest 3 natural next steps based on conversation arc]
+
+Want me to dive deeper into any of these?"""
+
+    return response
+
+
 def _build_followups(variant: str, intent: str = "general", active_subcats: List[str] = None, role_mode: str = "explorer", chat_history: List[Dict] = None, session_memory: Dict = None, quality_warnings: str = None, guidance_flags: List[str] = None, conversation_phase: str = None) -> List[str]:
     """Generate role-specific followup prompt suggestions with conversation guidance and phase awareness.
 
@@ -675,6 +808,31 @@ def _build_followups(variant: str, intent: str = "general", active_subcats: List
             "Want to explore a different aspect of the system?",
             "Curious about the data layer or deployment instead?",
             "Should we look at production patterns or enterprise use cases?"
+        ]
+
+    # PRIORITY 1.5: Detect enterprise adaptation queries and provide relevant follow-ups
+    # Check if the last user query was about enterprise adaptation
+    if chat_history:
+        last_user_msg = None
+        for msg in reversed(chat_history[-6:]):  # Check last 6 messages
+            if isinstance(msg, dict):
+                if msg.get("role") == "user" or msg.get("type") == "human":
+                    last_user_msg = msg.get("content", "")
+                    break
+            elif hasattr(msg, "type") and (msg.type == "human" or getattr(msg, "role", None) == "user"):
+                last_user_msg = getattr(msg, "content", "")
+                break
+
+        if last_user_msg:
+            query_lower = last_user_msg.lower()
+            is_enterprise_adaptation = any(kw in query_lower for kw in ["adapt", "adapts", "adaptation", "customer support", "enterprise", "use case"])
+
+            if is_enterprise_adaptation:
+                # Provide enterprise-specific follow-ups
+                return [
+                    "Want to see how this adapts to internal documentation use cases?",
+                    "Curious about the cost breakdown at 100k users?",
+                    "Should I show the code changes needed for CRM integration?"
         ]
 
     # PRIORITY 2: Conversation guidance flags (from validate_conversation_guidance)
@@ -734,6 +892,37 @@ def _build_followups(variant: str, intent: str = "general", active_subcats: List
     if chat_history and len(chat_history) >= 2:
         # Analyze conversation pattern to infer progression (scalable version)
         flow_analysis = _analyze_conversation_flow(chat_history, session_memory)
+
+        # Use conversation arc prediction for proactive follow-ups
+        topics = session_memory.get("topics", []) if session_memory else []
+        predicted_topics = _predict_next_topics(role_mode, topics[-3:], conversation_phase)
+
+        if predicted_topics:
+            # Generate follow-ups based on predicted next topics
+            if "synthesis" in predicted_topics or "big_picture" in predicted_topics:
+                return [
+                    "Want to see how all these pieces connect end-to-end?",
+                    "Ready for a synthesis of what we've covered?",
+                    "Should I map out how everything works together?"
+                ]
+            elif "enterprise_adaptation" in predicted_topics:
+                return [
+                    "Want to see how this adapts to enterprise use cases?",
+                    "Curious about customer support or internal documentation applications?",
+                    "Should I show how the architecture scales to different domains?"
+                ]
+            elif "implementation" in predicted_topics or "code_walkthrough" in predicted_topics:
+                return [
+                    "Want to see the actual code implementation?",
+                    "Curious about the code-level architecture?",
+                    "Should I show the node implementations?"
+                ]
+            elif "cost_analysis" in predicted_topics:
+                return [
+                    "Want to see the cost breakdown at scale?",
+                    "Curious about the pricing model?",
+                    "Should I show the ROI calculations?"
+                ]
 
         # Generate context-aware followups based on progression pattern
         if flow_analysis.get("pattern") == "orchestration_to_enterprise":
@@ -1272,8 +1461,30 @@ def build_conversation_graph():
 
     enriched_answer = "\n".join(section for section in sections if section is not None)
 
-    # Validate answer for cross-turn references and memory demonstration
+    # SAFETY NET: Ensure turn references are present for Turn 3+
     chat_history = state.get("chat_history", [])
+    current_turn = sum(1 for msg in chat_history
+                       if (isinstance(msg, dict) and msg.get("role") == "user") or
+                          (hasattr(msg, "type") and msg.type == "human")) + 1
+
+    if current_turn >= 3 and enriched_answer:
+        # Check if answer already has turn references
+        turn_reference_patterns = ["turn 1", "turn 2", "turn 3", "building on", "earlier discussion"]
+        has_reference = any(pattern in enriched_answer.lower() for pattern in turn_reference_patterns)
+
+        if not has_reference:
+            # Inject turn reference at the start
+            previous_topic = _detect_previous_topic(chat_history)
+            if previous_topic:
+                turn_prefix = f"Building on our {previous_topic} discussion from Turn {current_turn - 1}, "
+                # Lowercase first letter of answer to make it flow naturally
+                if enriched_answer and enriched_answer[0].isupper():
+                    enriched_answer = turn_prefix + enriched_answer[0].lower() + enriched_answer[1:]
+                else:
+                    enriched_answer = turn_prefix + enriched_answer
+                logger.info(f"Injected turn reference at format_answer: Turn {current_turn}")
+
+    # Validate answer for cross-turn references and memory demonstration
     if enriched_answer and chat_history and len(chat_history) >= 4:
         # Validate cross-turn references
         validation = _validate_cross_turn_references(enriched_answer, chat_history)
@@ -1297,6 +1508,48 @@ def build_conversation_graph():
     if followups:
         partial_update["followup_prompts"] = followups
     return partial_update
+
+
+def _detect_previous_topic(chat_history: List[Dict]) -> str:
+    """Detect the topic from the previous turn's conversation.
+
+    Args:
+        chat_history: List of conversation messages
+
+    Returns:
+        Topic string (e.g., "orchestration", "architecture") or empty string
+    """
+    if not chat_history or len(chat_history) < 2:
+        return ""
+
+    # Look at the last assistant message to extract topic
+    # Go backwards to find the most recent assistant message
+    for msg in reversed(chat_history[-6:]):  # Check last 6 messages
+        if isinstance(msg, dict):
+            role = msg.get("role") or msg.get("type", "")
+            content = msg.get("content", "")
+        elif hasattr(msg, "type"):
+            role = msg.type
+            content = getattr(msg, "content", "")
+        else:
+            continue
+
+        if role in ["assistant", "ai"]:
+            content_lower = content.lower()
+            # Extract key topics from the assistant's response
+            topic_keywords = {
+                "orchestration": ["orchestration", "langgraph", "nodes", "pipeline"],
+                "architecture": ["architecture", "stack", "system design"],
+                "enterprise": ["enterprise", "customer support", "adaptation"],
+                "retrieval": ["retrieval", "rag", "pgvector", "chunks"],
+                "deployment": ["deployment", "production", "infrastructure"]
+            }
+
+            for topic, keywords in topic_keywords.items():
+                if any(kw in content_lower for kw in keywords):
+                    return topic
+
+    return ""
 
 
 def _validate_cross_turn_references(answer: str, chat_history: List[Dict]) -> Dict[str, Any]:

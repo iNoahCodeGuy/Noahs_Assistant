@@ -130,6 +130,13 @@ def initialize_conversation_state(state: ConversationState) -> ConversationState
         state.setdefault("clarification_needed", False)
         state.setdefault("clarifying_question", "")
 
+        # CRITICAL: Clear volatile classification fields from previous turns
+        # These must be re-computed for each query by classify_intent
+        state["query_type"] = None  # Will be set by classify_intent
+        state["menu_choice"] = None  # Will be set if menu selection detected
+        state["is_repeated_menu_selection"] = False  # Reset per turn
+        state["edge_case_type"] = None  # Will be set by edge case detection
+
     return state
 
 

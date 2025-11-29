@@ -172,6 +172,132 @@ Ask which direction sounds interesting.""",
     )
 
 
+def handle_reformulation_loop(state: ConversationState) -> ConversationState:
+    """Generate clarification response when user repeats same query.
+
+    Uses conversational style (not teaching) to help user clarify what they need.
+
+    CRITICAL: If no relevant previous answer exists, skip reformulation handling
+    and let normal generation proceed.
+
+    ALSO: If we're already in a reformulation response (draft contains "I notice you've asked"),
+    don't double-trigger - this prevents recursive self-reference.
+
+    Args:
+        state: Conversation state with query, chat_history, edge_case_type="reformulation_loop"
+
+    Returns:
+        Updated state with answer and draft_answer set to clarification response,
+        OR state with edge_case_handled=False if no relevant previous answer exists
+    """
+    query = state.get("query", "")
+    chat_history = state.get("chat_history", [])
+
+    # PREVENT RECURSION: Check if we're already in a reformulation response
+    # draft_answer may be None (e.g., after pipeline_halt clears it), so coerce to string
+    draft = state.get("draft_answer") or ""
+    if "I notice you've asked" in draft:
+        # Don't double-trigger reformulation - this causes recursive self-reference
+        logger.info("Already in reformulation response - preventing recursive trigger")
+        state["edge_case_handled"] = False
+        return state
+
+    # Find the previous answer to this topic
+    previous_answer_summary, found_relevant = _extract_previous_answer_summary(chat_history, query)
+
+    # If no relevant previous answer exists, don't handle as reformulation
+    if not found_relevant:
+        logger.info("No relevant previous answer found - skipping reformulation handling")
+        state["edge_case_handled"] = False
+        # Clear the edge case from session_memory so generate_draft doesn't trigger again
+        session_memory = state.get("session_memory", {})
+        if session_memory.get("last_edge_case") == "reformulation_loop":
+            session_memory["last_edge_case"] = None
+        return state
+
+    # Use conversational style (not teaching) for clarification
+    response = f"""I notice you've asked about this topic a few times. Let me clarify:
+
+**What I explained earlier:**
+{previous_answer_summary}
+
+**What might need clarification:**
+1. Want more specific code examples?
+2. Need clarification on a particular aspect?
+3. Should I compare to other use cases?
+4. Want me to explain it differently?
+
+Which would be most helpful?"""
+
+    state["answer"] = response
+    state["draft_answer"] = response
+    state["edge_case_handled"] = True
+    return state
+
+
+def _extract_previous_answer_summary(chat_history: list, query: str) -> tuple:
+    """Extract summary of previous answer that actually addressed the query topic.
+
+    CRITICAL: Must find an answer that actually addressed the topic,
+    not just the most recent assistant message.
+
+    ALSO: Skip reformulation responses ("I notice you've asked...") - these are
+    not real answers and would cause recursive self-reference if quoted.
+
+    Args:
+        chat_history: Conversation history
+        query: Current query
+
+    Returns:
+        Tuple of (summary_text, found_relevant_answer)
+        - summary_text: Summary of previous answer (first 200 chars) or fallback message
+        - found_relevant_answer: True if we found an answer that addressed the topic
+    """
+    import re
+
+    # Extract key topic words from the query (excluding stop words)
+    stop_words = {"the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+                  "have", "has", "had", "do", "does", "did", "will", "would", "could",
+                  "should", "may", "might", "can", "what", "how", "why", "when", "where",
+                  "who", "to", "for", "of", "in", "on", "at", "see", "me", "tell", "about",
+                  "explain", "you", "please", "i", "want", "need", "know", "it", "this",
+                  "that", "program", "programs", "be"}
+
+    # Remove punctuation before extracting words
+    query_normalized = re.sub(r'[^\w\s]', '', query.lower())
+    query_words = set(query_normalized.split()) - stop_words
+
+    # Search backwards for an answer that contains query topic words
+    for msg in reversed(chat_history):
+        if isinstance(msg, dict):
+            content = msg.get("content", "")
+            msg_type = msg.get("type", "") or msg.get("role", "")
+        else:
+            content = getattr(msg, "content", "") if hasattr(msg, "content") else ""
+            msg_type = getattr(msg, "type", "") or getattr(msg, "role", "")
+
+        if msg_type in ("ai", "assistant") and content:
+            # CRITICAL: Skip reformulation responses - they're not real answers
+            # This prevents recursive self-reference in answers
+            if "I notice you've asked" in content:
+                logger.debug("Skipping reformulation response when extracting previous answer")
+                continue
+
+            # Skip very short responses (likely greetings or acknowledgments)
+            if len(content) < 100:
+                continue
+
+            content_lower = content.lower()
+            # Check if this answer contains query topic words
+            matching_words = sum(1 for word in query_words if word in content_lower)
+            if matching_words >= 2:  # At least 2 topic words must match
+                summary = content[:200] + "..." if len(content) > 200 else content
+                return (summary, True)
+
+    # No relevant previous answer found
+    return ("I haven't fully addressed this topic yet. Let me explain:", False)
+
+
 def _get_fallback_response(edge_case_type: str, is_technical: bool) -> str:
     """Fallback template responses if LLM fails.
 

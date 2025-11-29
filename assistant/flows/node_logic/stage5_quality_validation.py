@@ -19,6 +19,7 @@ Design Principles:
 """
 
 import logging
+import re
 from typing import Dict, Any, List, Set
 
 from assistant.state.conversation_state import ConversationState
@@ -26,12 +27,23 @@ from assistant.state.conversation_state import ConversationState
 logger = logging.getLogger(__name__)
 
 
+def _should_use_teaching_style(state: ConversationState) -> bool:
+    """Determine if answer should use John Danaher-style teaching structure.
+
+    Import here to avoid circular dependency.
+    """
+    from assistant.flows.node_logic.stage5_generation_nodes import _should_use_teaching_style
+    return _should_use_teaching_style(state)
+
+
 def validate_answer_quality(state: ConversationState) -> ConversationState:
     """Quality gate: ensure answer addresses query and isn't repetitive.
 
-    Performs two key checks:
+    Performs checks:
     1. Relevance: Does answer contain key terms from query?
     2. Novelty: Is answer different from recent responses?
+    3. Turn references: Does answer reference previous turns when it should?
+    4. Teaching structure: Does answer follow teaching structure when required?
 
     Scalability: Only compares with last 4 responses (bounded for 100+ turns).
 
@@ -48,18 +60,22 @@ def validate_answer_quality(state: ConversationState) -> ConversationState:
         "answer_relevance_low_0.25"
     """
     query = state.get("query", "").lower()
-    answer = state.get("draft_answer", "").lower()
+    answer = state.get("draft_answer", "")
+    answer_lower = answer.lower() if answer else ""
     chat_history = state.get("chat_history", [])
 
     if not query or not answer:
         return state
 
     quality_issues = []
+    current_turn = state.get("conversation_turn", 0)
+    depth_level = state.get("depth_level", 1)
+    should_teach = _should_use_teaching_style(state)
 
     # 1. RELEVANCE CHECK: Extract key terms from query
     query_words = [w for w in query.split() if len(w) > 3]
     if query_words:
-        answer_words = set(answer.split())
+        answer_words = set(answer_lower.split())
         overlap = sum(1 for word in query_words if word in answer_words)
         relevance = overlap / len(query_words)
 
@@ -92,7 +108,7 @@ def validate_answer_quality(state: ConversationState) -> ConversationState:
         if prev_response and len(prev_response) > 50:  # Skip very short responses
             # Simple word overlap similarity
             prev_words = set(prev_response.split())
-            answer_words_set = set(answer.split())
+            answer_words_set = set(answer_lower.split())
             if prev_words and answer_words_set:
                 intersection = len(prev_words & answer_words_set)
                 union = len(prev_words | answer_words_set)
@@ -103,6 +119,38 @@ def validate_answer_quality(state: ConversationState) -> ConversationState:
                     quality_issues.append(f"answer_too_similar_{similarity:.2f}")
                     logger.warning(f"Answer too similar to previous response: {similarity:.2f}")
                     break  # Only flag once
+
+    # 3. TURN REFERENCE VALIDATION (conditional)
+    if current_turn >= 3 and not state.get("is_greeting", False):
+        has_turn_reference = any(
+            re.search(pattern, answer, re.IGNORECASE)
+            for pattern in [r"turn \d+", r"Turn \d+", r"building on", r"following up", r"we discussed", r"earlier"]
+        )
+
+        # Only warn if answer should reference but doesn't (not for every answer)
+        if not has_turn_reference and depth_level >= 2:
+            # Check if query relates to previous topics
+            session_memory = state.get("session_memory", {})
+            topics = session_memory.get("topics", [])
+
+            # If query relates to previous topics, should reference
+            relates_to_previous = any(topic in query for topic in topics[-3:]) if topics else False
+            if relates_to_previous:
+                quality_issues.append("answer_missing_turn_reference")
+                logger.warning(f"Answer at Turn {current_turn} missing turn references when query relates to previous topics")
+
+    # 4. TEACHING STRUCTURE VALIDATION (only when teaching style should be used)
+    if should_teach:
+        # Check for systematic enumeration
+        has_numbering = bool(re.search(r'\b(1|2|3|4|5)[\.\)]', answer))
+        has_purpose = "purpose" in answer_lower or "why" in answer_lower
+
+        if not has_numbering:
+            quality_issues.append("teaching_structure_missing_enumeration")
+            logger.warning("Teaching style answer missing systematic enumeration")
+        if not has_purpose:
+            quality_issues.append("teaching_structure_missing_purpose")
+            logger.warning("Teaching style answer missing purpose statements")
 
     if quality_issues:
         state["answer_quality_warning"] = "; ".join(quality_issues)

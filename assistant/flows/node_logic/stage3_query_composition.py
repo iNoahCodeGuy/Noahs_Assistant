@@ -9,6 +9,54 @@ from assistant.observability.langsmith_tracer import create_custom_span
 logger = logging.getLogger(__name__)
 
 
+def _correct_common_typos(query: str) -> str:
+    """Correct common typos that affect retrieval quality.
+
+    Args:
+        query: Original user query
+
+    Returns:
+        Query with typos corrected
+    """
+    corrections = {
+        # Architecture typos
+        "archexture": "architecture",
+        "archetecture": "architecture",
+        "architechture": "architecture",
+        "architecure": "architecture",
+        "architectxure": "architecture",  # 'x' typo
+        "architexture": "architecture",   # 'x' typo variant
+        "archtecture": "architecture",    # missing 'i'
+        "architeture": "architecture",    # missing 'c'
+        "architectre": "architecture",    # missing 'u'
+        # Customer typos
+        "custmer": "customer",
+        "cusotmer": "customer",           # transposition
+        "customr": "customer",            # missing 'e'
+        # Support typos
+        "suport": "support",
+        "supprot": "support",             # transposition
+        "supoprt": "support",             # transposition
+        # Enterprise typos
+        "enterpise": "enterprise",
+        "enterprize": "enterprise",       # 'z' variant
+        "enterpris": "enterprise",        # missing 'e'
+        # Adaptation typos
+        "adaptaion": "adaptation",
+        "adaption": "adaptation",         # missing 'a'
+        "addaptation": "adaptation",      # double 'd'
+    }
+    original = query
+    query_lower = query.lower()
+    for typo, correct in corrections.items():
+        if typo in query_lower:
+            # Preserve original case
+            import re
+            query = re.sub(re.escape(typo), correct, query, flags=re.IGNORECASE)
+            logger.info(f"Corrected typo: '{typo}' → '{correct}' in query")
+    return query
+
+
 def _expand_menu_selection(menu_choice: str, role_mode: str) -> str:
     """Expand menu number to full retrieval query based on role.
 
@@ -81,6 +129,15 @@ def compose_query(state: ConversationState) -> ConversationState:
             # Expand menu selection to full retrieval query
             expanded_query = _expand_menu_selection(menu_choice, role_mode)
 
+            # FALLBACK: Check if the ORIGINAL query (not menu_choice) has enterprise keywords
+            # This handles cases where follow-up selections contain enterprise terms
+            original_query = state.get("query", "").lower()
+            enterprise_keywords = ["adapt", "customer support", "enterprise", "use case", "chatbot"]
+            if any(kw in original_query for kw in enterprise_keywords):
+                # Override menu expansion with enterprise-focused query
+                expanded_query = f"{original_query} enterprise adaptation guide customer support ROI what to change"
+                logger.info(f"Enterprise fallback: overriding menu expansion with enterprise terms")
+
             # Add role context for better retrieval
             if role_mode:
                 composed = f"[{role_mode}] {expanded_query}"
@@ -103,6 +160,8 @@ def compose_query(state: ConversationState) -> ConversationState:
 
         # Regular query composition for non-menu queries
         base_query = state.get("expanded_query") or state.get("query", "")
+        # Fix typos before composition to improve retrieval quality
+        base_query = _correct_common_typos(base_query)
         role_hint = state.get("role_mode", "")
         entity_hint = state.get("entities", {})
 
@@ -150,20 +209,34 @@ def compose_query(state: ConversationState) -> ConversationState:
         # Special handling for enterprise adaptation queries
         # Detect queries about adapting architecture to use cases (customer support, enterprise, etc.)
         base_lower = base_query.lower()
-        if "adapt" in base_lower or "adapts" in base_lower:
+        enterprise_keywords = ["adapt", "adapts", "adaptation", "customer support", "enterprise",
+                               "use case", "chatbot", "internal docs", "sales enablement"]
+        is_enterprise_query = any(kw in base_lower for kw in enterprise_keywords)
+
+        if is_enterprise_query:
             # PRESERVE original terms + add enhancement (don't replace)
             # Extract key terms from original query to ensure they're preserved
             original_key_terms = []
             if "customer support" in base_lower or "support" in base_lower:
                 original_key_terms.extend(["customer", "support", "adapt"])
                 if "customer support" not in composed.lower():
-                    composed = f"{composed} customer support adaptation enterprise chatbot use case"
-                    logger.debug("Enhanced query with customer support adaptation")
+                    # Add specific terms that match ENTERPRISE_ADAPTATION_GUIDE.md
+                    composed = f"{composed} customer support chatbot enterprise adaptation guide what to change knowledge base roles actions expected ROI"
+                    logger.debug("Enhanced query with customer support adaptation guide terms")
             elif "enterprise" in base_lower:
                 original_key_terms.extend(["enterprise", "adapt"])
                 if "enterprise adaptation" not in composed.lower():
-                    composed = f"{composed} enterprise adaptation patterns deployment customization"
+                    composed = f"{composed} enterprise adaptation guide patterns deployment customization"
                     logger.debug("Enhanced query with enterprise adaptation pattern")
+            elif "architecture" in base_lower and ("support" in base_lower or "adapt" in base_lower):
+                # Handle "architecture adapts to customer support" type queries
+                original_key_terms.extend(["architecture", "adapt"])
+                composed = f"{composed} enterprise adaptation guide customer support chatbot what to change ROI"
+                logger.debug("Enhanced architecture adaptation query")
+            else:
+                # General enterprise/use case query
+                composed = f"{composed} enterprise adaptation guide use cases"
+                logger.debug("Enhanced query with general enterprise terms")
 
             # VALIDATION: Ensure original key terms are preserved
             if original_key_terms:

@@ -30,6 +30,10 @@ from assistant.core.rag_engine import RagEngine
 from assistant.flows import content_blocks
 from assistant.flows.node_logic.util_code_validation import sanitize_generated_answer
 from assistant.config.supabase_config import supabase_settings
+from assistant.flows.node_logic.chain_of_thought import (
+    chain_of_thought_generate,
+    detect_confusion_signals,
+)
 
 # Module-level verification - this will print when module is imported
 print(">>> stage5_generation_nodes.py MODULE LOADED <<<", file=sys.stderr, flush=True)
@@ -122,6 +126,67 @@ MENU_OPTION_TWO_MAX_RETRIES = 2
 
 # Context window management constants
 MAX_CONTEXT_TOKENS = 4000  # Leave room for prompt + response (model limit typically 8k-128k)
+
+
+def _extract_topic_words(query: str) -> List[str]:
+    """Extract key topic words from a query (excluding stop words).
+
+    Reuses logic from util_edge_case_detection for consistency.
+
+    Args:
+        query: User query text
+
+    Returns:
+        List of important topic words
+    """
+    stop_words = {"the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+                  "have", "has", "had", "do", "does", "did", "will", "would", "could",
+                  "should", "may", "might", "can", "what", "how", "why", "when", "where",
+                  "who", "to", "for", "of", "in", "on", "at", "see", "me", "tell", "about",
+                  "explain", "you", "please", "i", "want", "need", "know", "it", "this",
+                  "that", "program", "programs", "be", "adapted", "could", "would"}
+
+    # Remove punctuation before extracting words
+    normalized = re.sub(r'[^\w\s]', '', query.lower())
+    words = normalized.split()
+    return [w for w in words if w not in stop_words and len(w) > 2]
+
+
+def _validate_answer_relevance(query: str, answer: str) -> bool:
+    """Check if answer addresses the query topic.
+
+    This validation ensures the LLM-generated answer actually addresses
+    the user's question, preventing off-topic responses that copy chunks verbatim.
+
+    Args:
+        query: Original user query
+        answer: Generated answer text
+
+    Returns:
+        True if answer contains at least 2 query topic words, False otherwise
+    """
+    if not query or not answer:
+        return False
+
+    query_topics = _extract_topic_words(query)
+    if not query_topics:
+        # Query too short or all stop words - skip validation
+        return True
+
+    answer_lower = answer.lower()
+    matches = sum(1 for topic in query_topics if topic in answer_lower)
+
+    # Require at least 2 topic matches (or 1 if query has only 1-2 topics)
+    min_matches = min(2, len(query_topics))
+    is_relevant = matches >= min_matches
+
+    if not is_relevant:
+        logger.warning(
+            f"Answer validation failed: Query topics {query_topics[:5]} not found in answer. "
+            f"Found {matches}/{len(query_topics)} matches. Answer starts: {answer[:100]}"
+        )
+
+    return is_relevant
 
 
 def _validate_menu_option_one_answer(answer: str) -> Dict[str, Any]:
@@ -728,6 +793,105 @@ def _format_memory_context(session_memory: Dict[str, Any]) -> str:
         return "Memory initialized but no signals accumulated yet"
 
 
+def _generate_conversation_logic_explanation(state: ConversationState) -> str:
+    """Generate explanation of conversation logic for meta-teaching.
+
+    Allows Portfolia to explain her own conversation progression,
+    memory accumulation, and inference improvement.
+
+    Args:
+        state: Current conversation state
+
+    Returns:
+        Formatted explanation string, or empty string if not applicable
+    """
+    session_memory = state.get("session_memory", {})
+    chat_history = state.get("chat_history", [])
+    topics = session_memory.get("topics", [])
+    metrics = session_memory.get("progressive_inference_metrics", {})
+
+    # Calculate current turn
+    current_turn = sum(1 for msg in chat_history
+                      if (isinstance(msg, dict) and (msg.get("role") == "user" or msg.get("type") == "human")) or
+                         (hasattr(msg, "type") and msg.type == "human")) + 1
+
+    similarity_history = metrics.get("retrieval_similarity_history", [])
+    depth_level = state.get("depth_level", 1)
+    conversation_phase = state.get("conversation_phase", "discovery")
+    role = state.get("role", "Not set")
+    role_mode = state.get("role_mode", "unknown")
+
+    # Build similarity progression text
+    similarity_text = ""
+    if similarity_history and len(similarity_history) >= 2:
+        sim_values = [f"Turn {entry.get('turn', '?')}: {entry.get('similarity', 0):.3f}"
+                     for entry in similarity_history[-3:]]
+        similarity_text = f"\n**Retrieval Similarity Progression**:\n- " + "\n- ".join(sim_values)
+
+        # Calculate improvement
+        if len(similarity_history) >= 2:
+            first_sim = similarity_history[0].get("similarity", 0)
+            last_sim = similarity_history[-1].get("similarity", 0)
+            improvement = last_sim - first_sim
+            if improvement > 0:
+                similarity_text += f"\n- Improvement: +{improvement:.3f} ({improvement/first_sim*100:.1f}% better)"
+
+    # Build topics text
+    topics_text = ", ".join(topics[-5:]) if topics else "None yet"
+
+    # Build turn-by-turn summary
+    turn_summaries = []
+    turn_num = 1
+    for i in range(0, min(len(chat_history), 6), 2):
+        if i < len(chat_history):
+            user_msg = chat_history[i]
+            if isinstance(user_msg, dict):
+                content = user_msg.get("content", "")[:60]
+            else:
+                content = getattr(user_msg, "content", "")[:60] if hasattr(user_msg, "content") else ""
+
+            if content:
+                turn_summaries.append(f"Turn {turn_num}: \"{content}...\"")
+                turn_num += 1
+
+    turn_summary_text = "\n".join(turn_summaries) if turn_summaries else "No turns yet"
+
+    explanation = f"""**Here's what I know about our conversation:**
+
+**Current State:**
+- Turn Number: {current_turn}
+- Your Role: {role} ({role_mode})
+- Conversation Phase: {conversation_phase}
+- Depth Level: {depth_level} (1=overview, 2=guided detail, 3=deep dive)
+
+**Topics We've Covered:**
+{topics_text}
+
+**Turn-by-Turn Summary:**
+{turn_summary_text}
+{similarity_text}
+
+**How My Inference Has Improved:**
+1. **Turn 1**: I sent a greeting and detected your role → stored `role_mode: {role_mode}`
+2. **Each Turn**: I compose your query with role context, improving retrieval similarity
+3. **Memory Accumulation**: Topics, entities, and affinity scores build up in `session_memory`
+4. **Progressive Depth**: As we talk more, `depth_level` increases → I provide more detail
+
+**What I'm Tracking:**
+- Conversation patterns (orchestration → enterprise, general → specific)
+- Quality flags (if answers get repetitive, I redirect)
+- Phase transitions (discovery → exploration → synthesis)
+
+This is the progressive inference that makes me smarter with each turn. The orchestration layer's intelligence comes from stateless nodes working with stateful memory - each node executes independently, but memory creates the thread that connects them into progressively smarter behavior.
+
+**Want to explore more?**
+- Ask about how I detect conversation patterns
+- See how my retrieval improves with context
+- Understand how I decide what to show you"""
+
+    return explanation
+
+
 def _detect_abstraction_level(query: str, role: str, chat_history: List[Dict]) -> str:
     """Detect abstraction level from query and conversation context.
 
@@ -765,6 +929,37 @@ def _detect_abstraction_level(query: str, role: str, chat_history: List[Dict]) -
     if role in ["Hiring Manager (technical)", "Software Developer"]:
         return "architecture"
     return "architecture"
+
+
+def _should_use_teaching_style(state: ConversationState) -> bool:
+    """Determine if answer should use John Danaher-style teaching structure.
+
+    Teaching style is used when:
+    - depth_level >= 2 AND query asks "how"/"explain"
+    - OR depth_level == 3 (deep dive)
+    - OR abstraction_level detected (architecture/function/implementation)
+    - OR query intent is technical/engineering AND depth_level >= 2
+
+    Returns:
+        True if teaching style should be used, False for conversational
+    """
+    depth_level = state.get("depth_level", 1)
+    query = state.get("query", "").lower()
+    role = state.get("role", "")
+    chat_history = state.get("chat_history", [])
+    abstraction_level = _detect_abstraction_level(query, role, chat_history)
+    intent = state.get("query_intent") or state.get("query_type", "")
+
+    # Explicit teaching requests
+    teaching_keywords = ["how", "explain", "walk through", "show me how", "tell me about"]
+    is_explanation_query = any(kw in query for kw in teaching_keywords)
+
+    # Deep dive or architecture questions
+    is_deep_dive = depth_level == 3
+    is_architecture = abstraction_level == "architecture"
+    is_technical = intent in {"technical", "engineering"} and depth_level >= 2
+
+    return (is_explanation_query and depth_level >= 2) or is_deep_dive or is_architecture or is_technical
 
 
 def _assess_query_complexity(query: str, chat_history: List[Dict], retrieved_chunks: List[Dict]) -> str:
@@ -1095,6 +1290,60 @@ def _build_context_management_explanation(chat_history: List[Dict], current_turn
     return explanation
 
 
+def _should_use_chain_of_thought(state: ConversationState) -> bool:
+    """Determine if query benefits from explicit chain-of-thought reasoning.
+
+    Use CoT for:
+    - Enterprise/adaptation queries (critical for business value)
+    - User showing confusion signals
+    - Complex multi-part questions
+    - Deep conversations (10+ messages)
+    - Explicit explanation requests
+
+    Args:
+        state: Current conversation state
+
+    Returns:
+        True if CoT should be used, False otherwise
+    """
+    query = state.get("query", "").lower()
+    chat_history = state.get("chat_history", [])
+
+    # Always use for enterprise queries (critical for your use case)
+    enterprise_keywords = [
+        "adapt", "enterprise", "customer support", "use case",
+        "how would", "how could", "apply", "scales to", "scaling",
+        "production", "deploy", "integrate", "customize"
+    ]
+    if any(kw in query for kw in enterprise_keywords):
+        logger.info(f"CoT triggered: enterprise keywords detected in '{query[:50]}'")
+        return True
+
+    # Check for confusion signals
+    confusion = detect_confusion_signals(query, chat_history)
+    if confusion.get("seems_confused"):
+        logger.info(f"CoT triggered: confusion signals detected - {confusion.get('signals', [])}")
+        return True
+
+    # Complex multi-part questions
+    if query.count("?") > 1 or " and " in query:
+        logger.info(f"CoT triggered: complex multi-part question detected")
+        return True
+
+    # Deep conversations (10+ messages = 5+ exchanges)
+    if len(chat_history) >= 10:
+        logger.info(f"CoT triggered: deep conversation ({len(chat_history)} messages)")
+        return True
+
+    # Explicit explanation requests
+    explanation_patterns = ["explain", "walk me through", "how does", "why does", "teach me"]
+    if any(p in query for p in explanation_patterns):
+        logger.info(f"CoT triggered: explanation request detected")
+        return True
+
+    return False
+
+
 def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str, Any]:
     """Generate a draft assistant response using retrieved context.
 
@@ -1169,6 +1418,26 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         logger.error("generate_draft called without query in state")
         raise KeyError("State must contain 'query' field for generation") from e
 
+    # Handle reformulation loop edge case early
+    # Check for reformulation loop in session_memory (where edge case detection stores it)
+    session_memory = state.get("session_memory", {})
+    if session_memory.get("last_edge_case") == "reformulation_loop":
+        from assistant.flows.node_logic.util_conversational_edge_case_handler import handle_reformulation_loop
+        logger.info("Reformulation loop detected - attempting clarification response")
+        result = handle_reformulation_loop(state)
+        # CRITICAL: Only return early if the handler actually handled the case
+        # If no relevant previous answer exists, edge_case_handled will be False
+        # and we should continue with normal generation
+        if result.get("edge_case_handled", False):
+            logger.info("Reformulation handler successfully generated clarification")
+            return {
+                "draft_answer": result.get("draft_answer", ""),
+                "answer": result.get("answer", ""),
+                "edge_case_handled": True
+            }
+        else:
+            logger.info("Reformulation handler found no relevant previous answer - proceeding with normal generation")
+
     # #region agent log
     try:
         log_path = _get_debug_log_path()
@@ -1196,11 +1465,31 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         pass
     # #endregion
 
-    # Check if user is asking about edge case detection (meta-teaching)
-    # This happens when user asks "how did you detect" after an edge case was handled
+    # Check if user is asking about conversation logic (self-explanation)
+    # This allows Portfolia to explain her own conversation progression
     query_lower = query.lower()
     session_memory = state.get("session_memory", {})
 
+    conversation_logic_phrases = [
+        "how do you know", "how did you detect", "what turn", "how many turns",
+        "what have we covered", "explain your reasoning", "how are you tracking",
+        "what do you know about me", "what have you learned", "how does your inference",
+        "how do you remember", "how does your memory", "what topics", "how are you getting smarter"
+    ]
+
+    if any(phrase in query_lower for phrase in conversation_logic_phrases):
+        # Generate conversation logic explanation
+        explanation = _generate_conversation_logic_explanation(state)
+        if explanation:
+            logger.info("Conversation logic self-explanation generated")
+            return {
+                "draft_answer": explanation,
+                "answer": explanation,
+                "self_explanation_generated": True
+            }
+
+    # Check if user is asking about edge case detection (meta-teaching)
+    # This happens when user asks "how did you detect" after an edge case was handled
     if session_memory.get("last_edge_case") and any(
         phrase in query_lower for phrase in [
             "how did you detect", "how do you handle", "explain the detection",
@@ -1219,6 +1508,38 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         except Exception as e:
             logger.warning(f"Failed to generate meta-teaching explanation: {e}")
             # Fall through to normal generation
+
+    # ========== Chain-of-Thought for Complex Queries ==========
+    # Use CoT for enterprise queries, confusion signals, complex questions, etc.
+    if _should_use_chain_of_thought(state):
+        logger.info(f"Using Chain-of-Thought generation for: {query[:50]}...")
+        try:
+            cot_result = chain_of_thought_generate(state, rag_engine)
+
+            # If CoT determined clarification is needed, return early
+            if cot_result.get("clarification_needed"):
+                logger.info("CoT determined clarification needed")
+                return {
+                    "draft_answer": cot_result.get("clarifying_question", ""),
+                    "answer": cot_result.get("clarifying_question", ""),
+                    "clarification_needed": True,
+                    "cot_reasoning": cot_result.get("cot_reasoning"),
+                    "cot_metadata": cot_result.get("cot_metadata"),
+                    "cot_enabled": True,
+                }
+
+            # Return CoT-generated answer
+            logger.info(f"CoT generation complete. Reasoning time: {cot_result.get('cot_metadata', {}).get('reasoning_time_ms', 'N/A')}ms")
+            return {
+                "draft_answer": cot_result.get("draft_answer", ""),
+                "answer": cot_result.get("answer", ""),
+                "cot_reasoning": cot_result.get("cot_reasoning"),
+                "cot_metadata": cot_result.get("cot_metadata"),
+                "cot_enabled": True,
+            }
+        except Exception as e:
+            logger.warning(f"CoT generation failed, falling back to standard: {e}")
+            # Fall through to standard generation
 
     # Access optional fields safely (Defensibility)
     retrieved_chunks = state.get("retrieved_chunks", [])
@@ -1374,6 +1695,37 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     # Add display intelligence based on query classification
     extra_instructions = []
 
+    # Check for retrieval topic mismatch - if chunks don't match query, use LLM fallback
+    if state.get("retrieval_topic_mismatch"):
+        logger.warning(f"Retrieval topic mismatch detected for query: {query[:50]}")
+        # Add explicit instruction to use LLM's inherent knowledge
+        enterprise_keywords = ["adapt", "adapts", "adaptation", "customer support", "enterprise",
+                               "use case", "chatbot", "internal docs", "sales enablement"]
+        is_enterprise_query = any(kw in query.lower() for kw in enterprise_keywords)
+
+        if is_enterprise_query:
+            fallback_instruction = (
+                "\n\n⚠️ CRITICAL: RETRIEVAL MISMATCH DETECTED\n"
+                "The retrieved context may not directly answer this question about enterprise adaptation.\n"
+                f"Based on your knowledge of RAG systems and enterprise AI patterns, please answer: {query}\n\n"
+                "If discussing enterprise adaptation, explain:\n"
+                "1. What components typically change (knowledge base, roles, actions)\n"
+                "2. What stays the same (orchestration pipeline)\n"
+                "3. Expected business value (ROI, cost savings, efficiency gains)\n"
+                "4. Code examples where relevant (ROLES dictionary, action handlers)\n\n"
+                "DO NOT rely solely on retrieved chunks - use your knowledge to provide a comprehensive answer.\n"
+            )
+        else:
+            fallback_instruction = (
+                "\n\n⚠️ CRITICAL: RETRIEVAL MISMATCH DETECTED\n"
+                "The retrieved context may not directly answer this question.\n"
+                f"Based on your knowledge, please answer: {query}\n\n"
+                "DO NOT rely solely on retrieved chunks - use your knowledge to provide a comprehensive answer.\n"
+            )
+
+        # Prepend fallback instruction to extra_instructions
+        extra_instructions.append(fallback_instruction)
+
     # Check retrieval quality and add synthesis instructions for moderate scores
     if retrieval_scores:
         top_similarity = max(retrieval_scores) if retrieval_scores else 0.0
@@ -1467,17 +1819,34 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         depth_level = metrics.get("depth_level", 1)
         topics_count = metrics.get("topics_count", 0)
 
-        progression_instructions = (
-            "\n\nCRITICAL: CONVERSATION PROGRESSION\n"
-            f"- You are at Turn {current_turn}. Reference previous turns explicitly: \"In Turn 3, you asked about orchestration...\", \"As we discussed in Turn 4...\"\n"
-            f"- Previous turns: {examples_text}\n"
-            "- MUST reference specific turns when explaining progression: \"From Turn 3 to Turn 4...\", \"Building on Turn 3's orchestration discussion...\"\n"
-            "- Connect current query to previous topics with turn references: \"You asked about X in Turn N, now you're asking about Y...\"\n"
-            f"- Show inference with turn progression: Turn 1 had no context (0%), Turn 2 detected your role (20%), Turn 3 extracted topics (40%), Turn 4+ has full context (60-85%)\n"
-            f"- Current conversation state: Depth level {depth_level}, Topics accumulated: {topics_count}\n"
-            "- DO NOT just echo retrieved chunks - synthesize with conversation context and reference specific turns\n"
-            "- Progress the conversation forward by connecting current query to previous discussion using turn numbers\n"
+        # Only require turn references when it makes sense (not for every answer)
+        should_reference = (
+            current_turn >= 3 and  # At least Turn 3
+            not state.get("is_greeting", False) and  # Not a greeting
+            depth_level >= 1  # Any depth level
         )
+
+        if should_reference:
+            # Natural turn reference instruction (conversational, not structural)
+            progression_instructions = (
+                f"\n\nCONVERSATION CONTEXT:\n"
+                f"- You are at Turn {current_turn}\n"
+                f"- Previous turns: {examples_text}\n"
+                f"- When relevant, naturally reference previous discussion using phrases like:\n"
+                f"  * 'Building on [Turn N]'s discussion of [topic]...'\n"
+                f"  * 'Following up on [Turn N]'s [topic] question...'\n"
+                f"  * 'You've progressed from [Turn X] → [Turn Y] → now [Turn Z]...'\n"
+                f"- Make references feel natural and conversational, not forced\n"
+                f"- If the current query doesn't relate to previous turns, don't force a reference\n"
+                f"- Current conversation state: Depth level {depth_level}, Topics accumulated: {topics_count}\n"
+            )
+        else:
+            # Early turns or greeting - no turn reference needed
+            progression_instructions = (
+                f"\n\nCONVERSATION CONTEXT:\n"
+                f"- You are at Turn {current_turn}\n"
+                f"- Current conversation state: Depth level {depth_level}, Topics accumulated: {topics_count}\n"
+            )
 
         # Add context management explanation for long conversations (teaching moment)
         if current_turn >= 15:
@@ -1500,6 +1869,58 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         extra_instructions.append(progression_instructions)
         extra_instructions.append(synthesis_instructions)
         logger.debug(f"Added enhanced conversation progression instructions with turn numbers (Turn {current_turn})")
+
+        # Conditional teaching style structure selection
+        should_teach = _should_use_teaching_style(state)
+        if should_teach:
+            abstraction_level = _detect_abstraction_level(query, role, chat_history)
+            if depth_level == 3 or abstraction_level == "architecture":
+                # Full 5-part Danaher structure
+                teaching_instruction = (
+                    "\n\nCRITICAL: JOHN DANAHER-STYLE TEACHING STRUCTURE (5-PART)\n"
+                    "Your answer MUST follow this structure:\n\n"
+                    "**1. Context-Setting Opening** (2-3 sentences with warmth):\n"
+                    "- If referencing previous turn, integrate naturally: 'Building on Turn N's discussion...'\n"
+                    "- Set the stage: 'Let me walk you through this systematically...'\n\n"
+                    "**2. Systematic Layer Enumeration** (core answer):\n"
+                    "- Organize by layers/components with clear numbering (1, 2, 3...)\n"
+                    "- For each: Layer Name → Purpose → Implementation → Key Metric\n\n"
+                    "**3. Quantitative Evidence** (actual numbers):\n"
+                    "- Include real metrics from this conversation\n"
+                    "- Show costs, dimensions, performance numbers\n\n"
+                    "**4. Critical Insight** (1-3 sentences synthesis):\n"
+                    "- Connect layers to overarching principle\n"
+                    "- Example: 'The modularity is the architecture...'\n\n"
+                    "**5. Invitation to Explore** (3 numbered options):\n"
+                    "- Offer specific next explorations\n"
+                )
+            else:
+                # Condensed 3-part structure (for depth_level=2, connecting to previous turns)
+                teaching_instruction = (
+                    "\n\nCRITICAL: CONDENSED TEACHING STRUCTURE (3-PART)\n"
+                    "Your answer MUST follow this structure:\n\n"
+                    "**1. Natural Turn Reference + Opening** (1-2 sentences):\n"
+                    "- Reference previous turn conversationally: 'Building on Turn N's [topic]...'\n"
+                    "- Set up what you'll explain\n\n"
+                    "**2. Systematic Component Enumeration** (condensed):\n"
+                    "- 3-4 key components with Purpose statements\n"
+                    "- Brief implementation details\n"
+                    "- Key metrics\n\n"
+                    "**3. Critical Insight** (1 sentence):\n"
+                    "- Connect to previous discussion\n"
+                    "- Bridge to next natural step\n"
+                )
+            extra_instructions.append(teaching_instruction)
+        else:
+            # Conversational style - no systematic structure required
+            conversational_instruction = (
+                "\n\nCONVERSATIONAL STYLE:\n"
+                "- Answer naturally and conversationally\n"
+                "- If referencing previous turn, do so naturally: 'Following up on Turn N...'\n"
+                "- No systematic enumeration required\n"
+                "- Keep it brief and to the point\n"
+            )
+            extra_instructions.append(conversational_instruction)
 
     # Detect self-referential queries about inference/abstraction (expanded)
     query_lower = query.lower()
@@ -1760,6 +2181,31 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         }) + "\n")
     # #endregion
 
+    # Handle repeated menu selection
+    if state.get("is_repeated_menu_selection"):
+        menu_choice = state.get("menu_choice", "")
+        repeated_count = state.get("session_memory", {}).get("repeated_menu_count", 1)
+
+        if repeated_count == 1:
+            extra_instructions.append(
+                f"\n\nIMPORTANT: User selected menu option {menu_choice} again.\n"
+                f"Instead of repeating the same explanation, start your answer with:\n"
+                f"'I notice you selected option {menu_choice} again. Would you like me to:'\n"
+                f"1. Explore a different aspect of this topic\n"
+                f"2. Dive deeper into a specific part\n"
+                f"3. Move to a related topic\n"
+                f"Then offer 2-3 specific alternative explorations based on the menu option.\n"
+            )
+            logger.info(f"Added repeated menu selection handling for option {menu_choice}")
+        else:
+            # Multiple repetitions - suggest different topic
+            extra_instructions.append(
+                f"\n\nIMPORTANT: User has selected menu option {menu_choice} multiple times ({repeated_count} times).\n"
+                f"Start with: 'You seem very interested in this area! Let me suggest a completely different angle...'\n"
+                f"Then provide a fresh perspective or suggest exploring a different topic area entirely.\n"
+            )
+            logger.info(f"Added multiple repetition handling for option {menu_choice} (count: {repeated_count})")
+
     is_menu_option_two = (
         state.get("query_type") == "menu_selection" and
         state.get("menu_choice") == "2" and
@@ -1945,6 +2391,61 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
             "help the user truly understand. Use examples where helpful."
         )
 
+    # Detect enterprise adaptation queries and add specific instructions
+    query_lower = query.lower()
+    enterprise_keywords = ["adapt", "adapts", "adaptation", "customer support", "enterprise",
+                           "use case", "how would this work for", "scales to", "chatbot"]
+    is_enterprise_adaptation = any(kw in query_lower for kw in enterprise_keywords)
+
+    if is_enterprise_adaptation:
+        # Get turn context for reference
+        chat_history = state.get("chat_history", [])
+        current_turn = sum(1 for msg in chat_history
+                          if (isinstance(msg, dict) and (msg.get("role") == "user" or msg.get("type") == "human")) or
+                             (hasattr(msg, "type") and msg.type == "human")) + 1
+
+        # Detect previous topic for turn reference
+        previous_topic = None
+        for msg in reversed(chat_history[-4:]):
+            if isinstance(msg, dict):
+                if msg.get("role") == "assistant" or msg.get("type") == "ai":
+                    content = msg.get("content", "").lower()
+                    if "orchestration" in content:
+                        previous_topic = "orchestration"
+                        break
+                    elif "architecture" in content:
+                        previous_topic = "architecture"
+                        break
+
+        turn_reference = ""
+        if previous_topic and current_turn >= 3:
+            turn_reference = f"IMPORTANT: Start your answer with 'Building on Turn {current_turn - 1}'s {previous_topic} discussion...' to connect to previous context.\n\n"
+
+        extra_instructions.append(
+            f"\n\nCRITICAL: ENTERPRISE ADAPTATION EXPLANATION\n"
+            f"{turn_reference}"
+            f"The user wants to understand how the architecture adapts to customer support or enterprise use cases.\n\n"
+            f"Your answer MUST include:\n"
+            f"1. **The Three Components That Change**:\n"
+            f"   - Knowledge Base: Replace career_kb.csv with product docs/FAQs (same format: section,question,answer,source)\n"
+            f"   - Roles: Replace 'Hiring Manager' with 'Customer', 'Premium Customer', 'Partner'\n"
+            f"   - Actions: Replace 'send resume' with 'create ticket', 'escalate to agent'\n\n"
+            f"2. **What Stays The Same**: The entire LangGraph orchestration layer (8-stage pipeline, state management, retrieval engine)\n\n"
+            f"3. **Expected ROI**: 40-60% ticket reduction, 24/7 availability, <2s response time, $30-50K/year savings\n\n"
+            f"4. **Code Example**: Show the ROLES dictionary change (3-5 lines):\n"
+            f"   ```python\n"
+            f"   ROLES = {{\n"
+            f"       \"Customer\": {{\n"
+            f"           \"sources\": [\"product_docs\", \"faqs\"],\n"
+            f"           \"actions\": [\"create_ticket\", \"show_documentation\"]\n"
+            f"       }}\n"
+            f"   }}\n"
+            f"   ```\n\n"
+            f"5. **Critical Insight**: The orchestration layer's modularity makes enterprise adaptation possible - same pipeline, different data.\n\n"
+            f"Use teaching style (condensed 3-part structure) with systematic enumeration.\n"
+        )
+        logger.info("Added enterprise adaptation instructions to prompt")
+
     # Runtime awareness: Add content block to context if triggered
     if runtime_awareness_triggered and runtime_content_block:
         extra_instructions.append(
@@ -1995,6 +2496,23 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
 
     if should_gather_job_details(state):
         extra_instructions.append(get_job_details_prompt())
+
+    # Detect enterprise adaptation queries and enhance prompt
+    query_lower = query.lower()
+    is_enterprise_adaptation = any(kw in query_lower for kw in ["adapt", "adapts", "adaptation", "customer support", "enterprise", "use case"])
+
+    if is_enterprise_adaptation:
+        extra_instructions.append(
+            "\n\nCRITICAL: ENTERPRISE ADAPTATION QUERY - COMPREHENSIVE ANSWER REQUIRED\n"
+            "This is an enterprise adaptation query. Your answer MUST:\n"
+            "1. Explain HOW the architecture adapts (not just that it can adapt)\n"
+            "2. Include concrete examples (knowledge base changes, role changes, code snippets if relevant)\n"
+            "3. Mention expected ROI/metrics if available in retrieved chunks\n"
+            "4. Reference the Enterprise Adaptation Guide content from retrieved chunks\n"
+            "5. Be comprehensive and actionable - focus on the specific use case mentioned (e.g., 'customer support', 'internal docs')\n"
+            "6. Explain the adaptation process step-by-step: what changes, why, and how\n"
+            "7. Connect the current architecture to the enterprise use case clearly\n"
+        )
 
     # Build the instruction suffix
     instruction_suffix = " ".join(extra_instructions) if extra_instructions else None
@@ -2400,6 +2918,17 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         logger.debug("Removed markdown headers from response")
 
     cleaned_answer = sanitize_generated_answer(answer)
+
+    # Validate answer relevance before storing
+    if not _validate_answer_relevance(query, cleaned_answer):
+        logger.warning(
+            f"Answer doesn't address query topic. Query: {query[:50]}, "
+            f"Answer starts: {cleaned_answer[:100]}"
+        )
+        update["answer_validation_failed"] = True
+        # Flag for potential regeneration or fallback handling
+        # Note: We still return the answer, but flag it for downstream handling
+
     update["draft_answer"] = cleaned_answer
     update["answer"] = cleaned_answer
 
