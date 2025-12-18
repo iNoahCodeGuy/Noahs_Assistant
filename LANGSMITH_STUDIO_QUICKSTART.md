@@ -5,19 +5,24 @@
 To start LangGraph Studio testing:
 
 ```bash
-./start_studio.sh
+./start_langgraph_studio.sh
 ```
 
 That's it! The script will:
-1. Check if Docker is running
-2. Auto-start Docker Desktop if needed (waits 30 seconds for initialization)
-3. Load your environment variables from `.env`
-4. Start LangGraph server on port 2024
+1. Load your environment variables from `.env`
+2. Start LangGraph dev server on port 2024
+3. Wait for server to be ready
+4. Open LangSmith Studio in your browser automatically
 
 ## 🔗 Connect LangSmith Studio
 
-Once the server is running (you'll see "Ready. Listening on http://0.0.0.0:2024"), open LangSmith Studio and connect to:
+Once the server is running, LangSmith Studio will open automatically. If not, use this URL:
 
+```
+https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024
+```
+
+Or manually connect to:
 ```
 http://127.0.0.1:2024
 ```
@@ -26,21 +31,23 @@ http://127.0.0.1:2024
 
 If the script fails or you want more control:
 
-### 1. Ensure Docker is Running
+### 1. Load Environment Variables
 ```bash
-open /Applications/Docker.app
-# Wait ~30 seconds for Docker daemon to start
-docker info  # Verify it's running
+export $(cat .env | grep -v '^#' | xargs)
+export LANGCHAIN_TRACING_V2=true
 ```
 
 ### 2. Start LangGraph Server
 ```bash
-export $(cat .env | grep -v '^#' | xargs) && langgraph up --port 2024
+langgraph dev
 ```
 
+The server will start on port 2024 by default.
+
 ### 3. Connect Studio
-- Open LangSmith Studio desktop app
+- Open [LangSmith Studio](https://smith.langchain.com/studio/)
 - Connect to `http://127.0.0.1:2024`
+- Or use the direct link: `https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024`
 - You should see your `conversation_flow` graph available
 
 ## 📁 Configuration
@@ -62,14 +69,14 @@ export $(cat .env | grep -v '^#' | xargs) && langgraph up --port 2024
 ## 🔍 Troubleshooting
 
 ### "Connection failed" in LangSmith Studio
-- Check if server is actually running: `docker ps` (should show langgraph containers)
-- Check server logs: `docker logs <container_id>`
+- Check if server is actually running: `curl http://127.0.0.1:2024/info`
+- Check server logs: `cat /tmp/langgraph_dev.log`
 - Verify port 2024 is not in use: `lsof -i :2024`
+- **Safari/Brave users**: Use `USE_TUNNEL=true ./start_langgraph_studio.sh`
 
-### "Docker not installed" error
-- Ensure Docker Desktop is in `/Applications/Docker.app`
-- Run `open /Applications/Docker.app` manually
-- Wait 30 seconds, then verify with `docker info`
+### "langgraph command not found" error
+- Install langgraph-cli: `pip install langgraph-cli`
+- Verify installation: `langgraph --version`
 
 ### Server won't start / Module errors
 - Verify `langgraph.json` has correct path: `./assistant/flows/conversation_flow.py:graph`
@@ -79,17 +86,18 @@ export $(cat .env | grep -v '^#' | xargs) && langgraph up --port 2024
   - `SUPABASE_URL`
   - `SUPABASE_SERVICE_ROLE_KEY`
 
-### Images take forever to build
-- First run downloads ~140MB of Docker images (postgres, redis, langgraph)
-- Subsequent runs are much faster (images are cached)
-- If interrupted: Just run `./start_studio.sh` again to resume
+### Server takes time to start
+- First run may take 10-30 seconds to initialize
+- The script waits up to 45 seconds for the server to be ready
+- Check logs if it takes longer: `cat /tmp/langgraph_dev.log`
 
 ## 📝 Notes
 
-- **Port**: LangGraph Studio uses port 2024 (Streamlit uses 8501/8502)
+- **Port**: LangGraph dev server uses port 2024
 - **Environment**: Server loads variables from `.env` automatically
 - **Logs**: All LangSmith traces go to project "noahs-ai-assistant"
-- **Cleanup**: Stop server with Ctrl+C, containers auto-removed
+- **Cleanup**: Stop server with Ctrl+C or `lsof -ti:2024 | xargs kill -9`
+- **Tunnel**: Use `USE_TUNNEL=true` for Safari/Brave browser compatibility
 
 ## 🚀 Next Steps
 

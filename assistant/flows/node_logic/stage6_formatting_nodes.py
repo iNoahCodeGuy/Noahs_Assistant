@@ -24,7 +24,7 @@ See: docs/context/DATA_COLLECTION_AND_SCHEMA_REFERENCE.md for presentation rules
 
 import re
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Set, Tuple, Optional
 
 from assistant.state.conversation_state import ConversationState
 from assistant.core.rag_engine import RagEngine
@@ -32,6 +32,25 @@ from assistant.flows import content_blocks
 from assistant.flows.node_logic.util_code_validation import is_valid_code_snippet
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_content_from_message(msg) -> str:
+    """Extract content from message (handles dict, LangChain message objects, and strings).
+
+    Args:
+        msg: Can be a dict, AIMessage/HumanMessage object, or string
+
+    Returns:
+        Content string, or empty string if msg is None/empty
+    """
+    if not msg:
+        return ""
+    if isinstance(msg, dict):
+        return msg.get("content", "")
+    elif hasattr(msg, "content"):
+        return getattr(msg, "content", "")
+    else:
+        return str(msg)
 
 
 def _retry_generation_if_insufficient(state: ConversationState, rag_engine: RagEngine) -> str:
@@ -60,10 +79,11 @@ def _retry_generation_if_insufficient(state: ConversationState, rag_engine: RagE
 
     if not has_quality_issue:
         # No quality issues - return draft as-is
-        return state.get("draft_answer") or ""
+        draft = state.get("draft_answer")
+        return _extract_content_from_message(draft) if draft else ""
 
     # Determine which type of retry is needed
-    original_answer = state.get("draft_answer", "")
+    original_answer = _extract_content_from_message(state.get("draft_answer", ""))
     retrieved_chunks = state.get("retrieved_chunks", [])
 
     # CASE 1: Original menu option 1 quality check
@@ -226,9 +246,50 @@ except ImportError:
     def search_import_explanations(query: str, role: str, top_k: int = 3):
         return []
 
-# Resume constants
+# Resume and profile constants
 RESUME_DOWNLOAD_URL = "https://noahsaiassistant.vercel.app/resume/Noah_Delacalzada_Resume.pdf"
 LINKEDIN_URL = "https://www.linkedin.com/in/noah-delacalzada"
+GITHUB_URL = "https://github.com/iNoahCodeGuy"
+
+
+def _format_action_request_response(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Simple, clean format for resource requests (resume, linkedin, github).
+
+    Returns a minimal response without Teaching Takeaways / Full Walkthrough boilerplate.
+
+    Args:
+        state: Conversation state with pending_actions
+
+    Returns:
+        Partial state update with formatted answer
+    """
+    pending_actions = state.get("pending_actions", [])
+    action_types = {a.get("type") for a in pending_actions}
+
+    sections = ["Here are Noah's resources:", ""]
+
+    if "send_resume" in action_types:
+        resume_link = state.get("resume_signed_url", RESUME_DOWNLOAD_URL)
+        sections.append(f"**Resume**: {resume_link}")
+
+    if "send_linkedin" in action_types:
+        sections.append(f"**LinkedIn**: {LINKEDIN_URL}")
+
+    if "send_github" in action_types:
+        sections.append(f"**GitHub**: {GITHUB_URL}")
+
+    # If only ask_reach_out without any resources, provide context
+    if not any(t in action_types for t in ["send_resume", "send_linkedin", "send_github"]):
+        sections = ["I'd be happy to help connect you with Noah."]
+
+    if "ask_reach_out" in action_types:
+        sections.append("")
+        sections.append("Would you like Noah to reach out directly?")
+
+    answer = "\n".join(sections)
+
+    logger.info(f"Formatted action request response: {len(answer)} chars")
+    return {"answer": answer}
 
 
 def _split_answer_and_sources(answer: str) -> tuple[str, str]:
@@ -433,6 +494,8 @@ def _summarize_answer(text: str, depth: int) -> List[str]:
     Handles Q&A format cleanup: If LLM generated answer in Q:/A: format,
     extracts just the answer portions and formats as clean bullets.
 
+    Avoids splitting on numbered list periods (1. 2. 3.) and markdown headers.
+
     Args:
         text: Answer body text
         depth: User's depth preference (1=brief, 2=detailed, 3=comprehensive)
@@ -446,6 +509,12 @@ def _summarize_answer(text: str, depth: int) -> List[str]:
         >>> _summarize_answer("Q: What is RAG? A: Retrieval-Augmented Generation.", depth=1)
         ["- Retrieval-Augmented Generation"]
     """
+    # Sentence splitting pattern that avoids:
+    # - Numbered lists (1. 2. 3.)
+    # - Markdown bold numbered headers (**1. **2.)
+    # Uses negative lookbehind to skip periods after digits
+    sentence_split_pattern = r'(?<=[.!?])(?<!\d\.)(?<!\*\*\d\.)\s+'
+
     # Check if answer is in Q&A format and extract just answer portions
     qa_pattern = r'Q:\s*.*?\s*A:\s*(.*?)(?=Q:|$)'
     qa_matches = re.findall(qa_pattern, text, re.DOTALL | re.IGNORECASE)
@@ -454,12 +523,15 @@ def _summarize_answer(text: str, depth: int) -> List[str]:
         # Extract answer portions only, ignore question format
         sentences = []
         for answer_text in qa_matches:
-            answer_sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", answer_text.strip()) if s.strip()]
+            answer_sentences = [s.strip() for s in re.split(sentence_split_pattern, answer_text.strip()) if s.strip()]
             sentences.extend(answer_sentences)
         logger.debug(f"Detected Q&A format, extracted {len(sentences)} answer sentences")
     else:
-        # Normal sentence splitting
-        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+        # Normal sentence splitting (avoiding numbered list periods)
+        sentences = [s.strip() for s in re.split(sentence_split_pattern, text) if s.strip()]
+
+    # Filter out orphaned markdown headers like "**1." or "**2."
+    sentences = [s for s in sentences if not re.match(r'^\*\*\d+\.?\s*$', s)]
 
     limit = 2 if depth <= 1 else 3
     summary = []
@@ -468,7 +540,8 @@ def _summarize_answer(text: str, depth: int) -> List[str]:
             continue
         # Remove any remaining "Q:" or "A:" prefixes
         sentence = re.sub(r'^[QA]:\s*', '', sentence, flags=re.IGNORECASE).strip()
-        if sentence:  # Only add if non-empty after cleanup
+        # Skip sentences that are just markdown formatting artifacts
+        if sentence and not re.match(r'^\*\*\d+\.?\s*$', sentence):
             summary.append(f"- {sentence}")
         if len(summary) >= limit:
             break
@@ -668,27 +741,415 @@ def _should_offer_synthesis(session_memory: Dict, conversation_turn: int, conver
     return False
 
 
+# Extended conversation arcs for indefinite interactions (100+ turns)
+# Each tuple: (current_topic, [next_topic_options])
+# Arcs create guided journeys through the knowledge base
 CONVERSATION_ARCS = {
     "hiring_manager_technical": [
-        ("orchestration", ["enterprise_adaptation", "cost_analysis", "implementation"]),
-        ("enterprise_adaptation", ["cost_analysis", "implementation", "deployment"]),
-        ("cost_analysis", ["implementation", "deployment", "testing"]),
-        ("implementation", ["testing", "deployment", "monitoring"]),
+        # Phase 1: Architecture Foundation (turns 1-10)
+        ("tech_stack", ["orchestration", "rag_pipeline", "data_layer"]),
+        ("architecture", ["orchestration", "rag_pipeline", "observability"]),
+        ("orchestration", ["langgraph_nodes", "state_management", "error_handling"]),
+        ("rag_pipeline", ["retrieval", "generation", "grounding"]),
+        ("data_layer", ["pgvector", "embeddings", "supabase"]),
+
+        # Phase 2: Deep Dives (turns 10-25)
+        ("langgraph_nodes", ["enterprise_adaptation", "cost_analysis", "testing"]),
+        ("state_management", ["memory_accumulation", "session_persistence", "scaling"]),
+        ("retrieval", ["similarity_search", "query_composition", "reranking"]),
+        ("generation", ["prompt_engineering", "model_selection", "streaming"]),
+        ("observability", ["langsmith", "analytics", "cost_tracking"]),
+
+        # Phase 3: Enterprise Application (turns 25-50)
+        ("enterprise_adaptation", ["customer_support", "internal_docs", "sales_enablement"]),
+        ("customer_support", ["role_adaptation", "action_handlers", "metrics"]),
+        ("internal_docs", ["knowledge_ingestion", "access_control", "search_quality"]),
+        ("sales_enablement", ["crm_integration", "lead_scoring", "personalization"]),
+        ("cost_analysis", ["token_optimization", "caching", "batch_processing"]),
+
+        # Phase 4: Production Concerns (turns 50-75)
+        ("deployment", ["vercel_serverless", "edge_functions", "cold_starts"]),
+        ("scaling", ["horizontal_scaling", "rate_limiting", "load_balancing"]),
+        ("testing", ["qa_strategy", "golden_datasets", "regression_testing"]),
+        ("monitoring", ["alerting", "dashboards", "incident_response"]),
+
+        # Phase 5: Noah's Background (turns 75+)
+        ("noahs_background", ["projects", "philosophy", "tesla_experience"]),
+        ("projects", ["portfolia_deep_dive", "other_projects", "github"]),
+        ("philosophy", ["ai_ethics", "learning_approach", "career_goals"]),
+
+        # Circular paths for indefinite conversation
+        ("synthesis", ["new_territory", "deeper_dive", "noah_connection"]),
+        ("new_territory", ["tech_stack", "enterprise_adaptation", "noahs_background"]),
     ],
     "software_developer": [
-        ("architecture", ["implementation", "code_walkthrough", "debugging"]),
-        ("implementation", ["debugging", "testing", "performance"]),
-        ("testing", ["deployment", "monitoring", "scaling"]),
+        # Phase 1: Code Architecture
+        ("architecture", ["code_structure", "module_design", "dependencies"]),
+        ("code_structure", ["flows", "nodes", "state_management"]),
+        ("module_design", ["rag_engine", "response_generator", "retrievers"]),
+
+        # Phase 2: Implementation Details
+        ("implementation", ["langgraph_flow", "pgvector_queries", "prompt_templates"]),
+        ("langgraph_flow", ["node_logic", "edge_conditions", "state_transitions"]),
+        ("pgvector_queries", ["similarity_search", "indexing", "optimization"]),
+
+        # Phase 3: Quality & Testing
+        ("debugging", ["tracing", "logging", "error_handling"]),
+        ("testing", ["pytest", "mocking", "integration_tests"]),
+        ("performance", ["latency", "caching", "async_patterns"]),
+
+        # Phase 4: DevOps
+        ("deployment", ["vercel", "environment_config", "secrets_management"]),
+        ("monitoring", ["langsmith", "supabase_analytics", "alerts"]),
+
+        # Circular
+        ("synthesis", ["architecture", "implementation", "noahs_code"]),
     ],
     "hiring_manager_nontechnical": [
-        ("career", ["business_impact", "team_fit", "resume"]),
-        ("business_impact", ["team_fit", "resume", "contact"]),
+        # Phase 1: Career Overview
+        ("career", ["achievements", "growth_trajectory", "unique_value"]),
+        ("achievements", ["tesla_impact", "project_outcomes", "metrics"]),
+
+        # Phase 2: Business Value
+        ("business_impact", ["roi_examples", "efficiency_gains", "team_value"]),
+        ("team_fit", ["collaboration", "communication", "leadership"]),
+
+        # Phase 3: Conversion
+        ("resume", ["skills_summary", "experience_highlights", "contact"]),
+        ("contact", ["availability", "next_steps", "references"]),
+
+        # Circular
+        ("synthesis", ["career", "business_impact", "unique_value"]),
     ],
     "explorer": [
-        ("casual", ["architecture", "behind_scenes", "fun_facts"]),
-        ("architecture", ["implementation", "behind_scenes"]),
+        # Phase 1: Casual Exploration
+        ("casual", ["what_is_this", "how_it_works", "who_built_it"]),
+        ("what_is_this", ["architecture_overview", "cool_features", "demo"]),
+
+        # Phase 2: Deeper Interest
+        ("architecture", ["rag_basics", "ai_explained", "under_the_hood"]),
+        ("behind_scenes", ["how_i_think", "my_memory", "my_limitations"]),
+
+        # Phase 3: Fun Stuff
+        ("fun_facts", ["mma_background", "chess_ai_story", "hidden_features"]),
+        ("mma_background", ["fight_record", "training", "discipline"]),
+
+        # Circular
+        ("synthesis", ["casual", "architecture", "fun_facts"]),
     ]
 }
+
+
+# ============================================================================
+# MAIN KNOWLEDGE PILLARS - Core topics to guide users through
+# ============================================================================
+
+MAIN_PILLARS = {
+    "hiring_manager_technical": {
+        "pillars": [
+            # 5 pillars for technical hiring managers
+            ("orchestration", "Explore the orchestration layer — how nodes, states, and safeguards work together"),
+            ("tech_stack", "See my full tech stack — frontend, backend, observability"),
+            ("enterprise", "See how this architecture adapts for enterprise use cases"),
+            ("data_pipeline", "Learn about data pipeline management — embeddings, vector storage, analytics"),
+            ("noahs_background", "Learn about Noah's technical background and projects"),
+        ],
+        "topic_to_pillar": {
+            # Orchestration pillar (the "brain")
+            "orchestration": "orchestration", "langgraph": "orchestration", "nodes": "orchestration",
+            "state_management": "orchestration", "memory": "orchestration", "pipeline": "orchestration",
+            "flow": "orchestration", "langgraph_nodes": "orchestration", "state": "orchestration",
+            "safeguards": "orchestration", "conversation_flow": "orchestration",
+
+            # Tech stack pillar (architecture, frontend, backend, observability)
+            "architecture": "tech_stack", "tech_stack": "tech_stack", "frontend": "tech_stack",
+            "backend": "tech_stack", "observability": "tech_stack", "langsmith": "tech_stack",
+            "rag_pipeline": "tech_stack", "rag": "tech_stack", "supabase": "tech_stack",
+
+            # Data pipeline pillar (separate from tech_stack)
+            "data_pipeline": "data_pipeline", "data_flow": "data_pipeline", "data flow": "data_pipeline",
+            "embedding": "data_pipeline", "embeddings": "data_pipeline", "vector": "data_pipeline",
+            "pgvector": "data_pipeline", "data_layer": "data_pipeline", "data": "data_pipeline",
+            "knowledge_base": "data_pipeline", "knowledge base": "data_pipeline", "migration": "data_pipeline",
+            "ingest": "data_pipeline", "ingestion": "data_pipeline", "chunking": "data_pipeline",
+            "analytics": "data_pipeline", "logging": "data_pipeline", "tracking": "data_pipeline",
+            "metrics": "data_pipeline", "dashboard": "data_pipeline",
+
+            # Enterprise pillar
+            "enterprise": "enterprise", "enterprise_adaptation": "enterprise", "customer_support": "enterprise",
+            "internal_docs": "enterprise", "sales_enablement": "enterprise", "deployment": "enterprise",
+            "cost_analysis": "enterprise", "scaling": "enterprise", "cost": "enterprise",
+            "production": "enterprise", "adapt": "enterprise",
+
+            # Noah's background pillar
+            "noahs_background": "noahs_background", "career": "noahs_background", "noah": "noahs_background",
+            "resume": "noahs_background", "projects": "noahs_background", "tesla": "noahs_background",
+            "background": "noahs_background", "skills": "noahs_background", "experience": "noahs_background",
+        }
+    },
+    "software_developer": {
+        "pillars": [
+            # Lead with implementation (code-focused users want to see code first)
+            ("implementation", "Explore the LangGraph implementation — nodes, state, pgvector queries"),
+            ("architecture", "See the code architecture — modules, flows, design patterns"),
+            ("debugging", "See the debugging and testing strategies"),
+            ("noahs_background", "Learn about Noah's technical background"),
+        ],
+        "topic_to_pillar": {
+            # Implementation pillar (first - show the code)
+            "implementation": "implementation", "langgraph_flow": "implementation", "pgvector_queries": "implementation",
+            "code": "implementation", "langgraph": "implementation", "stategraph": "implementation",
+            # Data pipeline keywords for developers
+            "data_pipeline": "implementation", "embedding": "implementation", "retrieval": "implementation",
+            "vector_search": "implementation", "similarity": "implementation",
+
+            # Architecture pillar
+            "architecture": "architecture", "code_structure": "architecture", "module_design": "architecture",
+            "design_patterns": "architecture", "modules": "architecture", "flows": "architecture",
+
+            # Debugging pillar
+            "debugging": "debugging", "testing": "debugging", "performance": "debugging",
+            "pytest": "debugging", "error_handling": "debugging", "tracing": "debugging",
+
+            # Noah's background
+            "noahs_background": "noahs_background", "career": "noahs_background", "noah": "noahs_background",
+        }
+    },
+    "hiring_manager_nontechnical": {
+        "pillars": [
+            ("career", "See Noah's career journey and achievements"),
+            ("business_impact", "Understand the business value Noah delivers"),
+            ("team_fit", "See how Noah works with teams"),
+            ("resume", "Get Noah's resume and contact info"),
+        ],
+        "topic_to_pillar": {
+            "career": "career", "achievements": "career", "growth_trajectory": "career",
+            "business_impact": "business_impact", "roi_examples": "business_impact", "efficiency_gains": "business_impact",
+            "team_fit": "team_fit", "collaboration": "team_fit", "communication": "team_fit",
+            "resume": "resume", "contact": "resume", "availability": "resume",
+        }
+    },
+    "explorer": {
+        "pillars": [
+            ("what_is_this", "Discover what I am and how I work"),
+            ("architecture", "See the technology behind me"),
+            ("fun_facts", "Learn some fun facts about Noah"),
+            ("noahs_background", "Learn about Noah's background"),
+        ],
+        "topic_to_pillar": {
+            "casual": "what_is_this", "what_is_this": "what_is_this", "how_it_works": "what_is_this",
+            "architecture": "architecture", "behind_scenes": "architecture", "rag_basics": "architecture",
+            "fun_facts": "fun_facts", "mma_background": "fun_facts", "hidden_features": "fun_facts",
+            "noahs_background": "noahs_background", "who_built_it": "noahs_background",
+        }
+    },
+}
+
+
+def _get_explored_pillars(session_memory: Dict, role_mode: str) -> Set[str]:
+    """Get which main pillars have been explored based on topics discussed.
+
+    Args:
+        session_memory: Session memory dict containing topics list
+        role_mode: User's role mode for pillar mapping
+
+    Returns:
+        Set of explored pillar keys
+    """
+    topics = session_memory.get("topics", [])
+    pillar_config = MAIN_PILLARS.get(role_mode, {})
+    topic_to_pillar = pillar_config.get("topic_to_pillar", {})
+
+    explored = set()
+    for topic in topics:
+        topic_lower = topic.lower()
+        if topic_lower in topic_to_pillar:
+            explored.add(topic_to_pillar[topic_lower])
+
+    return explored
+
+
+def _get_unexplored_pillars(session_memory: Dict, role_mode: str) -> List[Tuple[str, str]]:
+    """Get unexplored pillars with user-friendly prompts.
+
+    Args:
+        session_memory: Session memory dict containing topics list
+        role_mode: User's role mode for pillar mapping
+
+    Returns:
+        List of (pillar_key, user_friendly_prompt) tuples for unexplored pillars
+    """
+    pillar_config = MAIN_PILLARS.get(role_mode, {})
+    all_pillars = pillar_config.get("pillars", [])
+    explored = _get_explored_pillars(session_memory, role_mode)
+
+    return [(key, prompt) for key, prompt in all_pillars if key not in explored]
+
+
+def _get_depth_options_for_pillar(pillar: str, role_mode: str = "hiring_manager_technical") -> List[str]:
+    """Get specific depth options for each pillar.
+
+    Used when user is exploring a pillar to offer meaningful next steps
+    that go deeper into that specific area.
+
+    Args:
+        pillar: The pillar key (orchestration, tech_stack, enterprise, data_pipeline, noahs_background)
+        role_mode: User's role mode for context
+
+    Returns:
+        List of specific depth prompts for the pillar
+    """
+    depth_map = {
+        "orchestration": [
+            "Dive into specific nodes like retrieve_chunks or generate_draft",
+            "See how state flows through the pipeline"
+        ],
+        "tech_stack": [
+            "Explore the Supabase setup in detail",
+            "See the LangSmith observability implementation"
+        ],
+        "enterprise": [
+            "See customer support adaptation patterns",
+            "Explore production safeguards"
+        ],
+        "data_pipeline": [
+            "See how embeddings are generated and stored",
+            "Explore the analytics logging system"
+        ],
+        "noahs_background": [
+            "See Noah's GitHub projects",
+            "Learn about his certifications and training path"
+        ],
+    }
+    return depth_map.get(pillar, [f"Go deeper into {pillar}"])
+
+
+def _extract_current_topic_from_query(query: str, role_mode: str = "hiring_manager_technical") -> Optional[str]:
+    """Extract the pillar being discussed in current query.
+
+    This is used to:
+    1. Filter the current topic OUT of follow-up suggestions (don't suggest what user just asked)
+    2. Mark the current pillar as explored BEFORE generating follow-ups
+
+    Args:
+        query: User's current query
+        role_mode: User's role mode for context
+
+    Returns:
+        Pillar key if detected (orchestration, tech_stack, enterprise, data_pipeline, noahs_background), None otherwise
+    """
+    query_lower = query.lower()
+
+    # Noah's background pillar keywords
+    if any(kw in query_lower for kw in [
+        "noah", "background", "career", "resume", "tesla", "experience",
+        "skills", "certifications", "projects", "github", "linkedin",
+        "who built", "about noah", "noah's"
+    ]):
+        return "noahs_background"
+
+    # Orchestration pillar keywords
+    if any(kw in query_lower for kw in [
+        "orchestration", "nodes", "state management", "memory", "langgraph",
+        "pipeline", "flow", "safeguards", "conversation flow", "state graph",
+        "how do you think", "how does the pipeline"
+    ]):
+        return "orchestration"
+
+    # Data pipeline pillar keywords (separate from tech_stack)
+    if any(kw in query_lower for kw in [
+        "data pipeline", "embedding", "embeddings", "vector", "pgvector",
+        "data flow", "chunking", "analytics", "ingestion", "ingest",
+        "knowledge base", "migration", "metrics", "logging", "tracking"
+    ]):
+        return "data_pipeline"
+
+    # Tech stack pillar keywords (architecture, frontend, backend, observability)
+    if any(kw in query_lower for kw in [
+        "tech stack", "architecture", "frontend", "backend", "rag",
+        "supabase", "observability", "langsmith", "full stack", "retrieval"
+    ]):
+        return "tech_stack"
+
+    # Enterprise pillar keywords
+    if any(kw in query_lower for kw in [
+        "enterprise", "adapt", "customer support", "scaling", "production",
+        "deployment", "cost", "internal docs", "sales enablement",
+        "how would this scale", "enterprise use"
+    ]):
+        return "enterprise"
+
+    # For software_developer role, check implementation-specific keywords
+    if role_mode == "software_developer":
+        if any(kw in query_lower for kw in ["code", "implementation", "show me the code"]):
+            return "implementation"
+        if any(kw in query_lower for kw in ["debug", "test", "error"]):
+            return "debugging"
+
+    return None
+
+
+# ============================================================================
+# OUT-OF-SCOPE DETECTION - Detect queries outside Portfolia's knowledge base
+# ============================================================================
+
+OUT_OF_SCOPE_INDICATORS = [
+    # Generic tech topics Portfolia doesn't cover in depth
+    "kubernetes", "docker compose", "terraform", "ansible", "helm",
+    "react native", "flutter", "swift", "kotlin", "java", "c++", "rust",
+    "machine learning theory", "neural network math", "deep learning theory",
+    "aws lambda", "azure functions", "gcp cloud run",
+    # Personal opinions
+    "what do you think about", "your opinion on", "best programming language",
+    "should i use", "which is better",
+    # Completely unrelated
+    "weather", "sports", "news", "politics", "stock market", "crypto",
+]
+
+IN_SCOPE_BRIDGES = {
+    # Map out-of-scope topics to in-scope alternatives with bridge prompts
+    "kubernetes": ("tech_stack", "My deployment uses Vercel serverless rather than Kubernetes. Want to see how the deployment architecture works?"),
+    "docker": ("tech_stack", "I'm deployed on Vercel Edge Functions rather than Docker containers. Want to see the serverless architecture?"),
+    "machine learning": ("tech_stack", "I use RAG instead of fine-tuning - it's more cost-effective for knowledge-grounded responses. Want to see how the RAG pipeline works?"),
+    "react native": ("tech_stack", "My frontend is Next.js for web. Want to see the chat interface architecture?"),
+    "aws": ("tech_stack", "I'm deployed on Vercel with Supabase. Want to see how the cloud architecture works?"),
+    "azure": ("tech_stack", "I'm deployed on Vercel with Supabase. Want to see the deployment architecture?"),
+    "gcp": ("tech_stack", "I'm deployed on Vercel with Supabase. Want to see the cloud architecture?"),
+    "fine-tuning": ("tech_stack", "I use RAG instead of fine-tuning - want to see why that's a better fit for many enterprise use cases?"),
+    "best programming language": ("noahs_background", "I'm built with Python, TypeScript, and SQL. Want to learn about Noah's technical skills?"),
+}
+
+def detect_out_of_scope(query: str, role_mode: str = "explorer") -> Tuple[bool, Optional[str], Optional[str]]:
+    """Detect if query is outside Portfolia's knowledge base and suggest bridge topic.
+
+    Args:
+        query: User's query string
+        role_mode: User's role mode for context
+
+    Returns:
+        Tuple of (is_out_of_scope, bridge_pillar, bridge_prompt)
+        - is_out_of_scope: True if query is outside knowledge base
+        - bridge_pillar: Suggested pillar to redirect to (or None)
+        - bridge_prompt: User-friendly prompt to redirect (or None)
+    """
+    query_lower = query.lower()
+
+    # Check for out-of-scope indicators
+    for indicator in OUT_OF_SCOPE_INDICATORS:
+        if indicator in query_lower:
+            # Check for bridge to in-scope topic
+            bridge = IN_SCOPE_BRIDGES.get(indicator)
+            if bridge:
+                return True, bridge[0], bridge[1]
+
+            # Generic out-of-scope response
+            return True, None, (
+                "That's outside my knowledge base - I'm focused on demonstrating "
+                "Noah's GenAI engineering skills through my own architecture. "
+                "Want to explore how I'm built instead?"
+            )
+
+    return False, None, None
 
 
 def _predict_next_topics(role_mode: str, current_topics: List[str], conversation_phase: str) -> List[str]:
@@ -768,11 +1229,13 @@ Want me to dive deeper into any of these?"""
     return response
 
 
-def _build_followups(variant: str, intent: str = "general", active_subcats: List[str] = None, role_mode: str = "explorer", chat_history: List[Dict] = None, session_memory: Dict = None, quality_warnings: str = None, guidance_flags: List[str] = None, conversation_phase: str = None) -> List[str]:
+def _build_followups(variant: str, intent: str = "general", active_subcats: List[str] = None, role_mode: str = "explorer", chat_history: List[Dict] = None, session_memory: Dict = None, quality_warnings: str = None, guidance_flags: List[str] = None, conversation_phase: str = None, query: str = None) -> List[str]:
     """Generate role-specific followup prompt suggestions with conversation guidance and phase awareness.
 
     Enhanced with conversation guidance for quality issues, natural progression, and phase-aware suggestions.
     Uses sliding window analysis (last 6 messages) for scalability with 100+ turns.
+
+    CRITICAL: Filters out the current topic from suggestions - we don't suggest what user just asked about!
 
     Args:
         variant: "engineering" | "business" | "mixed" (layout variant)
@@ -784,6 +1247,7 @@ def _build_followups(variant: str, intent: str = "general", active_subcats: List
         quality_warnings: Quality warning string from validate_answer_quality
         guidance_flags: List of guidance flags from validate_conversation_guidance
         conversation_phase: Current phase: discovery/exploration/synthesis/extended
+        query: Current user query (used to filter current topic from suggestions)
 
     Returns:
         List of 3 followup prompt strings
@@ -801,17 +1265,113 @@ def _build_followups(variant: str, intent: str = "general", active_subcats: List
     if role_mode == "confession":
         return []
 
+    # =========================================================================
+    # PRIORITY 0: PILLAR-AWARE GUIDANCE (guide users through 4 main pillars)
+    # =========================================================================
+
+    # CRITICAL: Get current topic from query to EXCLUDE from suggestions
+    # We should never suggest what the user just asked about!
+    current_topic_pillar = _extract_current_topic_from_query(query or "", role_mode) if query else None
+
+    unexplored_pillars = _get_unexplored_pillars(session_memory, role_mode)
+    explored_pillars = _get_explored_pillars(session_memory, role_mode)
+    topics = session_memory.get("topics", []) if session_memory else []
+
+    # Filter OUT the current topic from unexplored pillars
+    # Don't suggest "Learn about Noah's background" when user just asked about Noah!
+    if current_topic_pillar:
+        unexplored_pillars = [(key, prompt) for key, prompt in unexplored_pillars if key != current_topic_pillar]
+        logger.debug(f"Filtered current topic '{current_topic_pillar}' from follow-up suggestions")
+
+    # If current topic WAS the only unexplored pillar, user is about to complete all 5
+    # Offer depth on current topic + synthesis instead of falling through to generic
+    if not unexplored_pillars and current_topic_pillar:
+        logger.info(f"User exploring last pillar '{current_topic_pillar}' - offer depth + synthesis")
+        depth_options = _get_depth_options_for_pillar(current_topic_pillar, role_mode)
+        return [
+            depth_options[0] if depth_options else f"Go deeper into {current_topic_pillar}",
+            "See how all these pieces connect end-to-end",
+            "Ready to see Noah's resume and LinkedIn?"
+        ]
+
+    # Check for pillar depth warning (user has been in same pillar for 3+ turns)
+    pillar_depth = session_memory.get("pillar_depth", {}) if session_memory else {}
+    deep_pillar = None
+    for pillar, depth in pillar_depth.items():
+        if depth >= 3 and pillar != current_topic_pillar:
+            deep_pillar = pillar
+            break
+
+    # If user has gone deep (3+ turns) on one pillar, actively guide to others
+    if deep_pillar and unexplored_pillars:
+        logger.info(f"User deep in '{deep_pillar}' pillar - actively guiding to other pillars")
+        pillar_prompts = []
+        pillar_prompts.append(f"You've explored {deep_pillar} in depth! {unexplored_pillars[0][1]}")
+        if len(unexplored_pillars) > 1:
+            pillar_prompts.append(unexplored_pillars[1][1])
+        pillar_prompts.append("See how all the pieces connect end-to-end")
+        return pillar_prompts[:3]
+
+    # =========================================================================
+    # FIX 6: SMART FOLLOWUPS - Always: 1 depth option + 1-2 unexplored pillars
+    # Per spec: "would you like me to list all my nodes and states or would you
+    # like to see how enterprises use similar programs for customer support?"
+    # =========================================================================
+    if current_topic_pillar or topics:
+        smart_followups = []
+
+        # 1. First option: Depth into current topic
+        if current_topic_pillar:
+            depth_options = _get_depth_options_for_pillar(current_topic_pillar, role_mode)
+            if depth_options:
+                smart_followups.append(depth_options[0])
+            else:
+                smart_followups.append(f"Go deeper into {current_topic_pillar}")
+        elif topics:
+            # Fallback to most recent topic
+            smart_followups.append(f"Go deeper into {topics[-1]}")
+
+        # 2. Second option: First unexplored pillar
+        if unexplored_pillars:
+            smart_followups.append(unexplored_pillars[0][1])
+
+        # 3. Third option: Second unexplored pillar OR synthesis
+        if len(unexplored_pillars) > 1:
+            smart_followups.append(unexplored_pillars[1][1])
+        elif len(explored_pillars) >= 3:
+            smart_followups.append("See how all these pieces connect end-to-end")
+        elif current_topic_pillar != "noahs_background":
+            smart_followups.append("Learn about Noah's technical background and projects")
+
+        logger.debug(f"Smart follow-ups (Fix 6): depth + unexplored pillars: {smart_followups}")
+        return smart_followups[:3]
+
+    # If all pillars explored (5), offer synthesis and resume
+    if len(explored_pillars) >= 5:
+        logger.info("All 5 pillars explored - offering synthesis and resume")
+        return [
+            "Want to see how all these pieces connect end-to-end?",
+            "Ready to see Noah's resume and LinkedIn?",
+            "Should we go deeper into any specific area?"
+        ]
+
+    # =========================================================================
     # PRIORITY 1: Quality-based guidance (if user is stuck or answer was repetitive)
+    # =========================================================================
     if quality_warnings and "answer_too_similar" in quality_warnings:
-        # User is stuck - suggest completely different topics
+        # User is stuck - suggest unexplored pillars instead of generic topics
+        if unexplored_pillars:
+            return [prompt for _, prompt in unexplored_pillars[:3]]
         return [
             "Want to explore a different aspect of the system?",
             "Curious about the data layer or deployment instead?",
             "Should we look at production patterns or enterprise use cases?"
         ]
 
-    # PRIORITY 1.5: Detect enterprise adaptation queries and provide relevant follow-ups
-    # Check if the last user query was about enterprise adaptation
+    # =========================================================================
+    # PRIORITY 1.5: Context-aware follow-ups based on current topic
+    # Guide back to unexplored pillars instead of going deeper into sub-topics
+    # =========================================================================
     if chat_history:
         last_user_msg = None
         for msg in reversed(chat_history[-6:]):  # Check last 6 messages
@@ -825,17 +1385,19 @@ def _build_followups(variant: str, intent: str = "general", active_subcats: List
 
         if last_user_msg:
             query_lower = last_user_msg.lower()
-            is_enterprise_adaptation = any(kw in query_lower for kw in ["adapt", "adapts", "adaptation", "customer support", "enterprise", "use case"])
 
-            if is_enterprise_adaptation:
-                # Provide enterprise-specific follow-ups
-                return [
-                    "Want to see how this adapts to internal documentation use cases?",
-                    "Curious about the cost breakdown at 100k users?",
-                    "Should I show the code changes needed for CRM integration?"
-        ]
+            # Check if user is going deep into enterprise - guide back to other pillars
+            is_enterprise_query = any(kw in query_lower for kw in ["adapt", "adapts", "adaptation", "customer support", "enterprise", "use case"])
 
+            if is_enterprise_query and unexplored_pillars:
+                # Instead of going deeper into enterprise, offer unexplored pillars
+                pillar_prompts = [prompt for _, prompt in unexplored_pillars[:2]]
+                pillar_prompts.append("Go deeper into enterprise adaptation patterns")
+                return pillar_prompts[:3]
+
+    # =========================================================================
     # PRIORITY 2: Conversation guidance flags (from validate_conversation_guidance)
+    # =========================================================================
     if guidance_flags:
         if "stuck_need_redirection" in guidance_flags:
             return [
@@ -983,7 +1545,7 @@ def _build_followups(variant: str, intent: str = "general", active_subcats: List
             "Explore adoption risks and mitigation steps",
         ]
     return [
-        "See how the architecture adapts to customer support",
+        "See how the architecture could be adapted to customer support",
         "Peek at the analytics dashboard",
         "Ask for the testing and QA strategy",
     ]
@@ -1054,10 +1616,10 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
             "message": "format_answer: Entry",
             "data": {
                 "has_draft_answer": bool(state.get("draft_answer")),
-                "draft_answer_len": len(state.get("draft_answer", "")) if state.get("draft_answer") else 0,
+                "draft_answer_len": len(_extract_content_from_message(state.get("draft_answer"))) if state.get("draft_answer") else 0,
                 "has_answer": bool(state.get("answer")),
-                "answer_len": len(state.get("answer", "")) if state.get("answer") else 0,
-                "draft_answer_preview": state.get("draft_answer", "")[:100] if state.get("draft_answer") else None
+                "answer_len": len(_extract_content_from_message(state.get("answer"))) if state.get("answer") else 0,
+                "draft_answer_preview": _extract_content_from_message(state.get("draft_answer"))[:100] if state.get("draft_answer") else None
             },
             "timestamp": int(time.time() * 1000),
             "sessionId": "debug-session",
@@ -1074,7 +1636,10 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
         # Falling back to old answer would preserve welcome messages from previous turns
         base_answer = state.get("draft_answer")
 
-    if base_answer is None:
+    # Extract content from base_answer if it's an AIMessage object
+    base_answer = _extract_content_from_message(base_answer)
+
+    if base_answer is None or not base_answer:
         logger.error("format_answer called without draft_answer")
 
         # #region agent log
@@ -1120,6 +1685,24 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
         # This is a welcome/menu message from generate_draft() - don't add formatting
         # Return partial update dict (not full state) to avoid preserving old fields
         return {"answer": base_answer}
+
+    # SIMPLIFIED FORMAT FOR ACTION REQUESTS (resume, linkedin, github)
+    # Skip the full Teaching Takeaways / Full Walkthrough template for simple resource requests
+    if state.get("query_type") == "action_request":
+        is_repeated = state.get("is_repeated_action_request", False)
+        # #region agent log
+        debug_trace = state.get("_debug_trace", [])
+        debug_trace.append({"loc": "format_answer:action_request", "is_repeated": is_repeated, "base_answer_preview": base_answer[:100] if base_answer else None})
+        # #endregion
+
+        # If this is a repeated action request, just return the acknowledgment
+        if is_repeated:
+            debug_trace.append({"loc": "format_answer:returning_ack", "msg": "Returning repeated action acknowledgment"})
+            return {"answer": base_answer, "_debug_trace": debug_trace}
+
+        result = _format_action_request_response(state)
+        result["_debug_trace"] = debug_trace
+        return result
 
     depth = state.get("depth_level", 1)
     layout_variant = state.get("layout_variant", "mixed")
@@ -1393,6 +1976,11 @@ def build_conversation_graph():
         sections.append("")
         sections.append(f"LinkedIn profile: {LINKEDIN_URL}")
 
+    # GitHub link
+    if "send_github" in action_types:
+        sections.append("")
+        sections.append(f"GitHub: {GITHUB_URL}")
+
     # Resume download link
     if "send_resume" in action_types:
         resume_link = state.get("resume_signed_url", RESUME_DOWNLOAD_URL)
@@ -1436,6 +2024,23 @@ def build_conversation_graph():
     chat_history = state.get("chat_history", [])
     session_memory = state.get("session_memory", {})
 
+    # =========================================================================
+    # CRITICAL: Update pillar exploration BEFORE generating follow-ups
+    # This ensures current topic is marked explored BEFORE we suggest what's next
+    # =========================================================================
+    current_pillar = _extract_current_topic_from_query(query, role_mode)
+    if current_pillar and session_memory:
+        explored = set(session_memory.get("explored_pillars", []))
+        if current_pillar not in explored:
+            explored.add(current_pillar)
+            session_memory["explored_pillars"] = list(explored)
+            logger.debug(f"Marked pillar '{current_pillar}' as explored BEFORE generating follow-ups")
+
+        # Also update pillar depth counter
+        pillar_depth = session_memory.setdefault("pillar_depth", {})
+        pillar_depth[current_pillar] = pillar_depth.get(current_pillar, 0) + 1
+        logger.debug(f"Pillar depth for '{current_pillar}': {pillar_depth[current_pillar]}")
+
     # Pass quality warnings, guidance flags, and conversation phase for context-aware followups
     quality_warnings = state.get("answer_quality_warning")
     guidance_flags = state.get("conversation_guidance_needed", [])
@@ -1450,7 +2055,8 @@ def build_conversation_graph():
         session_memory=session_memory,
         quality_warnings=quality_warnings,
         guidance_flags=guidance_flags,
-        conversation_phase=conversation_phase
+        conversation_phase=conversation_phase,
+        query=query  # Pass query to filter current topic from suggestions
     )
 
     if followups:
@@ -1458,6 +2064,40 @@ def build_conversation_graph():
         sections.append("**Where next?**")
         sections.extend(f"- {item}" for item in followups)
         state["followup_prompts"] = followups
+
+    # SUBTLE AVAILABILITY MENTION - Natural transition to resume when engagement is high
+    # Only for hiring managers who have demonstrated engagement but haven't been offered resume yet
+    if (role in ["Hiring Manager (technical)", "Hiring Manager (nontechnical)"] and
+        not state.get("offer_sent") and
+        "offer_resume_prompt" not in action_types and
+        "send_resume" not in action_types):
+
+        # Check engagement criteria for subtle mention
+        engagement_score = state.get("engagement_score", 0)
+        depth_level = state.get("depth_level", 1)
+        hiring_signals_strong = state.get("hiring_signals_strong", False)
+
+        # Conditions for subtle availability mention:
+        # - High engagement (score >= 12) but not quite at offer threshold (15)
+        # - OR medium depth (2) with some hiring signals
+        should_add_subtle_mention = (
+            (12 <= engagement_score < 15) or
+            (depth_level >= 2 and hiring_signals_strong)
+        )
+
+        # Only mention once per session
+        availability_mentioned = session_memory.get("persona_hints", {}).get("availability_mentioned", False)
+
+        if should_add_subtle_mention and not availability_mentioned:
+            sections.append("")
+            sections.append(
+                "_By the way, Noah built all of this while working at Tesla. "
+                "If you're curious about bringing this kind of GenAI thinking to your team, "
+                "I'd be happy to share his resume and LinkedIn._"
+            )
+            # Mark that we've mentioned availability
+            state.setdefault("session_memory", {}).setdefault("persona_hints", {})["availability_mentioned"] = True
+            logger.info(f"📌 Added subtle availability mention (engagement={engagement_score}, depth={depth_level})")
 
     enriched_answer = "\n".join(section for section in sections if section is not None)
 
@@ -1474,7 +2114,8 @@ def build_conversation_graph():
 
         if not has_reference:
             # Inject turn reference at the start
-            previous_topic = _detect_previous_topic(chat_history)
+            # Fix 5: Pass current query to avoid mismatched turn references
+            previous_topic = _detect_previous_topic(chat_history, query)
             if previous_topic:
                 turn_prefix = f"Building on our {previous_topic} discussion from Turn {current_turn - 1}, "
                 # Lowercase first letter of answer to make it flow naturally
@@ -1510,20 +2151,58 @@ def build_conversation_graph():
     return partial_update
 
 
-def _detect_previous_topic(chat_history: List[Dict]) -> str:
+def _detect_topic_from_query(query: str) -> Optional[str]:
+    """Extract topic from a user query.
+
+    Args:
+        query: User's query string
+
+    Returns:
+        Topic string or None if no clear topic detected
+    """
+    if not query:
+        return None
+
+    query_lower = query.lower()
+
+    # Map query keywords to topics
+    topic_keywords = {
+        "background": ["resume", "cv", "linkedin", "github", "career", "background", "noah", "experience", "skills", "certifications"],
+        "data_pipeline": ["data pipeline", "embeddings", "vector", "pgvector", "chunking", "analytics", "ingestion", "data flow"],
+        "orchestration": ["orchestration", "langgraph", "nodes", "pipeline", "state", "safeguards", "flow"],
+        "architecture": ["architecture", "tech stack", "frontend", "backend", "system design"],
+        "enterprise": ["enterprise", "customer support", "adaptation", "scaling", "production", "adapt"],
+    }
+
+    for topic, keywords in topic_keywords.items():
+        if any(kw in query_lower for kw in keywords):
+            return topic
+
+    return None
+
+
+def _detect_previous_topic(chat_history: List[Dict], current_query: str = None) -> str:
     """Detect the topic from the previous turn's conversation.
+
+    Excludes "Where next?" followup sections and <details> blocks to avoid
+    false topic detection from suggested next steps.
+
+    Fix 5: Only returns a topic if it's relevant to the current query.
+    This prevents "Building on our architecture discussion" when user asks about resume.
 
     Args:
         chat_history: List of conversation messages
+        current_query: Optional current query to check topic relevance
 
     Returns:
-        Topic string (e.g., "orchestration", "architecture") or empty string
+        Topic string (e.g., "orchestration", "architecture", "data_pipeline") or empty string
     """
     if not chat_history or len(chat_history) < 2:
         return ""
 
     # Look at the last assistant message to extract topic
     # Go backwards to find the most recent assistant message
+    previous_topic = None
     for msg in reversed(chat_history[-6:]):  # Check last 6 messages
         if isinstance(msg, dict):
             role = msg.get("role") or msg.get("type", "")
@@ -1535,21 +2214,62 @@ def _detect_previous_topic(chat_history: List[Dict]) -> str:
             continue
 
         if role in ["assistant", "ai"]:
-            content_lower = content.lower()
-            # Extract key topics from the assistant's response
+            # EXCLUDE followup sections from topic detection
+            # These often mention topics as suggestions, not as the actual discussed topic
+            content_for_detection = content
+
+            # Remove "Where next?" section and everything after
+            content_for_detection = re.sub(
+                r'\*\*Where next\?\*\*.*$', '', content_for_detection,
+                flags=re.DOTALL | re.IGNORECASE
+            )
+
+            # Remove <details> blocks (collapsed sections with suggestions)
+            content_for_detection = re.sub(
+                r'<details>.*?</details>', '', content_for_detection,
+                flags=re.DOTALL
+            )
+
+            # Remove citation blocks
+            content_for_detection = re.sub(
+                r'<details>\s*<summary>Show citations</summary>.*?</details>', '',
+                content_for_detection, flags=re.DOTALL
+            )
+
+            # Log cleaned content for debugging
+            logger.debug(f"Topic detection input (cleaned): '{content_for_detection[:200]}...'")
+
+            content_lower = content_for_detection.lower()
+
+            # Extract key topics from the assistant's core response (not suggestions)
+            # Order matters - check more specific topics first
             topic_keywords = {
-                "orchestration": ["orchestration", "langgraph", "nodes", "pipeline"],
-                "architecture": ["architecture", "stack", "system design"],
-                "enterprise": ["enterprise", "customer support", "adaptation"],
-                "retrieval": ["retrieval", "rag", "pgvector", "chunks"],
-                "deployment": ["deployment", "production", "infrastructure"]
+                "data_pipeline": ["data pipeline", "embeddings", "vector storage", "pgvector", "chunking", "analytics", "ingestion"],
+                "orchestration": ["orchestration", "langgraph", "nodes", "pipeline stages", "state management"],
+                "architecture": ["architecture", "tech stack", "system design", "frontend", "backend"],
+                "enterprise": ["enterprise", "customer support", "adaptation", "scaling", "production"],
+                "retrieval": ["retrieval", "rag", "semantic search", "chunks"],
+                "background": ["career", "tesla", "mma", "professional background", "github", "noah's", "resume", "linkedin"]
             }
 
             for topic, keywords in topic_keywords.items():
                 if any(kw in content_lower for kw in keywords):
-                    return topic
+                    logger.debug(f"Detected previous topic: '{topic}'")
+                    previous_topic = topic
+                    break
 
-    return ""
+            if previous_topic:
+                break
+
+    # Fix 5: Only return topic if it matches current query's topic
+    # Don't say "Building on our architecture discussion" when user asks about resume
+    if previous_topic and current_query:
+        current_topic = _detect_topic_from_query(current_query)
+        if current_topic and current_topic != previous_topic:
+            logger.debug(f"Skipping turn reference: previous='{previous_topic}', current='{current_topic}' (mismatch)")
+            return ""  # Topics don't match, skip the turn reference
+
+    return previous_topic or ""
 
 
 def _validate_cross_turn_references(answer: str, chat_history: List[Dict]) -> Dict[str, Any]:

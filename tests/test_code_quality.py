@@ -161,7 +161,7 @@ class TestProductionCodeQuality:
 
         Related: QA_STRATEGY.md → "1. Logging over Print Statements"
         """
-        config_file = Path(__file__).parent.parent / "src" / "config" / "supabase_config.py"
+        config_file = Path(__file__).parent.parent / "assistant" / "config" / "supabase_config.py"
 
         with open(config_file, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -224,7 +224,7 @@ class TestEnvironmentAwareness:
 
         Related: QA_STRATEGY.md → "3. Environment Awareness"
         """
-        config_file = Path(__file__).parent.parent / "src" / "config" / "supabase_config.py"
+        config_file = Path(__file__).parent.parent / "assistant" / "config" / "supabase_config.py"
 
         with open(config_file, 'r', encoding='utf-8') as f:
             content = f.read()

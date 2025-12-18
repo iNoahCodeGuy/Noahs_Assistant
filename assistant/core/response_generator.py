@@ -120,7 +120,10 @@ Please provide a helpful and accurate answer based on the information provided. 
 
         # Generate response using LLM
         try:
-            answer = self.llm.predict(prompt)
+            answer = self.llm.invoke(prompt)
+            # Extract content from AIMessage if needed
+            if hasattr(answer, 'content'):
+                answer = answer.content
 
             # Ensure test expectation for 'tech stack'
             if "tech stack" not in answer.lower() and "tech stack" in query.lower():
@@ -368,8 +371,11 @@ Please provide a helpful and accurate answer based on the information provided. 
                             }) + "\n")
                     except: pass
                     # #endregion
-                    response = temp_llm.predict(prompt)
-                    # #region agent log - After temp_llm.predict
+                    response = temp_llm.invoke(prompt)
+                    # Extract content from AIMessage if needed
+                    if hasattr(response, 'content'):
+                        response = response.content
+                    # #region agent log - After temp_llm.invoke
                     try:
                         log_path = _get_debug_log_path()
                         with open(log_path, 'a') as f:
@@ -410,8 +416,11 @@ Please provide a helpful and accurate answer based on the information provided. 
                             }) + "\n")
                     except: pass
                     # #endregion
-                    response = self.llm.predict(prompt)
-                    # #region agent log - After self.llm.predict
+                    response = self.llm.invoke(prompt)
+                    # Extract content from AIMessage if needed
+                    if hasattr(response, 'content'):
+                        response = response.content
+                    # #region agent log - After self.llm.invoke
                     try:
                         log_path = _get_debug_log_path()
                         with open(log_path, 'a') as f:
@@ -650,7 +659,10 @@ Please provide a helpful and accurate answer based on the information provided. 
         prompt = self._build_technical_prompt(query, context)
 
         try:
-            response = self.llm.predict(prompt)
+            response = self.llm.invoke(prompt)
+            # Extract content from AIMessage if needed
+            if hasattr(response, 'content'):
+                response = response.content
 
             # POST-PROCESSING SAFETY NET: Enforce first person
             response = self._enforce_first_person(response)

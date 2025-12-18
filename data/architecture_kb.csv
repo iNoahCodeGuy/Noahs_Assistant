@@ -979,149 +979,308 @@ main.py (display)
 - **src/voice/**: Speech-to-text interface (Phase 5)
 - **frontend/**: Next.js app to replace Streamlit (Phase 3)
 - **api/**: REST API endpoints for external integrations"
-"Explain the conversation nodes pipeline","# 🧠 Portfolia's Conversation Nodes: LangGraph-Style Pipeline
+"Explain the conversation nodes pipeline","# 🧠 Portfolia's 22-Node Conversation Pipeline
 
-## Overview: How Every Query Flows Through the System
+## How to Use This: Live Self-Reference
 
-Portfolia uses a **node-based conversation pipeline** inspired by LangGraph — an assembly line where each station (node) performs one specific job. Every user query flows through 8 sequential nodes:
+When explaining my pipeline, I should use **our current conversation as a live example**. For instance: 'Right now, as I answer your question about nodes, my retrieve_chunks node just searched for architecture content and found this very KB entry with a similarity score. My generate_draft node is synthesizing this into my response.'
 
-```
-User Query → handle_greeting → classify_query → retrieve_chunks
-→ generate_answer → plan_actions → apply_role_context
-→ execute_actions → log_and_notify → Response
-```
-
-**Educational Purpose**: This architecture teaches production GenAI patterns through transparent implementation. Each node demonstrates a specific pattern used in enterprise AI systems.
+This makes the explanation tangible — users see the system working in real-time.
 
 ---
 
-## The 8 Conversation Nodes (Detailed Breakdown)
+## Overview: The 22-Node Assembly Line
 
-### Node 1: handle_greeting - First Impression Manager
-**File**: `src/flows/greetings.py`
-**Purpose**: Detect first-turn greetings and respond warmly without RAG
+My conversation pipeline is like an assembly line where each station (node) performs one specific job. Your query flows through 22 nodes organized into 8 stages:
 
-**What it does**:
-- Checks if user's first message is a simple greeting (""hi"", ""hello"", ""hey"")
-- If yes → Returns role-specific welcome message and **short-circuits pipeline** (efficiency!)
-- If no → Passes through to next nodes
-
-**Why it matters**:
-- **Cost optimization**: Saves $0.002 per greeting (no LLM call needed)
-- **Latency**: Instant response vs 1-2 second RAG pipeline
-- **User experience**: Warm, personality-driven tone sets engagement
-
-**Code pattern** (immutable state):
-```python
-def handle_greeting(state, rag_engine):
-    if should_show_greeting(state.query, state.chat_history):
-        greeting = get_role_greeting(state.role)
-        state.set_answer(greeting)
-        state.stash(""is_greeting"", True)  # Flag to skip retrieval
-    return state
+```
+Stage 0: Initialize → Stage 1: Greeting/Role → Stage 2: Intent/Entities →
+Stage 3: Clarification/Query → Stage 4: Retrieval/Validation →
+Stage 5: Generation/Quality → Stage 6: Actions/Formatting → Stage 7: Memory/Logging
 ```
 
-**Real-world value**: Customer support bots use this pattern to handle 30-40% of queries (""hello"", ""thanks"", ""goodbye"") without expensive LLM calls.
+**Live Example**: Right now, your question about nodes triggered all 22 nodes. My initialize_conversation_state loaded our chat history, classify_role_mode confirmed you're a technical hiring manager, and retrieve_chunks searched for architecture content.
 
 ---
 
-### Node 2: classify_query - Intent Detective
-**File**: `src/flows/query_classification.py`
-**Purpose**: Analyze query intent to enable proactive intelligence
+## Stage 0: Session Initialization
+
+### Node 1: initialize_conversation_state
+**File**: `assistant/flows/node_logic/stage0_session_management.py`
+**Purpose**: Load memory and normalize state containers
 
 **What it does**:
-- Examines query to determine intent type
-- Sets classification flags:
-  - `needs_longer_response` - Complex question needs detailed explanation
-  - `code_would_help` - Technical query where showing code clarifies
-  - `data_would_help` - Analytics/metrics request
-- Routes to appropriate knowledge sources
+- Loads session_memory from previous turns (topics, entities, affinity scores)
+- Initializes empty containers if first turn
+- Sets up analytics metadata for cost/latency tracking
 
-**Why it matters**:
-- **Proactive display**: Shows code/data without user explicitly requesting
-- **Prevents generic responses**: Instead of ""I can show you code"", just shows code
-- **Tailors format**: Technical users get code, business users get value framing
-
-**Classification logic**:
-```python
-def classify_query(state):
-    query_lower = state.query.lower()
-
-    # Technical indicators
-    if any(word in query_lower for word in [""code"", ""implementation"", ""how does"", ""show me""]):
-        state.stash(""code_would_help"", True)
-
-    # Data/analytics indicators
-    if any(word in query_lower for word in [""analytics"", ""metrics"", ""performance"", ""cost""]):
-        state.stash(""data_would_help"", True)
-
-    # Complexity indicators
-    if any(word in query_lower for word in [""explain"", ""walk me through"", ""how"", ""why""]):
-        state.stash(""needs_longer_response"", True)
-
-    return state
-```
-
-**Enterprise application**: Sales enablement tools classify ""pricing question"" vs ""technical question"" to route to appropriate knowledge bases (pricing docs vs product specs).
+**Live Example**: At the start of our conversation, this node loaded your role (hiring_manager_technical), the topics we've discussed, and your previous questions into my working memory.
 
 ---
 
-### Node 3: retrieve_chunks - Knowledge Retriever (THIS IS RAG!)
-**File**: `src/flows/core_nodes.py` → `src/retrieval/pgvector_retriever.py`
-**Purpose**: Find relevant knowledge from vector database
+## Stage 1: Greeting & Role Classification
+
+### Node 2: handle_greeting
+**File**: `assistant/flows/node_logic/greetings.py`
+**Purpose**: Warm intro without RAG cost for first-turn hellos
 
 **What it does**:
-1. Converts query to **768-dimensional embedding** using `text-embedding-3-small` ($0.00002/1K tokens)
-2. Searches Supabase `kb_chunks` table using **pgvector cosine similarity**
-3. Returns top-k (usually 4) most relevant chunks with similarity scores > 0.7
-4. For technical roles, also pulls relevant code snippets from `code_chunks/`
+- Detects greetings ('hi', 'hello') and short-circuits the pipeline
+- Returns role-specific welcome message instantly (~50ms vs ~1.5s full pipeline)
+- Saves $0.002 per greeting by skipping LLM call
 
-**Why it matters**:
-- **Grounding**: Ensures answers based on factual knowledge, not hallucinations (94% grounding rate in production)
-- **Semantic search**: Finds meaning, not just keyword matches (""Python skills"" retrieves ""intermediate proficiency with Pandas, APIs, automation"")
-- **Observability**: Logs which chunks retrieved for every query (enables quality measurement)
+**Live Example**: When you first arrived and selected your role, this node generated my welcome message with the 4 menu options without running expensive retrieval.
 
-**Vector search SQL** (executed by pgvector):
-```sql
-SELECT
-  id, section, content,
-  embedding <=> $query_embedding AS similarity_score
-FROM kb_chunks
-WHERE embedding <=> $query_embedding < 0.3  -- Cosine distance threshold
-ORDER BY similarity_score
-LIMIT 4;
-```
+### Node 3: classify_role_mode
+**File**: `assistant/flows/node_logic/stage2_role_routing.py`
+**Purpose**: Role detection and technical hiring manager onboarding
 
-**Performance metrics**:
-- Embedding generation: ~150ms
-- Vector search: ~200ms with IVFFLAT index
-- Total retrieval latency: ~350ms
+**What it does**:
+- Normalizes role selection ('2' → 'hiring_manager_technical')
+- Shows role-specific welcome message with menu options
+- Stores role_mode in session_memory for all future turns
 
-**Real-world scaling**: Same pattern powers customer support bots at Intercom, Zendesk, and internal documentation tools at Google. Scales to millions of documents with proper indexing.
+**Live Example**: When you selected option 2, this node detected 'hiring_manager_technical' and stored it. Every subsequent answer adapts to your technical background.
 
 ---
 
-### Node 4: generate_answer - Response Composer
-**File**: `src/flows/core_nodes.py` → `src/core/response_generator.py`
-**Purpose**: Use LLM to synthesize natural response from retrieved context
+## Stage 2: Query Understanding
+
+### Node 4: classify_intent
+**File**: `assistant/flows/node_logic/stage2_query_classification.py`
+**Purpose**: Determine engineering vs business focus
 
 **What it does**:
-1. Assembles prompt with:
-   - Retrieved knowledge chunks (grounding context)
-   - Role-specific instructions (technical vs business audience)
-   - Dynamic affordances (code display, analytics, contact offers)
-   - Query classification flags (from node 2)
-2. Calls `gpt-4o-mini` with **temperature 0.4** (balanced factual + conversational)
-3. Enforces Q&A synthesis (no ""Q: ... A: ..."" verbatim format per QA policy)
-4. Returns generated answer
+- Classifies query_type: technical, career, analytics, greeting, menu_selection
+- Sets flags: show_technical_depth, relate_to_enterprise
+- Determines topic_focus: architecture, data, testing, etc.
 
-**Why it matters**:
-- **Natural language**: Converts raw KB data into readable paragraphs
-- **Role adaptation**: Technical users get code + architecture, business users get ROI + value props
-- **Quality enforcement**: Validates response format, ensures third-person language about Noah
+**Live Example**: Your question about nodes was classified as query_type='technical' with topic_focus='architecture', which is why I'm showing implementation details.
 
-**Prompt structure** (simplified):
-```python
+### Node 5: detect_conversation_phase
+**File**: `assistant/flows/node_logic/stage5_quality_validation.py`
+**Purpose**: Track where we are in our conversation journey
+
+**What it does**:
+- discovery (turns 1-3): User exploring, keep high-level
+- exploration (turns 4-8): User diving deep, offer details
+- synthesis (8+ turns, 4+ topics): Connect the dots
+- extended (15+ turns): Suggest new territory
+
+**Live Example**: We're in the 'exploration' phase because we've had several exchanges. That's why I'm offering deeper architectural details rather than surface-level summaries.
+
+### Node 6: presentation_controller
+**File**: `assistant/flows/node_logic/stage3_presentation_control.py`
+**Purpose**: Depth level (1-3) and display toggles
+
+**What it does**:
+- Sets depth_level: 1=overview, 2=guided detail, 3=deep dive
+- Toggles: show_code, show_diagram, show_analytics
+- Adapts based on role, intent, and conversation phase
+
+**Live Example**: Because you're technical and we're in exploration phase, I'm at depth_level=2 with show_code=true.
+
+### Node 7: extract_entities
+**File**: `assistant/flows/node_logic/stage2_entity_extraction.py`
+**Purpose**: Capture company, role, timeline, contact hints
+
+**What it does**:
+- Extracts entities from queries: company names, job titles, timelines
+- Stores in session_memory to avoid re-asking
+- Detects contact preferences (email vs phone)
+
+---
+
+## Stage 3: Query Refinement
+
+### Node 8: assess_clarification_need
+**File**: `assistant/flows/node_logic/stage3_clarification.py`
+**Purpose**: Detect vague queries before retrieval
+
+**What it does**:
+- Checks if query is too ambiguous to retrieve accurately
+- If yes, sets clarification_needed=true and generates clarifying_question
+
+### Node 9: compose_query
+**File**: `assistant/flows/node_logic/stage3_query_composition.py`
+**Purpose**: Build retrieval-ready prompt with context
+
+**What it does**:
+- Adds role context: '[hiring_manager_technical] user query'
+- Appends accumulated topics for progressive inference
+- Boosts terms for specific query types (background → career_kb terms)
+
+**Live Example**: Your query was composed as '[hiring_manager_technical] explain nodes pipeline architecture orchestration' — the role prefix and topic context improve retrieval accuracy.
+
+---
+
+## Stage 4: Retrieval & Validation
+
+### Node 10: retrieve_chunks
+**File**: `assistant/flows/node_logic/stage4_retrieval_nodes.py`
+**Purpose**: pgvector semantic search + MMR diversification
+
+**What it does**:
+- Converts composed_query to 1536-dimensional embedding
+- Searches Supabase kb_chunks with cosine similarity
+- Returns top-6 chunks above 0.3 threshold
+- Applies MMR to ensure diversity
+
+**Live Example**: For your question, I retrieved 6 chunks including this very KB entry about nodes, plus entries about state management and the conversation flow diagram.
+
+### Node 11: validate_retrieval_relevance
+**File**: `assistant/flows/node_logic/stage4_retrieval_nodes.py`
+**Purpose**: Quality gate — check chunks match intent
+
+**What it does**:
+- Validates retrieved chunks actually address the query
+- Flags if retrieval seems off-topic
+- Prevents hallucination by catching bad retrieval early
+
+### Node 12: validate_grounding / handle_grounding_gap
+**File**: `assistant/flows/node_logic/stage4_retrieval_nodes.py`
+**Purpose**: Stop hallucinations early
+
+**What it does**:
+- Checks if best chunk similarity > 0.5 (grounding threshold)
+- If below threshold, sets grounding_status='insufficient'
+- handle_grounding_gap generates apologetic response if can't ground
+
+---
+
+## Stage 5: Generation & Quality
+
+### Node 13: generate_draft
+**File**: `assistant/flows/node_logic/stage5_generation_nodes.py`
+**Purpose**: Role-aware LLM generation
+
+**What it does**:
+- Assembles prompt with retrieved chunks, role instructions, and extra context
+- Calls GPT-4o with temperature 0.4 (balanced factual + conversational)
+- Applies teaching structure (Teaching Takeaways, Full Walkthrough, etc.)
+- Stores result as draft_answer (not final yet!)
+
+**Live Example**: Right now, my generate_draft node is using the retrieved architecture KB content to synthesize this explanation, with instructions to use our conversation as examples.
+
+### Node 14: validate_answer_quality
+**File**: `assistant/flows/node_logic/stage5_quality_validation.py`
+**Purpose**: Relevance + novelty checks
+
+**What it does**:
+- Relevance check: Does answer address query key terms? (30% threshold)
+- Novelty check: Is answer too similar to last 4 responses? (85% overlap = regenerate)
+- If quality warning, triggers retry with specific instructions
+
+### Node 15: validate_conversation_guidance
+**File**: `assistant/flows/node_logic/stage5_quality_validation.py`
+**Purpose**: Detect stuck patterns and progression opportunities
+
+**What it does**:
+- Detects if we're stuck in a loop (repetitive answers)
+- Identifies progression patterns (orchestration → enterprise)
+- Suggests depth increases or synthesis when appropriate
+
+### Node 16: hallucination_check
+**File**: `assistant/flows/node_logic/stage5_generation_nodes.py`
+**Purpose**: Attach citations and safety status
+
+**What it does**:
+- Attaches sources to answer (which KB entries were used)
+- Sets hallucination_safe=true if answer grounded in retrieved content
+- Flags if answer contains claims not in context
+
+---
+
+## Stage 6: Actions & Formatting
+
+### Node 17: plan_actions
+**File**: `assistant/flows/node_logic/stage6_action_planning.py`
+**Purpose**: Decide on actions + hiring signal detection
+
+**What it does**:
+- Plans side effects: include_code_reference, include_diagram, offer_resume
+- Detects hiring signals (interest in Noah's background, skills questions)
+- Stores pending_actions for format_answer to execute
+
+### Node 18: format_answer
+**File**: `assistant/flows/node_logic/stage6_formatting_nodes.py`
+**Purpose**: Structure answer with enrichments + followups
+
+**What it does**:
+- Wraps answer in Teaching Takeaways + Full Walkthrough structure
+- Adds code snippets, diagrams, analytics based on pending_actions
+- Generates contextual followup prompts based on conversation flow
+- Injects turn references ('Building on our orchestration discussion...')
+
+**Live Example**: This node is structuring my response with the Teaching Takeaways header and the expandable details sections you see.
+
+---
+
+## Stage 7: Memory & Logging
+
+### Node 19: execute_actions
+**File**: `assistant/flows/node_logic/stage7_action_execution.py`
+**Purpose**: Fire side-effects (email/SMS/storage)
+
+**What it does**:
+- Executes planned actions: send_email (Resend), send_sms (Twilio), log_data (Supabase)
+- Graceful degradation: If Resend down, log error but continue
+- Uses service factories that handle missing API keys
+
+### Node 20: update_memory
+**File**: `assistant/flows/node_logic/stage7_logging_nodes.py`
+**Purpose**: Store soft signals + affinity tracking
+
+**What it does**:
+- Accumulates topics discussed (bounded to last 10)
+- Updates affinity scores (technical_relevance_score, enterprise_relevance_score)
+- Prunes old memory to prevent bloat (supports 100+ turn conversations)
+- Stores explored_pillars to track knowledge base coverage
+
+**Live Example**: After this response, my update_memory node will store 'orchestration' and 'architecture' as topics, and increment your technical_relevance_score.
+
+### Node 21: log_and_notify
+**File**: `assistant/flows/node_logic/stage7_logging_nodes.py`
+**Purpose**: Supabase analytics + LangSmith tracing
+
+**What it does**:
+- Logs to Supabase: query, answer, latency_ms, tokens, cost, retrieval_scores
+- Sends trace to LangSmith for debugging and performance monitoring
+- Enables 'Display Analytics' feature for real-time dashboards
+
+---
+
+## ConversationState: The Data That Flows Through
+
+Every node reads from and writes to ConversationState — a TypedDict with ~40 fields:
+
+**Core Fields**: query, role, role_mode, session_id, chat_history
+**Classification**: query_type, is_greeting, topic_focus, intent_confidence
+**Retrieval**: retrieved_chunks, retrieval_scores, grounding_status
+**Generation**: draft_answer, answer, hallucination_safe
+**Memory**: session_memory (topics, entities, affinity scores, explored_pillars)
+**Actions**: pending_actions, executed_actions, followup_prompts
+
+**Live Example**: Right now, my state includes query='explain nodes', role_mode='hiring_manager_technical', depth_level=2, and retrieved_chunks containing this KB entry.
+
+---
+
+## Enterprise Patterns Demonstrated
+
+Each node teaches a production AI pattern:
+
+| Node | Enterprise Pattern |
+|------|-------------------|
+| handle_greeting | Short-circuit for cost optimization |
+| classify_intent | Query routing for multi-domain support |
+| compose_query | Context-aware retrieval enhancement |
+| validate_grounding | Hallucination prevention |
+| validate_answer_quality | Quality gates before response |
+| plan_actions | Separation of planning and execution |
+| update_memory | Stateful conversation management |
+| log_and_notify | Observability for debugging and improvement |
+
+**Want me to dive deeper into any specific node? Or see how a particular node handled your question?**"
 prompt = f\"\"\"
 You are Portfolia, Noah's AI assistant with dual purpose:
 1. Share information about Noah's background
@@ -1498,3 +1657,780 @@ logger.info(f""Node {node_name} completed in {elapsed_ms}ms"")
 - ""What's the cost per query?"" - Break down economics
 
 Each node demonstrates production GenAI patterns you can adapt for your own projects!"
+"Give me an overview of the 5 core knowledge pillars","# 🎯 Portfolia's 5 Core Knowledge Pillars
+
+I'm designed as an educational guide through 5 interconnected areas that demonstrate how production GenAI systems work:
+
+## 1️⃣ Orchestration Layer
+**What it covers**: My 22-node LangGraph pipeline, conversation state management, and quality safeguards
+**Key topics**: Nodes, stages, ConversationState fields, edge routing, quality gates
+**Depth available**: From high-level flow diagram to individual node implementations
+
+## 2️⃣ Full Tech Stack
+**What it covers**: Frontend to backend to data layer architecture
+**Key topics**: Next.js/Streamlit UI, Python backend, Supabase Postgres, Vercel serverless
+**Depth available**: From component overview to code-level implementation details
+
+## 3️⃣ Enterprise Adaptation
+**What it covers**: How assistants like me are customized for enterprise deployments
+**Key topics**: Customer support bots, internal documentation assistants, multi-tenant architecture, compliance
+**Depth available**: From use case examples to production patterns and security considerations
+
+## 4️⃣ Data Pipeline Management
+**What it covers**: How knowledge is created, stored, searched, and maintained
+**Key topics**: Embeddings, pgvector, chunking strategies, analytics tracking, data quality
+**Depth available**: From conceptual explanation to SQL queries and embedding code
+
+## 5️⃣ Noah's Technical Background
+**What it covers**: Noah's engineering journey, projects, certifications, and proof of skills
+**Key topics**: Career transition, Python/AI skills, production system experience, GitHub portfolio
+**Depth available**: From career summary to specific project deep-dives
+
+---
+
+## How Depth Works
+
+Each pillar supports progressive exploration:
+
+**Level 1 (Overview)**: 30-second summary, key concepts, why it matters
+**Level 2 (Components)**: Individual pieces broken down, how they connect
+**Level 3 (Implementation)**: Code, configurations, specific details
+**Level 4 (Advanced)**: Edge cases, optimizations, lessons learned
+
+**Example progression**:
+- 'Tell me about orchestration' → Level 1 overview of 22 nodes in 7 stages
+- 'How does classification work?' → Level 2 breakdown of Stage 2 nodes
+- 'Show me the classify_intent code' → Level 3 implementation details
+- 'What edge cases does it handle?' → Level 4 advanced safeguards
+
+---
+
+## Which pillar interests you most?"
+"How do you use the current conversation as examples?","# 🎯 Self-Referential Teaching: Using Our Conversation as a Live Example
+
+## Core Principle
+
+When explaining how I work, I should reference **what just happened in our conversation** to make concepts tangible. Instead of abstract explanations, I show the system in action.
+
+---
+
+## Examples of Self-Referential Explanations
+
+### Explaining retrieve_chunks:
+\"Right now, when you asked about retrieval, my retrieve_chunks node searched the architecture_kb with your query. It found 6 relevant chunks including this very KB entry with a similarity score of 0.87. That's why I can explain this so specifically — I retrieved the exact documentation about myself.\"
+
+### Explaining classify_role_mode:
+\"At the start of our conversation, when you selected option 2, my classify_role_mode node stored role_mode='hiring_manager_technical' in session_memory. Every answer since then has been tailored for your technical background — that's why I'm showing code examples and architecture details.\"
+
+### Explaining compose_query:
+\"Your question 'how do nodes work' was enhanced to '[hiring_manager_technical] how do nodes work orchestration architecture pipeline' before retrieval. The role prefix and accumulated topics improved my search accuracy.\"
+
+### Explaining update_memory:
+\"After this response, my update_memory node will store 'orchestration' as a topic we discussed. Next time you ask something, my compose_query will include that context to improve retrieval.\"
+
+### Explaining conversation phase:
+\"We're in the 'exploration' phase (turns 4-8) which is why I'm offering deeper details. In the 'discovery' phase (turns 1-3), I would have kept things higher-level.\"
+
+---
+
+## Why This Works
+
+1. **Tangibility**: Abstract concepts become concrete when users see them happening
+2. **Trust**: Users see the system is transparent about its operations
+3. **Education**: Users learn GenAI patterns through direct observation
+4. **Engagement**: Self-reference creates a sense of conversation, not lecture
+
+---
+
+## State Fields I Can Reference
+
+When explaining myself, I can mention:
+- **query**: The exact question that triggered this response
+- **role_mode**: The role stored from their selection
+- **retrieved_chunks**: What KB content I found
+- **depth_level**: Why I'm showing this level of detail
+- **conversation_phase**: Where we are in our journey
+- **topics**: What we've discussed so far
+- **similarity scores**: How well my retrieval matched their question
+
+**This makes me a live case study of production GenAI systems, not just documentation about one.**"
+"Explain the data pipeline overview","# 📊 Data Pipeline Management Overview
+
+## What is my Data Pipeline?
+
+My data pipeline is the system that creates, stores, searches, and maintains knowledge. Think of it as my memory infrastructure — it's how I remember things about Noah and how I find relevant information when you ask questions.
+
+**Live Example**: Right now, when you asked this question, my pipeline searched through 400+ knowledge chunks and found this exact entry with a similarity score of ~0.85. That's the data pipeline in action!
+
+---
+
+## The 5-Stage Data Pipeline
+
+```
+Stage 1: Knowledge Ingestion
+    ↓ CSV files → chunking → embedding generation
+Stage 2: Vector Storage
+    ↓ Supabase pgvector → IVFFLAT indexes
+Stage 3: Semantic Search
+    ↓ Query embedding → cosine similarity → top-k retrieval
+Stage 4: Context Assembly
+    ↓ Chunk formatting → deduplication → ranking
+Stage 5: Analytics & Quality
+    ↓ Logging → metrics → continuous improvement
+```
+
+---
+
+## Key Metrics
+
+| Metric | Value | What It Means |
+|--------|-------|---------------|
+| Knowledge chunks | 400+ | Total pieces of information I can retrieve |
+| Embedding dimensions | 1536 | Vector size for semantic matching |
+| Search latency | ~280ms | Time to find relevant chunks |
+| Similarity threshold | 0.3 | Minimum match score for inclusion |
+| Top-k retrieval | 6 chunks | Maximum context per query |
+
+---
+
+## Why This Matters
+
+**For Production Systems**: Every GenAI application needs a data pipeline. Whether it's customer support bots (searching help docs), internal assistants (searching company knowledge), or code assistants (searching codebases) — the patterns are the same.
+
+**For Learning**: Understanding my data pipeline teaches you how to build any RAG system. The concepts transfer directly to enterprise applications.
+
+---
+
+## Go Deeper
+
+- 'Explain embeddings' → How text becomes searchable numbers
+- 'How does vector search work?' → The similarity matching algorithm
+- 'Show me the chunking strategy' → How knowledge is broken into pieces
+- 'How do you track data quality?' → Analytics and improvement loops"
+"Explain embeddings and vector storage","# 🧮 Embeddings: How Text Becomes Searchable Numbers
+
+## What are Embeddings?
+
+Embeddings convert text into lists of numbers (vectors) where **similar meanings = similar numbers**. This lets me find relevant information even when you use different words than my knowledge base.
+
+**Example**:
+- 'How does RAG work?' → [0.23, -0.45, 0.67, ..., 0.12] (1536 numbers)
+- 'Explain retrieval augmented generation' → [0.25, -0.43, 0.69, ..., 0.11] ← Very similar!
+- 'What's the weather?' → [-0.89, 0.12, -0.34, ..., 0.78] ← Very different!
+
+**Live Example**: Your question about embeddings was converted to a 1536-dimensional vector. I compared it against all my knowledge base vectors and found this entry had the highest similarity score.
+
+---
+
+## The Embedding Process
+
+```python
+# 1. Text comes in (your question or KB entry)
+text = 'How do embeddings work?'
+
+# 2. OpenAI API converts to vector
+response = openai.embeddings.create(
+    model='text-embedding-3-small',  # Our model choice
+    input=text
+)
+embedding = response.data[0].embedding  # 1536 floats
+
+# 3. Store in Supabase pgvector
+supabase.table('kb_chunks').insert({
+    'content': text,
+    'embedding': embedding  # vector(1536) column
+})
+```
+
+---
+
+## Vector Storage with pgvector
+
+I use **Supabase Postgres with pgvector extension** to store and search embeddings:
+
+**Why pgvector?**
+- ✅ SQL interface (can JOIN with other tables)
+- ✅ ACID transactions (data consistency)
+- ✅ Managed hosting (Supabase handles maintenance)
+- ✅ $25/month (vs $70/month Pinecone)
+
+**The Schema**:
+```sql
+CREATE TABLE kb_chunks (
+    id BIGSERIAL PRIMARY KEY,
+    doc_id TEXT,           -- 'career_kb', 'architecture_kb'
+    section TEXT,          -- Entry title
+    content TEXT,          -- Full Q&A text
+    embedding vector(1536), -- The magic numbers!
+    metadata JSONB         -- Source, category, etc.
+);
+
+-- IVFFLAT index for fast search
+CREATE INDEX kb_chunks_embedding_idx
+ON kb_chunks
+USING ivfflat (embedding vector_cosine_ops)
+WITH (lists = 100);
+```
+
+---
+
+## Embedding Model Choice
+
+| Model | Dimensions | Cost | Why I Use It |
+|-------|-----------|------|--------------|
+| text-embedding-3-small | 1536 | $0.00002/1K tokens | ✅ Best value |
+| text-embedding-3-large | 3072 | $0.00013/1K tokens | More dimensions, not needed |
+| ada-002 (legacy) | 1536 | $0.0001/1K tokens | 5x more expensive |
+
+**Cost Example**: At 500 queries/day × $0.00002 = $0.01/day = $3/month
+
+---
+
+## Key Concepts
+
+**Cosine Similarity**: Measures angle between vectors (0° = identical, 90° = unrelated, 180° = opposite)
+**Dimensionality**: More dimensions = more nuance, but 1536 is optimal for most use cases
+**Semantic vs Lexical**: Embeddings find meaning, not just matching words
+
+---
+
+## Enterprise Pattern
+
+Same embedding approach powers:
+- **Customer support**: Embed help articles, find relevant docs for user questions
+- **Code search**: Embed code files, find similar implementations
+- **Document QA**: Embed contracts/policies, answer compliance questions"
+"Explain the vector search process","# 🔍 Vector Search: Finding Relevant Knowledge
+
+## How Does Semantic Search Work?
+
+When you ask me a question, I find relevant answers by comparing your question's embedding to all my stored knowledge embeddings. The closest matches become my context for answering.
+
+**Live Example**: For your question about vector search, I:
+1. Converted it to a 1536-dimensional vector
+2. Compared against 400+ KB chunk vectors
+3. Found this entry with similarity ~0.87
+4. Used it to generate this response
+
+---
+
+## The Search Algorithm
+
+```sql
+-- The core pgvector query
+SELECT
+    id, content, doc_id, section,
+    1 - (embedding <=> query_embedding) AS similarity
+FROM kb_chunks
+WHERE 1 - (embedding <=> query_embedding) > 0.3  -- Threshold
+ORDER BY embedding <=> query_embedding           -- Nearest first
+LIMIT 6;                                         -- Top-k
+```
+
+**Key Operators**:
+- `<=>` : Cosine distance (0 = identical, 2 = opposite)
+- `1 - distance` : Convert to similarity (1 = identical, 0 = different)
+
+---
+
+## The Search Pipeline
+
+```
+Your Question
+    ↓
+[1] Generate Query Embedding (200ms)
+    OpenAI text-embedding-3-small
+    ↓
+[2] Vector Similarity Search (280ms)
+    pgvector cosine distance
+    IVFFLAT index for O(√n) speed
+    ↓
+[3] Apply Threshold Filter
+    Only chunks with similarity > 0.3
+    ↓
+[4] MMR Diversification
+    Avoid redundant chunks
+    ↓
+[5] Return Top-6 Chunks
+    With similarity scores and metadata
+```
+
+---
+
+## Performance Optimization
+
+**Without Index (Sequential Scan)**:
+- Compares query to ALL vectors
+- O(n) complexity
+- 1000ms for 10K chunks
+
+**With IVFFLAT Index**:
+- Partitions vectors into clusters
+- Only searches relevant clusters
+- O(√n) complexity
+- 280ms for 10K chunks
+
+```sql
+-- The index that makes it fast
+CREATE INDEX kb_chunks_embedding_idx
+ON kb_chunks
+USING ivfflat (embedding vector_cosine_ops)
+WITH (lists = 100);  -- √10000 = 100 clusters optimal
+```
+
+---
+
+## Similarity Score Interpretation
+
+| Score | Meaning | Action |
+|-------|---------|--------|
+| 0.85+ | Excellent match | High confidence retrieval |
+| 0.70-0.84 | Good match | Include in context |
+| 0.50-0.69 | Moderate match | Include if needed |
+| 0.30-0.49 | Weak match | Include for coverage |
+| <0.30 | Poor match | Exclude from context |
+
+---
+
+## Advanced: MMR Diversification
+
+**Problem**: Top-6 chunks might all say the same thing
+**Solution**: Maximal Marginal Relevance (MMR) balances relevance with diversity
+
+```python
+def mmr_rerank(query_embedding, chunks, lambda_param=0.5):
+    '''Select chunks that are relevant but not redundant'''
+    selected = []
+    remaining = chunks.copy()
+
+    while len(selected) < 6 and remaining:
+        # Score = relevance - redundancy
+        scores = []
+        for chunk in remaining:
+            relevance = similarity(query_embedding, chunk.embedding)
+            redundancy = max(similarity(chunk.embedding, s.embedding)
+                           for s in selected) if selected else 0
+            mmr_score = lambda_param * relevance - (1-lambda_param) * redundancy
+            scores.append((chunk, mmr_score))
+
+        best = max(scores, key=lambda x: x[1])
+        selected.append(best[0])
+        remaining.remove(best[0])
+
+    return selected
+```
+
+---
+
+## Enterprise Applications
+
+| Use Case | What's Searched | Chunk Size |
+|----------|-----------------|------------|
+| Customer Support | Help docs, FAQs | 200-500 tokens |
+| Legal Research | Contracts, case law | 500-1000 tokens |
+| Code Search | Functions, classes | Full function |
+| Internal Docs | Confluence, Notion | 300-600 tokens |"
+"Explain the chunking strategy","# 📄 Chunking Strategy: Breaking Knowledge Into Pieces
+
+## Why Chunk?
+
+LLMs have context limits. I can't feed my entire knowledge base into GPT-4o-mini. Instead, I break knowledge into **chunks** that are:
+- Small enough to fit in context (6 chunks × ~500 tokens = 3000 tokens)
+- Large enough to be meaningful (complete Q&A pairs, not fragments)
+- Optimized for retrieval (each chunk should be self-contained)
+
+---
+
+## My Chunking Approach
+
+I use **Q&A Pair Chunking** — each question-answer pair from my knowledge base becomes one chunk:
+
+```
+Chunk 1: 'What is the tech stack?' → Full answer about Python, LangGraph, etc.
+Chunk 2: 'How does RAG work?' → Complete RAG explanation
+Chunk 3: 'What are Noah's skills?' → Full skills list
+```
+
+**Why this works for me**:
+- Questions are natural retrieval anchors
+- Answers are complete and self-contained
+- No risk of cutting off mid-sentence
+- Clear metadata (source KB, question as title)
+
+---
+
+## Chunking Strategies Compared
+
+| Strategy | Description | Best For | Drawbacks |
+|----------|-------------|----------|-----------|
+| **Q&A Pairs** (mine) | Keep question-answer together | FAQs, knowledge bases | Requires structured source |
+| **Fixed Size** | Split every 500 tokens | Long documents | May split mid-sentence |
+| **Semantic** | Split at topic boundaries | Articles, books | Complex to implement |
+| **Sentence** | One sentence per chunk | Legal docs | Too granular, loses context |
+| **Recursive** | Split, then split again | Code files | Multiple passes needed |
+
+---
+
+## The Ingestion Process
+
+```python
+# scripts/migrate_data_to_supabase.py
+
+def process_kb_file(csv_path):
+    '''Convert CSV Q&A pairs into embedded chunks'''
+    df = pd.read_csv(csv_path)
+    doc_id = csv_path.stem  # 'career_kb', 'technical_kb'
+
+    for _, row in df.iterrows():
+        question = row['Question']
+        answer = row['Answer']
+
+        # Combine for embedding (question helps retrieval)
+        full_content = f'Question: {question}\n\nAnswer: {answer}'
+
+        # Generate embedding
+        embedding = openai.embeddings.create(
+            model='text-embedding-3-small',
+            input=full_content
+        ).data[0].embedding
+
+        # Store chunk
+        supabase.table('kb_chunks').insert({
+            'doc_id': doc_id,
+            'section': question,  # Chunk title
+            'content': full_content,
+            'embedding': embedding,
+            'metadata': {'source': csv_path.name}
+        })
+```
+
+---
+
+## Chunk Size Analysis
+
+**My chunks**: Average ~400 tokens per Q&A pair
+
+| Metric | Value |
+|--------|-------|
+| Min chunk size | 50 tokens (short answers) |
+| Max chunk size | 2000 tokens (detailed explanations) |
+| Average | ~400 tokens |
+| Total chunks | 400+ across all KBs |
+
+**Context budget**: 6 chunks × 400 tokens = 2400 tokens for retrieval context
+**Remaining**: GPT-4o-mini has 128K limit, so plenty of room!
+
+---
+
+## Overlap Considerations
+
+**I don't use overlap** because Q&A pairs are self-contained.
+
+For other chunking strategies, overlap prevents losing context at boundaries:
+
+```
+Without overlap:
+  [Chunk 1: tokens 1-500] [Chunk 2: tokens 501-1000]
+  ↑ Sentence might be cut here!
+
+With 50-token overlap:
+  [Chunk 1: tokens 1-500] [Chunk 2: tokens 451-950]
+  ↑ Overlapping region ensures context preserved
+```
+
+---
+
+## Knowledge Base Sources
+
+| KB File | Description | Chunk Count |
+|---------|-------------|-------------|
+| career_kb.csv | Noah's background | ~30 chunks |
+| technical_kb.csv | Tech stack, features | ~50 chunks |
+| architecture_kb.csv | Diagrams, node pipeline | ~20 chunks |
+| personality_kb.csv | Conversation style | ~15 chunks |
+| conversation_guidance_kb.csv | Off-topic handling | ~10 chunks |
+
+---
+
+## Enterprise Patterns
+
+| Application | Chunk Strategy | Size |
+|-------------|---------------|------|
+| Customer Support | FAQ pairs | 200-400 tokens |
+| Legal Docs | Clause-level | 500-1000 tokens |
+| Code Search | Function-level | Full function |
+| Long Reports | Section headers | 800-1200 tokens |"
+"How do you track analytics and data quality","# 📈 Analytics & Data Quality Tracking
+
+## What Do I Track?
+
+Every conversation generates data that helps Noah improve my performance. I track **6 categories of metrics**:
+
+1. **Interaction Logs**: Every query and response
+2. **Retrieval Quality**: Which chunks matched and how well
+3. **Performance Metrics**: Latency, tokens, costs
+4. **User Engagement**: Session length, follow-up patterns
+5. **Quality Signals**: Grounding status, relevance scores
+6. **Feedback**: User ratings when provided
+
+---
+
+## The Analytics Pipeline
+
+```
+User Query
+    ↓
+[1] Log Query (async)
+    session_id, query, role, timestamp
+    ↓
+[2] Log Retrieval (async)
+    chunk_ids, similarity_scores, doc_ids
+    ↓
+[3] Log Response (async)
+    answer, latency_ms, tokens, cost
+    ↓
+[4] Aggregate Metrics
+    Daily rollups, trend analysis
+    ↓
+[5] Quality Monitoring
+    Alerts on degradation
+```
+
+---
+
+## Database Schema for Analytics
+
+```sql
+-- Core interaction log
+CREATE TABLE messages (
+    id BIGSERIAL PRIMARY KEY,
+    session_id UUID NOT NULL,
+    role_mode TEXT,
+    query TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    query_type TEXT,        -- technical, career, action_request
+    latency_ms INTEGER,
+    tokens_prompt INTEGER,
+    tokens_completion INTEGER,
+    success BOOLEAN,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Retrieval tracking
+CREATE TABLE retrieval_logs (
+    id BIGSERIAL PRIMARY KEY,
+    message_id BIGINT REFERENCES messages(id),
+    topk_ids BIGINT[],      -- Array of chunk IDs
+    scores FLOAT[],         -- Similarity scores
+    grounded BOOLEAN,       -- Was answer grounded?
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+---
+
+## Key Metrics Dashboard
+
+| Metric | Target | Current | Status |
+|--------|--------|---------|--------|
+| Avg Latency | <3s | 2.3s | ✅ |
+| Grounding Rate | >90% | 94% | ✅ |
+| Avg Similarity | >0.7 | 0.78 | ✅ |
+| Success Rate | >85% | 87% | ✅ |
+| Cost per Query | <$0.001 | $0.0004 | ✅ |
+
+---
+
+## Quality Monitoring
+
+**Automated Checks (run with each query)**:
+- Retrieval similarity > 0.3 (else mark as 'ungrounded')
+- Response contains no raw metrics (metrics stripping)
+- Response not identical to previous turn (novelty check)
+- Response addresses query keywords (relevance check)
+
+**Daily Maintenance (scripts/daily_maintenance.py)**:
+- Compute 7-day rolling averages
+- Flag sessions with low engagement
+- Identify knowledge gaps (low-similarity queries)
+- Generate improvement recommendations
+
+---
+
+## LangSmith Integration
+
+For deeper observability, I use LangSmith tracing:
+
+```python
+# Every LLM call is traced
+with langsmith.trace('generate_draft') as trace:
+    response = openai.chat.completions.create(...)
+    trace.log_output(response)
+    trace.log_metadata({
+        'tokens': response.usage.total_tokens,
+        'latency_ms': elapsed_ms,
+        'grounded': grounding_status
+    })
+```
+
+**What LangSmith Shows**:
+- Full prompt/response pairs
+- Token counts and costs
+- Latency breakdowns
+- Error traces and debugging
+
+---
+
+## Continuous Improvement Loop
+
+```
+[1] Identify Low-Quality Queries
+    Similarity < 0.5 = knowledge gap
+    ↓
+[2] Cluster Similar Failures
+    'leadership experience' + 'team management' = missing topic
+    ↓
+[3] Add KB Entries
+    New Q&A pair addressing gap
+    ↓
+[4] Regenerate Embeddings
+    scripts/migrate_data_to_supabase.py
+    ↓
+[5] Validate Improvement
+    Re-run test queries, check similarity increase
+```
+
+---
+
+## Example SQL Queries
+
+**Find knowledge gaps**:
+```sql
+SELECT m.query, AVG(unnest(r.scores)) as avg_sim
+FROM messages m
+JOIN retrieval_logs r ON m.id = r.message_id
+WHERE m.created_at > NOW() - INTERVAL '7 days'
+GROUP BY m.query
+HAVING AVG(unnest(r.scores)) < 0.5
+ORDER BY avg_sim ASC
+LIMIT 10;
+```
+
+**Performance trend**:
+```sql
+SELECT DATE(created_at),
+       AVG(latency_ms) as avg_latency,
+       COUNT(*) as queries
+FROM messages
+WHERE created_at > NOW() - INTERVAL '30 days'
+GROUP BY DATE(created_at)
+ORDER BY DATE(created_at);
+```"
+"Explain the ConversationState fields","# 📋 ConversationState: The Data Flowing Through My Pipeline
+
+## Overview
+
+ConversationState is a TypedDict with ~40 fields that flows through all 22 nodes. Each node reads what it needs and writes its outputs. Think of it as a clipboard passed down an assembly line.
+
+**File**: `assistant/state/conversation_state.py`
+
+---
+
+## Core Conversation Fields
+
+| Field | Type | Purpose | Example |
+|-------|------|---------|---------|
+| query | str | User's current question | \"explain the nodes\" |
+| role | str | Display role name | \"Hiring Manager (technical)\" |
+| role_mode | str | Normalized role key | \"hiring_manager_technical\" |
+| session_id | str | Unique session identifier | \"abc123-def456\" |
+| chat_history | List[Dict] | Full conversation history | [{\"role\": \"user\", \"content\": \"...\"}] |
+
+**Live Example**: Right now, my state has query='explain ConversationState' and role_mode='hiring_manager_technical'.
+
+---
+
+## Classification Fields
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| query_type | str | technical, career, analytics, greeting, menu_selection |
+| is_greeting | bool | True if simple hello (triggers short-circuit) |
+| topic_focus | str | architecture, data, testing, enterprise, etc. |
+| intent_confidence | float | 0-1 confidence in classification |
+| show_technical_depth | bool | Whether to include code/architecture |
+| relate_to_enterprise | bool | Whether to tie back to enterprise value |
+
+**Live Example**: Your question was classified as query_type='technical' with show_technical_depth=True.
+
+---
+
+## Retrieval Fields
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| composed_query | str | Enhanced query sent to retrieval |
+| retrieved_chunks | List[Dict] | Top-k chunks from pgvector search |
+| retrieval_scores | List[float] | Similarity scores for each chunk |
+| grounding_status | str | ok, insufficient, or gap |
+| code_snippets | List[Dict] | Code files relevant to query |
+
+**Live Example**: My composed_query added your role prefix and accumulated topics to improve search accuracy.
+
+---
+
+## Generation Fields
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| draft_answer | str | Initial LLM response (before formatting) |
+| answer | str | Final formatted response |
+| hallucination_safe | bool | True if answer grounded in retrieved content |
+| depth_level | int | 1=overview, 2=guided detail, 3=deep dive |
+
+---
+
+## Memory Fields (session_memory Dict)
+
+| Nested Field | Type | Purpose |
+|--------------|------|---------|
+| persona_hints.role_mode | str | Stored role for all future turns |
+| topics | List[str] | Last 10 topics discussed |
+| entities | Dict | Extracted company, role, timeline |
+| explored_pillars | List[str] | Which knowledge pillars we've covered |
+| affinity_scores | Dict | technical_relevance_score, enterprise_relevance_score |
+
+**Live Example**: My session_memory tracks that we've explored 'orchestration' and 'architecture', and your technical_relevance_score is high.
+
+---
+
+## Action Fields
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| pending_actions | List[Dict] | Actions planned but not executed |
+| executed_actions | List[Dict] | Actions completed this turn |
+| followup_prompts | List[str] | Suggested next questions |
+| hiring_signals | List[str] | Detected interest indicators |
+
+---
+
+## Quality Validation Fields
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| conversation_phase | str | discovery, exploration, synthesis, extended |
+| answer_quality_warning | str | Quality issues detected |
+| conversation_guidance_needed | List[str] | stuck_need_redirection, suggest_synthesis, etc. |
+| is_repeated_query | bool | True if user asked same question before |
+
+---
+
+## How Nodes Use State
+
+**Reading**: `query = state.get(\"query\", \"\")`
+**Writing**: `return {\"answer\": generated_text}` (partial update)
+
+LangGraph merges partial updates automatically — nodes only return what they changed.
+
+**Want to see how a specific field flows through the pipeline? I can trace any field through all 22 nodes.**"

@@ -37,17 +37,13 @@ def _get_role_welcome_message(role_mode: str) -> str:
         """),
 
         "hiring_manager_technical": dedent("""\
-            Since you selected 'Technical Hiring Manager', I can focus on the areas most relevant to you:
+            Since you selected 'Technical Hiring Manager', I can focus on 5 key areas:
 
-            • My architecture and full-stack design — LangGraph orchestration, RAG pipeline, Supabase vector storage, and observability through LangSmith
-            • How Noah applied software engineering, AI engineering, and data pipeline best practices to make me production-ready
-            • The business and enterprise value of agentic systems like me — how organizations deploy assistants to improve reliability, scalability, and customer satisfaction
-
-            You can choose where to start:
-            1️⃣ My full tech stack — architecture overview (frontend → backend → data pipeline → observability)
-            2️⃣ The orchestration layer — how my nodes, states, and safeguards work together as a conversation progresses
+            1️⃣ The orchestration layer — how my nodes, states, and safeguards work together
+            2️⃣ My full tech stack — architecture overview (frontend → backend → observability)
             3️⃣ Enterprise adaptation — how assistants like me are customized for large-scale deployments
-            4️⃣ See Noah's technical background — certifications, GitHub projects, and proof of his engineering foundation
+            4️⃣ Data pipeline management — embeddings, vector storage, chunking, and analytics
+            5️⃣ See Noah's technical background — certifications, GitHub projects, engineering foundation
         """),
 
         "software_developer": dedent("""\
@@ -324,3 +320,69 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
                 return onboard_hiring_manager_technical(state)
 
     return state
+
+
+# ============================================================================
+# Repeated Query Detection
+# ============================================================================
+
+def detect_repeated_query(state: ConversationState) -> ConversationState:
+    """Detect if user asked the same question in recent turns.
+
+    This helps Portfolia avoid giving identical responses when users
+    repeat themselves, instead offering to explore different angles
+    or clarify what they're looking for.
+
+    Args:
+        state: ConversationState with query and chat_history
+
+    Returns:
+        Updated state with is_repeated_query flag if detected
+    """
+    with create_custom_span(
+        name="detect_repeated_query",
+        inputs={"query": state.get("query", "")[:100]}
+    ):
+        query = state.get("query", "").lower().strip()
+        chat_history = state.get("chat_history", [])
+
+        if not query or len(query) < 5:
+            return state
+
+        # Get last 4 messages (2 exchanges) to find recent user queries
+        recent_user_queries = []
+        for msg in chat_history[-4:]:
+            if isinstance(msg, dict):
+                msg_type = msg.get("type") or msg.get("role", "")
+                content = msg.get("content", "").lower().strip()
+            elif hasattr(msg, "type"):
+                msg_type = msg.type
+                content = getattr(msg, "content", "").lower().strip()
+            else:
+                continue
+
+            if msg_type in ["human", "user"]:
+                recent_user_queries.append(content)
+
+        # Check for exact or near-exact match (within last 2 user messages)
+        if recent_user_queries:
+            for prev_query in recent_user_queries:
+                # Exact match
+                if query == prev_query:
+                    state["is_repeated_query"] = True
+                    state["repeated_query_count"] = 2
+                    logger.info(f"Detected repeated query (exact match): '{query[:50]}...'")
+                    return state
+
+                # Near-exact match (90% word overlap)
+                query_words = set(query.split())
+                prev_words = set(prev_query.split())
+                if query_words and prev_words:
+                    overlap = len(query_words & prev_words) / max(len(query_words), len(prev_words))
+                    if overlap > 0.9:
+                        state["is_repeated_query"] = True
+                        state["repeated_query_count"] = 2
+                        logger.info(f"Detected repeated query (90% overlap): '{query[:50]}...'")
+                        return state
+
+        return state

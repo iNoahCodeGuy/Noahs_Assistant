@@ -238,7 +238,7 @@ class ActionExecutor:
             state["analytics_metadata"]["resume_send_failed"] = "email_send_failed"
             return
 
-        # Step 3: Notify Noah via SMS with job details
+        # Step 3: Notify Noah via SMS with job details and engagement context
         twilio_service = self._ensure_twilio()
         if twilio_service:
             # Build SMS message with job details if available
@@ -247,24 +247,46 @@ class ActionExecutor:
             job_position = job_details.get("position", "Unknown Position")
             job_timeline = job_details.get("timeline", "Not specified")
 
+            # Get engagement context for Noah's awareness
+            engagement_score = state.get("engagement_score", 0)
+            session_memory = state.get("session_memory", {})
+            topics = session_memory.get("topics", [])
+            topics_str = ", ".join(topics[-3:]) if topics else "General"  # Last 3 topics
+            depth_level = state.get("depth_level", 1)
+            hiring_signals = state.get("hiring_signals", [])
+            signals_str = ", ".join(hiring_signals) if hiring_signals else "None"
+
+            # Build comprehensive SMS message with engagement context
             sms_message = (
-                f"🎯 Resume Sent!\n\n"
-                f"To: {recipient_name} ({state['user_email']})\n"
+                f"🎯 Resume Sent!\n"
+                f"To: {recipient_name}\n"
+                f"Email: {state['user_email']}\n"
                 f"Company: {job_company}\n"
                 f"Position: {job_position}\n"
-                f"Timeline: {job_timeline}"
+                f"Timeline: {job_timeline}\n"
+                f"---\n"
+                f"Engagement: {engagement_score} | Depth: {depth_level}\n"
+                f"Topics: {topics_str}\n"
+                f"Signals: {signals_str}"
             )
 
             try:
                 twilio_service.send_contact_alert(
                     from_name=recipient_name,
                     from_email=state["user_email"],
-                    message_preview=sms_message[:160]  # SMS length limit
+                    message_preview=sms_message[:320]  # Extended SMS length for context
                 )
                 if "analytics_metadata" not in state:
                     state["analytics_metadata"] = {}
                 state["analytics_metadata"]["noah_notified_via_sms"] = True
-                logger.info("Noah notified via SMS about resume send")
+                state["analytics_metadata"]["sms_engagement_context"] = {
+                    "score": engagement_score,
+                    "depth": depth_level,
+                    "topics": topics[-3:] if topics else [],
+                    "signals": hiring_signals
+                }
+                logger.info("Noah notified via SMS about resume send (engagement=%d, depth=%d)",
+                           engagement_score, depth_level)
             except Exception as exc:
                 logger.error("Failed to send SMS notification: %s", exc)
                 if "analytics_metadata" not in state:

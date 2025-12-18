@@ -61,10 +61,19 @@ def validate_answer_quality(state: ConversationState) -> ConversationState:
     """
     query = state.get("query", "").lower()
     answer = state.get("draft_answer", "")
-    answer_lower = answer.lower() if answer else ""
+
+    # Extract content from answer (handles both dict and LangChain message objects)
+    if isinstance(answer, dict):
+        answer_content = answer.get("content", "")
+    elif hasattr(answer, "content"):
+        answer_content = getattr(answer, "content", "")
+    else:
+        answer_content = str(answer) if answer else ""
+
+    answer_lower = answer_content.lower() if answer_content else ""
     chat_history = state.get("chat_history", [])
 
-    if not query or not answer:
+    if not query or not answer_content:
         return state
 
     quality_issues = []
@@ -123,7 +132,7 @@ def validate_answer_quality(state: ConversationState) -> ConversationState:
     # 3. TURN REFERENCE VALIDATION (conditional)
     if current_turn >= 3 and not state.get("is_greeting", False):
         has_turn_reference = any(
-            re.search(pattern, answer, re.IGNORECASE)
+            re.search(pattern, answer_content, re.IGNORECASE)
             for pattern in [r"turn \d+", r"Turn \d+", r"building on", r"following up", r"we discussed", r"earlier"]
         )
 
@@ -142,7 +151,7 @@ def validate_answer_quality(state: ConversationState) -> ConversationState:
     # 4. TEACHING STRUCTURE VALIDATION (only when teaching style should be used)
     if should_teach:
         # Check for systematic enumeration
-        has_numbering = bool(re.search(r'\b(1|2|3|4|5)[\.\)]', answer))
+        has_numbering = bool(re.search(r'\b(1|2|3|4|5)[\.\)]', answer_content))
         has_purpose = "purpose" in answer_lower or "why" in answer_lower
 
         if not has_numbering:

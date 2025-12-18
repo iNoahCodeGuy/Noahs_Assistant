@@ -731,10 +731,13 @@ def _format_progressive_inference_metrics(session_memory: Dict[str, Any]) -> str
     if depth_level:
         parts.append(f"Depth level: {depth_level}")
 
-    if similarity_history:
-        similarity_values = [f"Turn {s.get('turn', '?')}: {s.get('similarity', 0):.3f}"
-                           for s in similarity_history[-5:]]
-        parts.append(f"Similarity history: {' | '.join(similarity_values)}")
+    if similarity_history and len(similarity_history) >= 2:
+        # Don't include raw scores in generation prompt - they get confused with content
+        # Instead, just indicate the trend without specific numbers
+        first_sim = similarity_history[0].get("similarity", 0)
+        last_sim = similarity_history[-1].get("similarity", 0)
+        trend = "improving" if last_sim > first_sim else "stable"
+        parts.append(f"[SYSTEM: Retrieval quality {trend} over conversation]")
 
     return " | ".join(parts) if parts else ""
 
@@ -929,6 +932,88 @@ def _detect_abstraction_level(query: str, role: str, chat_history: List[Dict]) -
     if role in ["Hiring Manager (technical)", "Software Developer"]:
         return "architecture"
     return "architecture"
+
+
+# ============================================================================
+# DATA PIPELINE DETECTION - Detect queries about data flow/pipeline
+# ============================================================================
+
+DATA_PIPELINE_KEYWORDS = [
+    "data flow", "data pipeline", "embedding", "embeddings",
+    "vector", "pgvector", "knowledge base", "update knowledge",
+    "migration", "ingest", "ingestion", "chunking",
+    "analytics", "logging", "metrics", "dashboard",
+    "how do you learn", "how do you update", "how does data",
+    "retrieval pipeline", "rag pipeline", "vector search",
+    "similarity search", "data storage"
+]
+
+
+def _is_data_pipeline_query(query: str) -> bool:
+    """Detect if query is about data pipeline/data flow.
+
+    Args:
+        query: User's query string
+
+    Returns:
+        True if query is about data pipeline topics
+    """
+    query_lower = query.lower()
+    return any(kw in query_lower for kw in DATA_PIPELINE_KEYWORDS)
+
+
+# ============================================================================
+# DRIFT DETECTION - Detect when user is drifting away from Portfolia's KB
+# ============================================================================
+
+DRIFT_INDICATORS = [
+    "in general", "best practice", "what do you think", "your opinion",
+    "should i use", "which is better", "compare", "vs",
+    "best way to", "how should i", "what's the best", "recommend",
+    "pros and cons", "advantages", "disadvantages"
+]
+
+PILLAR_ANCHOR_KEYWORDS = [
+    # Keep user anchored to Portfolia's knowledge base
+    "orchestration", "langgraph", "nodes", "state", "memory", "pipeline",
+    "tech stack", "architecture", "rag", "retrieval", "pgvector", "supabase",
+    "enterprise", "adapt", "customer support", "scaling", "production",
+    "noah", "background", "career", "tesla", "resume", "portfolio",
+    "portfolia", "how do you", "your", "this system"
+]
+
+
+def _is_drifting_query(query: str) -> bool:
+    """Detect if user is drifting away from Portfolia's knowledge base.
+
+    Drift is when user asks generic questions that aren't about:
+    - Portfolia's architecture
+    - Noah's background
+    - How this specific system works
+
+    Args:
+        query: User's query string
+
+    Returns:
+        True if query appears to be drifting into generic territory
+    """
+    query_lower = query.lower()
+
+    # Check for generic question patterns that indicate drift
+    has_drift_pattern = any(indicator in query_lower for indicator in DRIFT_INDICATORS)
+
+    # Check if query is still anchored to Portfolia's knowledge base
+    has_anchor = any(kw in query_lower for kw in PILLAR_ANCHOR_KEYWORDS)
+
+    # Drift = has generic pattern BUT no anchor to our knowledge base
+    if has_drift_pattern and not has_anchor:
+        return True
+
+    # Also drift if query is very short with no anchor (might be testing)
+    if len(query.split()) <= 3 and not has_anchor:
+        return False  # Don't flag very short queries as drift
+
+    return False
 
 
 def _should_use_teaching_style(state: ConversationState) -> bool:
@@ -1438,6 +1523,67 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         else:
             logger.info("Reformulation handler found no relevant previous answer - proceeding with normal generation")
 
+    # =========================================================================
+    # PRIORITY: Handle REPEATED QUERY (Fix 3 - is_repeated_query flag)
+    # If detect_repeated_query node set this flag, use reformulation handler
+    # =========================================================================
+    if state.get("is_repeated_query"):
+        from assistant.flows.node_logic.util_conversational_edge_case_handler import handle_reformulation_loop
+        logger.info("Repeated query detected via is_repeated_query flag - attempting clarification response")
+        result = handle_reformulation_loop(state)
+        if result.get("edge_case_handled", False):
+            logger.info("Repeated query handler successfully generated clarification")
+            return {
+                "draft_answer": result.get("draft_answer", ""),
+                "answer": result.get("answer", ""),
+                "edge_case_handled": True,
+                "is_repeated_query": True
+            }
+        else:
+            logger.info("Repeated query handler found no relevant previous answer - proceeding with normal generation")
+
+    # =========================================================================
+    # PRIORITY: Handle ACTION REQUESTS (Fix 1 - resume/linkedin/github)
+    # Short-circuit full generation for pure action requests
+    # =========================================================================
+    if state.get("query_type") == "action_request":
+        requested_resources = state.get("requested_resources", [])
+        is_repeated = state.get("is_repeated_action_request", False)
+
+        # #region agent log
+        debug_trace = state.get("_debug_trace", [])
+        debug_trace.append({"loc": "generate_draft:action_request", "resources": requested_resources, "is_repeated": is_repeated})
+        # #endregion
+
+        # Handle REPEATED action requests specially
+        if is_repeated:
+            # #region agent log
+            debug_trace.append({"loc": "generate_draft:repeated_handler", "msg": "Returning acknowledgment for repeated action"})
+            # #endregion
+            logger.info("Repeated action request detected - returning acknowledgment")
+            draft = "I already provided those resources above. Is there something specific you're looking for, or would you like Noah to reach out directly?"
+            return {
+                "draft_answer": draft,
+                "is_repeated_action_request": True,
+                "_debug_trace": debug_trace
+            }
+
+        logger.info(f"Action request detected - short-circuiting generation for: {requested_resources}")
+
+        # Build minimal response - action planning will add the actual links
+        response_parts = ["Here are the resources you requested:"]
+
+        # The actual links will be added by format_answer based on pending_actions
+        # We just need a minimal draft that indicates this is an action response
+        draft = "Here are the resources you requested:"
+
+        return {
+            "draft_answer": draft,
+            "answer": draft,
+            "action_request_handled": True,
+            "requested_resources": requested_resources
+        }
+
     # #region agent log
     try:
         log_path = _get_debug_log_path()
@@ -1694,6 +1840,178 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     # Use the LLM to generate a response with retrieved context
     # Add display intelligence based on query classification
     extra_instructions = []
+
+    # OUT-OF-SCOPE DETECTION - Gracefully handle queries outside knowledge base
+    from assistant.flows.node_logic.stage6_formatting_nodes import detect_out_of_scope
+    is_out_of_scope, bridge_pillar, bridge_prompt = detect_out_of_scope(query, state.get("role_mode", "explorer"))
+
+    if is_out_of_scope:
+        state["out_of_scope_detected"] = True
+        state["bridge_suggestion"] = bridge_prompt
+        logger.info(f"Out-of-scope query detected: '{query[:50]}'. Bridge: {bridge_pillar}")
+
+        # Add instruction to prompt for graceful handling
+        out_of_scope_instruction = f"""
+IMPORTANT: The user asked about something outside your primary knowledge base.
+
+DO NOT just say "I don't know" or refuse to answer. Instead:
+1. Acknowledge that this specific topic isn't your specialty
+2. Bridge gracefully to related content you DO have: "{bridge_prompt}"
+3. Always be helpful and offer alternatives
+
+Example response pattern:
+"That's outside my main focus area - I'm built to demonstrate GenAI engineering patterns.
+However, [bridge to relevant topic]. Would you like to explore that?"
+"""
+        extra_instructions.append(out_of_scope_instruction)
+
+    # DATA PIPELINE QUERIES - Provide structured 6-stage explanation
+    if _is_data_pipeline_query(query):
+        logger.info(f"Data pipeline query detected: '{query[:50]}'")
+        data_pipeline_instruction = """
+DATA PIPELINE EXPLANATION (Use this 6-stage structure):
+
+The user is asking about data flow/pipeline. Structure your response around these 6 stages:
+
+**1. Query Ingestion**
+Purpose: Capture and prepare user input for processing.
+Implementation: FastAPI endpoint receives query, sanitizes input, extracts entities.
+Key Metric: <50ms ingestion latency.
+
+**2. Embedding Generation**
+Purpose: Convert query to 1536-dimensional vector for semantic search.
+Implementation: OpenAI text-embedding-3-small API.
+Key Metric: $0.02/1M tokens, ~100ms per embedding.
+
+**3. Vector Retrieval**
+Purpose: Find semantically similar knowledge chunks.
+Implementation: Supabase pgvector, cosine similarity, top-4 chunks.
+Key Metric: 0.7 similarity threshold.
+
+**4. Context Assembly**
+Purpose: Prepare retrieved chunks for LLM generation.
+Implementation: Role-aware formatting, 4000 token budget, recency weighting.
+Key Metric: 4 chunks × ~500 tokens = 2000 tokens context.
+
+**5. Response Generation**
+Purpose: Synthesize grounded response from context.
+Implementation: GPT-4o-mini (default), temperature 0.3, grounding validation.
+Key Metric: $0.0003/query average cost.
+
+**6. Analytics Logging**
+Purpose: Track everything for optimization and debugging.
+Implementation: Supabase tables + LangSmith traces.
+Key Metric: 100% conversation coverage.
+
+Include specific numbers from the current conversation where possible.
+"""
+        extra_instructions.append(data_pipeline_instruction)
+
+    # DRIFT DETECTION - Guide user back when they're asking generic questions
+    if _is_drifting_query(query):
+        session_memory = state.get("session_memory", {})
+        from assistant.flows.node_logic.stage6_formatting_nodes import _get_unexplored_pillars
+        unexplored = _get_unexplored_pillars(session_memory, state.get("role_mode", "explorer"))
+
+        # Build bridge suggestion
+        bridge_suggestion = unexplored[0][1] if unexplored else "exploring a specific aspect of my architecture"
+
+        logger.info(f"Drift detected: '{query[:50]}' - bridging back to knowledge base")
+
+        drift_instruction = f"""
+DRIFT DETECTED - BRIDGE BACK TO KNOWLEDGE BASE:
+
+The user's question is drifting toward generic topics outside your specific knowledge.
+You're designed to demonstrate Noah's GenAI engineering through YOUR OWN architecture.
+
+RESPONSE PATTERN:
+1. Briefly acknowledge their question (1 sentence max)
+2. Explain your focus: "I'm built to demonstrate GenAI engineering through my own architecture, so I can speak best to how I handle this specifically..."
+3. Bridge back with a specific offer: "{bridge_suggestion}"
+4. If relevant, connect their question to something you DO know
+
+EXAMPLE:
+User: "What's the best caching strategy in general?"
+You: "Great question! I can speak best to my own approach - I use simple in-memory caching
+for session state, which keeps costs low at ~$0.0003/query. For enterprise deployments,
+you'd want Redis. Want to see how I handle data caching, or explore how this scales for enterprise?"
+
+AVOID:
+- Long generic explanations of topics you weren't built to cover
+- Making up information outside your knowledge base
+- Ignoring the drift and answering as if you're a general AI assistant
+"""
+        extra_instructions.append(drift_instruction)
+
+    # JOHN DANAHER TEACHING STYLE - Enforce for technical explanations
+    # This creates systematic, quantitative, purpose-driven explanations
+    role_mode = state.get("role_mode", "explorer")
+    if role_mode in ("hiring_manager_technical", "software_developer") and _should_use_teaching_style(state):
+        danaher_instruction = """
+TEACHING STRUCTURE (Required for technical explanations - John Danaher Style):
+
+FORMAT YOUR RESPONSE WITH THESE 5 PARTS:
+
+1. CONTEXT-SETTING OPENING (2-3 sentences with warmth):
+   - Start with: "Let me walk you through this systematically..." or "Here's what makes this powerful..."
+   - Set expectations for what you'll explain
+
+2. SYSTEMATIC LAYER ENUMERATION (numbered layers/components):
+   - Use numbered format: "**1. [Layer Name]**"
+   - For each layer include:
+     * **Purpose**: Why this exists (1 sentence)
+     * **Implementation**: Specific technologies with numbers
+     * **Key Metric**: One concrete number (latency, cost, count)
+   - Example:
+     **1. Orchestration Layer**
+     Purpose: Manages conversation flow through modular, testable nodes.
+     Implementation: LangGraph StateGraph with 21 nodes across 7 stages.
+     Key Metric: 325ms average node execution time.
+
+3. QUANTITATIVE EVIDENCE (real numbers from this system):
+   - Include similarity scores, costs, latencies, counts
+   - Example: "In this query, I retrieved 4 chunks with top similarity 0.85"
+   - Show costs: "$0.0003 per query", "$0.15/1M tokens"
+
+4. CRITICAL INSIGHT (1-3 sentence synthesis):
+   - Connect all layers to an overarching principle
+   - Example: "The modularity IS the architecture—each layer swappable, so GPT-5 means replacing one node, not rebuilding."
+
+5. INVITATION TO EXPLORE (3 numbered options):
+   - Offer specific next explorations
+   - Example: "Where would you like to go from here?
+     1. See the actual pgvector SQL query
+     2. Explore the grounding validation logic
+     3. Walk through cost optimization"
+
+WARMTH CONNECTIVES (use throughout):
+- "Here's what makes this powerful..."
+- "This part is genuinely fascinating..."
+- "The key insight is..."
+- "Here's where the magic happens..."
+
+AVOID:
+- "Ah, [topic]!" or "I love this!"
+- Generic "Let me help you" phrases
+- Starting with "Great question"
+
+CRITICAL - KEY METRICS DISTINCTION:
+When choosing "Key Metric" values, use CONTEXTUALLY APPROPRIATE metrics:
+
+FOR PORTFOLIA'S ARCHITECTURE (orchestration, tech stack, data pipeline):
+- Use SYSTEM metrics: similarity scores, latency, token counts, costs
+- Example: "Key Metric: 325ms average latency" or "Key Metric: 0.85 similarity score"
+
+FOR NOAH'S BACKGROUND/CAREER:
+- Use HIS metrics: years of experience, certifications, project outcomes
+- Example: "Key Metric: 3+ years at Tesla Energy" or "Key Metric: Built production RAG from scratch"
+- NEVER use "Key Metric: Top similarity 0.9" when discussing Noah's career!
+
+The user wants to know about NOAH when they ask about his background, not about
+how well you retrieved information about him.
+"""
+        extra_instructions.append(danaher_instruction)
+        logger.debug("Added John Danaher teaching style instructions")
 
     # Check for retrieval topic mismatch - if chunks don't match query, use LLM fallback
     if state.get("retrieval_topic_mismatch"):
@@ -2206,6 +2524,21 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
             )
             logger.info(f"Added multiple repetition handling for option {menu_choice} (count: {repeated_count})")
 
+    # Handle repeated query (same question asked twice)
+    if state.get("is_repeated_query"):
+        query_preview = state.get("query", "")[:50]
+        extra_instructions.append(
+            "\n\nIMPORTANT: User asked this EXACT question before. DO NOT repeat your previous answer.\n"
+            "Instead, start with: 'Déjà vu! We just covered that. Want me to:'\n"
+            "Then offer 3 specific alternative angles:\n"
+            "- A deeper dive into one specific aspect\n"
+            "- A related topic they haven't explored\n"
+            "- A different perspective on the same topic\n"
+            "End with: 'Or shall we explore something completely new?'\n"
+            "Keep the response SHORT (3-5 sentences) - don't re-explain everything.\n"
+        )
+        logger.info(f"Added repeated query handling for: '{query_preview}...'")
+
     is_menu_option_two = (
         state.get("query_type") == "menu_selection" and
         state.get("menu_choice") == "2" and
@@ -2497,11 +2830,74 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     if should_gather_job_details(state):
         extra_instructions.append(get_job_details_prompt())
 
-    # Detect enterprise adaptation queries and enhance prompt
+    # =========================================================================
+    # FIX 8: PILLAR-SPECIFIC GENERATION INSTRUCTIONS
+    # Each pillar has specific capabilities as defined by the user
+    # =========================================================================
     query_lower = query.lower()
+
+    # Detect which pillar is being discussed
+    detected_pillar = None
+
+    # Orchestration pillar detection
+    if any(kw in query_lower for kw in ["orchestration", "nodes", "states", "langgraph", "pipeline", "safeguards", "conversation flow"]):
+        detected_pillar = "orchestration"
+        extra_instructions.append(
+            "\n\nPILLAR: ORCHESTRATION LAYER\n"
+            "You are explaining the orchestration layer. Your answer MUST:\n"
+            "1. If asked to list nodes/states, list ALL 22 nodes with their purposes\n"
+            "2. Use the CURRENT conversation as a live example (e.g., 'Right now, my classify_intent node just ran...')\n"
+            "3. Show code snippets when they add value (the LangGraph StateGraph setup, node functions)\n"
+            "4. Explain how each stage flows into the next\n"
+            "5. Mention safeguards: grounding validation, hallucination checks, quality gates\n"
+        )
+
+    # Tech Stack pillar detection
+    elif any(kw in query_lower for kw in ["tech stack", "full stack", "architecture", "frontend", "backend", "observability"]):
+        detected_pillar = "tech_stack"
+        extra_instructions.append(
+            "\n\nPILLAR: FULL TECH STACK\n"
+            "You are explaining the full tech stack. Your answer MUST:\n"
+            "1. List everything in the stack with purposes: Streamlit, Next.js, Vercel, LangGraph, Supabase, pgvector, LangSmith\n"
+            "2. Detail the frontend: Streamlit workshop console + Next.js production\n"
+            "3. Detail the backend: LangGraph pipeline, Python 3.11, modular nodes\n"
+            "4. Detail observability: LangSmith tracing, Supabase analytics tables\n"
+            "5. Explain why each choice was made (trade-offs)\n"
+        )
+
+    # Data Pipeline pillar detection
+    elif any(kw in query_lower for kw in ["data pipeline", "embedding", "vector", "pgvector", "chunking", "analytics", "data flow", "ingestion"]):
+        detected_pillar = "data_pipeline"
+        extra_instructions.append(
+            "\n\nPILLAR: DATA PIPELINE MANAGEMENT\n"
+            "You are explaining the data pipeline. Your answer MUST:\n"
+            "1. Explain embeddings: OpenAI text-embedding-3-small, 1536 dimensions\n"
+            "2. Explain vector storage: Supabase pgvector, RPC functions for similarity search\n"
+            "3. Explain chunking: How knowledge base CSVs are chunked and embedded\n"
+            "4. Explain analytics: What data is collected (queries, similarity scores, latency) and why\n"
+            "5. If asked about dashboard, describe the Supabase analytics views\n"
+            "6. Relate to enterprise data management patterns\n"
+        )
+
+    # Noah's Background pillar detection
+    elif any(kw in query_lower for kw in ["noah", "background", "career", "resume", "github", "linkedin", "certifications", "projects", "tesla"]):
+        detected_pillar = "noahs_background"
+        extra_instructions.append(
+            "\n\nPILLAR: NOAH'S TECHNICAL BACKGROUND\n"
+            "You are explaining Noah's background. Your answer MUST:\n"
+            "1. Cover certifications and training if asked\n"
+            "2. Explain Noah's journey into tech (sales → Tesla → AI engineering)\n"
+            "3. Provide LinkedIn, GitHub, resume links when asked (action planning will add these)\n"
+            "4. Describe GitHub projects: Portfolia, AI experiments, etc.\n"
+            "5. Do NOT include internal metrics (similarity scores, etc.) in career answers\n"
+            "6. Focus on concrete achievements and skills\n"
+        )
+
+    # Detect enterprise adaptation queries and enhance prompt
     is_enterprise_adaptation = any(kw in query_lower for kw in ["adapt", "adapts", "adaptation", "customer support", "enterprise", "use case"])
 
     if is_enterprise_adaptation:
+        detected_pillar = "enterprise"
         extra_instructions.append(
             "\n\nCRITICAL: ENTERPRISE ADAPTATION QUERY - COMPREHENSIVE ANSWER REQUIRED\n"
             "This is an enterprise adaptation query. Your answer MUST:\n"
@@ -2918,6 +3314,27 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         logger.debug("Removed markdown headers from response")
 
     cleaned_answer = sanitize_generated_answer(answer)
+
+    # Strip ALL retrieval metrics from ALL answers (Fix 4)
+    # These internal metrics are for observability, not user-facing content
+    # Expanded to cover all metric patterns that might leak into responses
+    metrics_patterns = [
+        r'Key Metric:\s*(Top retrieval similarity|Average similarity|similarity):\s*[\d.]+',
+        r'Key Metric:\s*Current depth level:\s*\d+',
+        r'Key Metric:\s*Cost per query:\s*~?\$[\d.]+',
+        r'Key Metric:\s*Topics explored:.*?(?=\n|$)',
+        r'Key Metric:\s*[\w\s]+:\s*[\d.]+',  # Catch-all for any remaining Key Metric patterns
+        r'-\s*Key Metric:.*?(?=\n|$)',  # Bulleted metrics
+        r'\*\*Key Metric:\*\*.*?(?=\n|$)',  # Bold metrics
+    ]
+    for pattern in metrics_patterns:
+        cleaned_answer = re.sub(pattern, '', cleaned_answer, flags=re.IGNORECASE)
+
+    # Clean up any double newlines or spaces left over
+    cleaned_answer = re.sub(r'\n{3,}', '\n\n', cleaned_answer)
+    cleaned_answer = re.sub(r'  +', ' ', cleaned_answer)
+    cleaned_answer = cleaned_answer.strip()
+    logger.debug("Stripped all retrieval metrics from answer")
 
     # Validate answer relevance before storing
     if not _validate_answer_relevance(query, cleaned_answer):

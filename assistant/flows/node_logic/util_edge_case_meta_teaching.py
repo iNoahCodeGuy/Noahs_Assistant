@@ -49,7 +49,7 @@ def generate_meta_teaching_explanation(state: ConversationState) -> str:
         llm, _ = factory.create_llm()
 
         # Generate explanation
-        explanation = llm.predict(prompt, temperature=0.6)  # Lower temp for technical accuracy
+        explanation = llm.invoke(prompt, temperature=0.6)  # Lower temp for technical accuracy
 
         # Append code snippet for technical users
         if is_technical and code_snippet:

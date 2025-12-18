@@ -186,6 +186,13 @@ DATA_DISPLAY_KEYWORDS = [
     "share the data",
     "show analytics",
     "can you display",
+    "peek at analytics",
+    "analytics dashboard",
+    "show dashboard",
+    "show metrics",
+    "performance metrics",
+    "see analytics",
+    "view analytics",
 ]
 
 
@@ -357,6 +364,101 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         # DEBUG: Verify state update will propagate
         logger.info(f"✅ Menu choice SET in update dict: menu_choice={menu_choice}, query_type={update['query_type']}")
         return update  # Return partial update - LangGraph will merge into state
+
+    # =========================================================================
+    # PRIORITY: Detect ACTION REQUESTS (resume, linkedin, github, contact)
+    # These should short-circuit full generation and just provide the links
+    # =========================================================================
+    lowered_query = query.lower()
+    action_keywords = {
+        "resume": ["resume", "cv", "curriculum vitae"],
+        "linkedin": ["linkedin", "linked in", "profile"],
+        "github": ["github", "git hub", "repository", "repo", "code repository"],
+        "contact": ["contact", "reach out", "get in touch", "call me", "email me"],
+    }
+
+    # Check for action request patterns
+    action_patterns = [
+        r'\b(send|show|share|give|get|see|view|provide)\b.*\b(resume|cv|linkedin|github|profile|repo)\b',
+        r'\b(resume|cv|linkedin|github|profile|repo)\b.*\b(please|link|url)\b',
+        r"\bwhat'?s?\s+(noah'?s?|your)\s+(linkedin|github|resume|email)\b",
+        r'\b(noah\'?s?|your)\s+(linkedin|github|resume|cv)\b',
+    ]
+
+    is_action_request = any(re.search(pattern, lowered_query) for pattern in action_patterns)
+
+    # Also check for direct keyword presence with action verbs
+    action_verbs = ["send", "show", "share", "give", "get", "see", "view", "provide", "need", "want"]
+    has_action_verb = any(verb in lowered_query for verb in action_verbs)
+    has_resource_keyword = any(
+        any(kw in lowered_query for kw in keywords)
+        for keywords in action_keywords.values()
+    )
+
+    if is_action_request or (has_action_verb and has_resource_keyword):
+        update["query_type"] = "action_request"
+        update["intent_confidence"] = 1.0
+        update["is_ambiguous"] = False
+        update["clarification_needed"] = False
+
+        # Detect which specific resources are requested
+        requested_resources = []
+        for resource, keywords in action_keywords.items():
+            if any(kw in lowered_query for kw in keywords):
+                requested_resources.append(resource)
+
+        update["requested_resources"] = requested_resources
+
+        # #region agent log - Initialize debug trace
+        debug_trace = state.get("_debug_trace", [])
+        debug_trace.append({"loc": "classify_intent:action_request", "msg": "Action request detected", "resources": requested_resources, "chat_history_len": len(state.get("chat_history", []))})
+        update["_debug_trace"] = debug_trace
+        # #endregion
+
+        # Check if this is a REPEATED action request
+        chat_history = state.get("chat_history", [])
+        is_repeated = False
+        if len(chat_history) >= 2:
+            # Look for previous action request with same resources
+            for i in range(len(chat_history) - 1, -1, -1):  # Check all previous messages
+                msg = chat_history[i]
+                msg_type = msg.get("type", "") if isinstance(msg, dict) else getattr(msg, "type", "")
+                if msg_type == "ai":
+                    prev_content = msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "")
+                    # Check if previous response contained resource links
+                    has_prev_resources = any(
+                        url in prev_content for url in [
+                            "github.com", "linkedin.com", "Resume", "Noah_Delacalzada"
+                        ]
+                    )
+                    if has_prev_resources:
+                        # #region agent log
+                        debug_trace.append({"loc": "classify_intent:repeated_action", "msg": "REPEATED action detected", "prev_msg_idx": i, "prev_content_preview": prev_content[:100]})
+                        update["_debug_trace"] = debug_trace
+                        # #endregion
+                        is_repeated = True
+                        break
+
+        update["is_repeated_action_request"] = is_repeated
+        debug_trace.append({"loc": "classify_intent:result", "is_repeated": is_repeated})
+        update["_debug_trace"] = debug_trace
+
+        logger.info(f"Action request detected: '{query}' → resources: {requested_resources}")
+        return update  # Return partial update - action planning will handle links
+
+    # =========================================================================
+    # PRIORITY: Detect ANALYTICS REQUESTS (dashboard, metrics, performance data)
+    # These should trigger live analytics display, not retrieval-based answers
+    # =========================================================================
+    analytics_keywords = ["analytics", "dashboard", "metrics", "performance", "stats", "statistics", "peek at"]
+    if any(kw in lowered_query for kw in analytics_keywords):
+        update["query_type"] = "analytics"
+        update["topic_focus"] = "analytics"
+        update["intent_confidence"] = 0.9
+        # Analytics is always fresh data - don't treat as repeated
+        update["force_fresh_response"] = True
+        logger.info(f"Analytics request detected: '{query}'")
+        return update
 
     # Track query timestamp for rapid-fire detection
     session_memory = state.setdefault("session_memory", {})

@@ -12,11 +12,11 @@ Run with: pytest tests/test_conversation_quality.py -v
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from assistant.state.conversation_state import ConversationState
-from assistant.flows.node_logic.query_classification import classify_query
-from assistant.flows.node_logic.core_nodes import (
+from assistant.flows.node_logic.stage2_query_classification import classify_query
+from assistant.flows.node_logic.util_core_nodes import (
     retrieve_chunks, generate_answer, apply_role_context
 )
-from assistant.flows.node_logic.code_validation import is_valid_code_snippet
+from assistant.flows.node_logic.util_code_validation import is_valid_code_snippet
 from assistant.flows.data_reporting import render_full_data_report
 
 
@@ -25,7 +25,7 @@ class TestAnalyticsQuality:
 
     def test_kb_coverage_aggregated_not_detailed(self):
         """KB coverage should show 3-4 sources, not 245+ individual entries."""
-        with patch('src.flows.data_reporting.supabase_analytics') as mock_analytics:
+        with patch('assistant.flows.data_reporting.supabase_analytics') as mock_analytics:
             # Mock analytics data
             mock_analytics.client.table.return_value.select.return_value.execute.return_value.data = []
             mock_analytics.get_kb_coverage.return_value = {
@@ -51,7 +51,7 @@ class TestAnalyticsQuality:
 
     def test_kpi_metrics_calculated(self):
         """Analytics should include calculated metrics, not raw dumps."""
-        with patch('src.flows.data_reporting.supabase_analytics') as mock_analytics:
+        with patch('assistant.flows.data_reporting.supabase_analytics') as mock_analytics:
             # Mock analytics data
             mock_analytics.client.table.return_value.select.return_value.execute.return_value.data = [
                 {"success": True, "latency_ms": 3200},
@@ -71,7 +71,7 @@ class TestAnalyticsQuality:
 
     def test_recent_activity_limited(self):
         """Should show last 10 messages, not entire history."""
-        with patch('src.flows.data_reporting.supabase_analytics') as mock_analytics:
+        with patch('assistant.flows.data_reporting.supabase_analytics') as mock_analytics:
             # Mock 50 messages (simulating large history)
             mock_analytics.client.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value.data = [
                 {"id": i, "query_type": "general", "latency_ms": 3000} for i in range(50)
@@ -89,12 +89,12 @@ class TestAnalyticsQuality:
 
     def test_confessions_privacy_protected(self):
         """Confessions should show count only, no personal details."""
-        with patch('src.flows.data_reporting.supabase_analytics') as mock_analytics:
+        with patch('assistant.flows.data_reporting.supabase_analytics') as mock_analytics:
             mock_analytics.client.table.return_value.select.return_value.execute.return_value.data = []
             mock_analytics.get_kb_coverage.return_value = {}
 
             # Mock confessions
-            with patch('src.flows.data_reporting.supabase_analytics.client.table') as mock_table:
+                with patch('assistant.flows.data_reporting.supabase_analytics.client.table') as mock_table:
                 mock_table.return_value.select.return_value.execute.return_value.data = [
                     {"name": "John Doe", "email": "john@example.com", "message": "I like you"}
                 ]

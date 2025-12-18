@@ -294,8 +294,17 @@ class TestResumeDistributionAlignment:
     def test_resume_distribution_functions_documented(self):
         """All resume_distribution.py functions are documented in SYSTEM_ARCHITECTURE."""
 
-        # Get actual functions from code
-        from assistant.flows.node_logic import resume_distribution
+        # Get actual functions from code (verify they exist)
+        from assistant.flows.node_logic.util_resume_distribution import (
+            detect_hiring_signals,
+            handle_resume_request,
+            should_add_availability_mention,
+            extract_email_from_query,
+            extract_name_from_query,
+            should_gather_job_details,
+            get_job_details_prompt,
+            extract_job_details_from_query,
+        )
         actual_functions = [
             "detect_hiring_signals",
             "handle_resume_request",

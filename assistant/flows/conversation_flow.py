@@ -83,6 +83,7 @@ from assistant.flows.conversation_nodes import (
     prompt_for_role_selection,
     handle_greeting,
     classify_role_mode,
+    detect_repeated_query,  # Detect user asking same question twice
     classify_intent,
     presentation_controller,  # Merged depth_controller + display_controller
     extract_entities,
@@ -379,11 +380,12 @@ def _build_langgraph() -> Any:
     # Create StateGraph with ConversationState schema
     workflow = StateGraph(ConversationState)
 
-    # Add all nodes with RAG engine injected (21-node pipeline with quality validation)
+    # Add all nodes with RAG engine injected (22-node pipeline with quality validation)
     workflow.add_node("initialize", initialize_conversation_state)
     workflow.add_node("role_prompt", prompt_for_role_selection)
     workflow.add_node("greeting", lambda s: handle_greeting(s, rag_engine))
     workflow.add_node("classify_role", classify_role_mode)  # Now includes HM routing
+    workflow.add_node("detect_repeated", detect_repeated_query)  # Detect user asking same question
     workflow.add_node("classify_intent", classify_intent)
     workflow.add_node("detect_phase", detect_conversation_phase)  # NEW: Conversation phase detection
     workflow.add_node("presentation", presentation_controller)  # Merged depth + display
@@ -426,10 +428,11 @@ def _build_langgraph() -> Any:
     # Consolidated edges (8 nodes removed from original 26-node pipeline)
     workflow.add_conditional_edges(
         "classify_role",
-        lambda s: "end" if s.get("pipeline_halt") else "classify_intent",
-        {"end": END, "classify_intent": "classify_intent"}
+        lambda s: "end" if s.get("pipeline_halt") else "detect_repeated",
+        {"end": END, "detect_repeated": "detect_repeated"}
     )
-    workflow.add_edge("classify_intent", "detect_phase")  # NEW: Phase detection after intent
+    workflow.add_edge("detect_repeated", "classify_intent")  # Repeated query detection before intent
+    workflow.add_edge("classify_intent", "detect_phase")  # Phase detection after intent
     workflow.add_edge("detect_phase", "presentation")
     workflow.add_edge("presentation", "extract_entities")
     workflow.add_edge("extract_entities", "assess_clarification")

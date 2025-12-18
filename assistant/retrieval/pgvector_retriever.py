@@ -384,6 +384,10 @@ class PgVectorRetriever:
         - Mentions of code, programming, implementation
         - Technology names (Python, AI, ML, etc.)
         - Architecture or design patterns
+
+        Also deprioritizes prompt template code chunks (ResponseGenerator)
+        which contain many tech keywords but aren't useful for answering
+        tech stack questions.
         """
         technical_keywords = [
             'code', 'python', 'programming', 'implementation', 'architecture',
@@ -401,6 +405,26 @@ class PgVectorRetriever:
             chunk['_tech_score'] = tech_score
             chunk['_boosted_similarity'] = chunk['similarity'] + (tech_score * 0.02)
             scored.append(chunk)
+
+        # Deprioritize prompt template code (matches tech keywords but isn't useful)
+        for chunk in scored:
+            section = chunk.get("section", "").lower()
+            doc_id = chunk.get("doc_id", "")
+            content_preview = chunk.get("content", "")[:500].lower()
+
+            # Detect prompt template chunks from ResponseGenerator
+            is_prompt_template = (
+                doc_id == "codebase" and
+                ("responsegenerator" in section or
+                 "_build_role_prompt" in section or
+                 "you are portfolia" in content_preview or
+                 "## critical: voice and perspective" in content_preview)
+            )
+
+            if is_prompt_template:
+                # Heavily penalize prompt templates
+                chunk['_boosted_similarity'] -= 0.3
+                logger.debug(f"Deprioritized prompt template chunk: {section}")
 
         # Sort by boosted similarity
         scored.sort(key=lambda c: c['_boosted_similarity'], reverse=True)

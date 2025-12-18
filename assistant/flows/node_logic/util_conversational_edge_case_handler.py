@@ -47,7 +47,7 @@ def generate_edge_case_response(state: ConversationState) -> str:
         from assistant.core.rag_factory import RagEngineFactory
         factory = RagEngineFactory()
         llm, _ = factory.create_llm()
-        response = llm.predict(prompt, temperature=0.7)  # Slightly higher temp for naturalness
+        response = llm.invoke(prompt, temperature=0.7)  # Slightly higher temp for naturalness
         return response.strip()
     except Exception as e:
         logger.warning(f"Failed to generate edge case response: {e}")
@@ -115,13 +115,14 @@ Generate the response now:"""
     edge_case_descriptions = {
         "off_topic": f"""This question is completely unrelated to what you can help with (Noah's background, technical projects, career experience, or how you're built).
 
-IMPORTANT: Provide helpful guidance by suggesting specific on-topic areas:
-- Technical architecture: How the system is built
-- Enterprise adaptation: How this pattern applies to customer support, internal docs
-- Career background: Noah's experience and projects
-- How I work: The RAG pipeline, vector search, orchestration
+IMPORTANT: Redirect to the 5 core knowledge pillars:
+1. Orchestration layer — nodes, states, safeguards in the conversation pipeline
+2. Full tech stack — frontend (Streamlit/Next.js), backend (LangGraph), observability (LangSmith)
+3. Enterprise adaptation — how assistants like you handle customer support, internal docs
+4. Data pipeline — embeddings, vector storage, chunking, analytics tracking
+5. Noah's background — certifications, GitHub projects, engineering foundation
 
-Ask which direction sounds interesting.""",
+Ask which of these 5 areas sounds interesting in a conversational way.""",
 
         "empty_query": """User sent an empty or whitespace-only query.""",
 
@@ -196,10 +197,36 @@ def handle_reformulation_loop(state: ConversationState) -> ConversationState:
     # PREVENT RECURSION: Check if we're already in a reformulation response
     # draft_answer may be None (e.g., after pipeline_halt clears it), so coerce to string
     draft = state.get("draft_answer") or ""
-    if "I notice you've asked" in draft:
+    if "I notice you've asked" in draft or "I already provided" in draft:
         # Don't double-trigger reformulation - this causes recursive self-reference
         logger.info("Already in reformulation response - preventing recursive trigger")
         state["edge_case_handled"] = False
+        return state
+
+    # SPECIAL CASE: Action requests (resume, linkedin, github)
+    # For repeated action requests, always acknowledge - don't let high retrieval skip it
+    query_type = state.get("query_type", "")
+    if query_type == "action_request":
+        logger.info("Repeated action request detected - acknowledging instead of re-providing")
+        response = "I already provided those resources above. Is there something specific you're looking for, or would you like Noah to reach out directly?"
+        state["answer"] = response
+        state["draft_answer"] = response
+        state["edge_case_handled"] = True
+        return state
+
+    # CHECK RETRIEVAL QUALITY: If we have high-quality retrieved content,
+    # use it to answer instead of showing a generic clarification prompt.
+    # This fixes the bug where relevant content (e.g., "Enterprise Adaptation Guide"
+    # with 0.847 similarity) was ignored in favor of a clarification prompt.
+    retrieval_scores = state.get("retrieval_scores", [])
+    if retrieval_scores and max(retrieval_scores) >= 0.75:
+        logger.info(f"High-quality retrieval found (max similarity: {max(retrieval_scores):.3f}) - "
+                   "skipping reformulation handling to use retrieved content")
+        state["edge_case_handled"] = False
+        # Clear the edge case so generate_draft proceeds with normal generation
+        session_memory = state.get("session_memory", {})
+        if session_memory.get("last_edge_case") == "reformulation_loop":
+            session_memory["last_edge_case"] = None
         return state
 
     # Find the previous answer to this topic
@@ -311,35 +338,82 @@ def _get_fallback_response(edge_case_type: str, is_technical: bool) -> str:
         Fallback response string
     """
     fallbacks = {
-        "off_topic": "That's an interesting question! I'm Portfolia, Noah's AI Assistant, and I'm focused on helping people learn about Noah's background, technical projects, and how AI systems like me work. What would you like to explore?",
+        # Fix 7: Updated off_topic redirect with explicit 5 pillars
+        "off_topic": (
+            "That's outside my knowledge base, but I'd love to show you what I can help with!\n\n"
+            "I can dive into:\n"
+            "1️⃣ My orchestration layer — nodes, states, and safeguards working together\n"
+            "2️⃣ Full tech stack — frontend to backend to observability\n"
+            "3️⃣ Enterprise adaptation — how assistants like me handle customer support\n"
+            "4️⃣ Data pipeline — embeddings, vector storage, chunking, analytics\n"
+            "5️⃣ Noah's background — certifications, GitHub projects, engineering foundation\n\n"
+            "Which sounds interesting?"
+        ),
 
-        "empty_query": "I didn't catch that. Could you ask me a question?",
+        "empty_query": "Hmm, I didn't catch that! Drop me a question and let's explore something together.",
 
-        "reformulation_loop": "I notice you've asked similar questions a few times. Let me try a different approach — what specific aspect would you like me to clarify?",
+        "reformulation_loop": (
+            "Déjà vu! We might be going in circles. Let me shake things up — "
+            "want to explore a completely different area? I've got orchestration, "
+            "enterprise patterns, or Noah's background waiting in the wings."
+        ),
 
-        "conversation_loop": "I notice we might be going in circles. Let me try a different angle — what would be most helpful?",
+        "conversation_loop": (
+            "I think we've been here before! How about we venture into new territory? "
+            "What haven't we explored yet — the data pipeline, enterprise use cases, or Noah's projects?"
+        ),
 
-        "ambiguous_pronouns": "I want to make sure I understand — could you clarify what specifically you're referring to? For example, are you asking about Noah's Python skills, or something else?",
+        "ambiguous_pronouns": (
+            "I want to make sure I'm on the same page — what specifically are you referring to? "
+            "Are you asking about Noah's Python skills, a specific project, or something else?"
+        ),
 
-        "intent_drift": f"I notice we shifted topics. Should I continue with this new direction, or go back to what we were discussing?",
+        "intent_drift": (
+            "Ooh, topic shift detected! Should I follow this new thread, "
+            "or would you rather go back to what we were diving into?"
+        ),
 
-        "rapid_fire": "I'm processing your questions. Could you give me a moment, or let me know which question to prioritize?",
+        "rapid_fire": (
+            "Whoa, you're full of questions! Love the enthusiasm. "
+            "Which one should I tackle first?"
+        ),
 
-        "negative_query": "My knowledge base focuses on Noah's strengths and achievements. What would you like to know about those?",
+        "negative_query": (
+            "Hmm, my knowledge base is more of a highlight reel — Noah's wins and achievements. "
+            "Want to explore what he's built or where he's headed?"
+        ),
 
-        "meta_question": "Great question! I'd be happy to explain how I work. What specifically would you like to know?",
+        "meta_question": (
+            "Ooh, you want to peek behind the curtain? I love talking about how I'm built! "
+            "What would you like to know — orchestration, retrieval, or something else?"
+        ),
 
-        "emoji_only": "I see you sent emojis! Could you ask your question in words so I can help better?",
+        "emoji_only": "I see emojis! 😄 What's on your mind? Ask me anything about Noah or how I work!",
 
-        "very_long_query": "That's a detailed question! Could you break it into smaller parts? I can help with each piece one at a time.",
+        "very_long_query": (
+            "That's a meaty question! Let's break it into bite-sized pieces. "
+            "What's the most important part you want me to tackle first?"
+        ),
 
-        "nonsensical_query": "I'm not sure what you're asking. Could you rephrase that? I'm here to help with questions about Noah's background, technical projects, or how I'm built.",
+        "nonsensical_query": (
+            "Hmm, I'm not quite following! Could you rephrase that? "
+            "I'm here to chat about Noah's background, technical projects, or my own architecture."
+        ),
 
-        "hypothetical_query": "That's an interesting hypothetical! My knowledge base focuses on Noah's actual experience and achievements. What would you like to know about his real background?",
+        "hypothetical_query": (
+            "Fun hypothetical! My knowledge base sticks to Noah's actual experience though. "
+            "Want to explore what he's really built or achieved?"
+        ),
 
-        "temporal_confusion": "My knowledge base shows Noah's experience as of when it was last updated. This information may have changed. What specific aspect are you curious about?",
+        "temporal_confusion": (
+            "My info is from when the knowledge base was last updated. "
+            "What specific aspect are you curious about? I'll share what I know!"
+        ),
 
-        "contradictory_information": "I want to make sure I have the right information. Could you clarify what you're referring to? I can share what I have in my knowledge base."
+        "contradictory_information": (
+            "Hmm, let me make sure I've got this right — could you clarify what you're referring to? "
+            "I'll dig into my knowledge base and share what I find."
+        )
     }
 
     response = fallbacks.get(edge_case_type, "I'm here to help! What would you like to know?")

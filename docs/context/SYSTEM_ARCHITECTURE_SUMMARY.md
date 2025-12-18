@@ -4,7 +4,7 @@
 ## 0) Educational Mission
 This system exists to **teach how generative AI applications work** by using itself as a transparent example:
 - **Every component is explorable:** Ask about any part and I'll show you the code
-- **Design decisions are explained:** Learn why I chose pgvector over FAISS, serverless over dedicated servers, temperature 0.4 (balanced factual + conversational)
+- **Design decisions are explained:** Learn why I chose pgvector over FAISS, serverless over dedicated servers, temperature 0.7 (balanced factual + conversational)
 - **Patterns map to enterprise use cases:** See how this architecture adapts for customer support, internal docs, sales enablement
 - **Live observability:** View real metrics showing retrieval performance, costs, user satisfaction
 - **Production-ready patterns:** Authentication, rate limiting, PII handling, error management, cost optimization
@@ -160,7 +160,7 @@ log_and_notify
 1. **Embedding:** `text-embedding-3-small` converts your query into a vector (768 dimensions capturing semantic meaning)
 2. **Vector search:** `SELECT ... FROM kb_chunks ORDER BY embedding <=> $query LIMIT k` using IVFFLAT index (approximate nearest neighbor)
 3. **Context assembly:** Merge top-k chunks + role instructions + dynamic affordances (code snippets, contact links)
-4. **Generation:** `gpt-4o-mini` with grounded context; temperature 0.4 (balanced - factual but not robotic)
+4. **Generation:** `gpt-4o-mini` with grounded context; temperature 0.7 (balanced - factual but not robotic)
 5. **Attribution:** Cite KB sections so you can verify sources (transparency!)
 
 **Why this matters for enterprises:**
@@ -247,7 +247,7 @@ This architecture maps directly to common enterprise use cases:
 - ❌ Polyglot: Separate vector DB + warehouse + cache adds operational complexity
 - **Decision:** Start simple; add BigQuery/Snowflake only when analytics query volume demands it
 
-**Temperature 0.4 (balanced):**
+**Temperature 0.7 (balanced):**
 - **Why 0.4:** Sweet spot between deterministic (0.0) and creative (1.0)
 - **Effect:** Grounded in retrieved facts but with natural conversational phrasing
 - **Alternative approaches:** Some systems use 0.0 for maximum determinism, 0.7+ for creative writing

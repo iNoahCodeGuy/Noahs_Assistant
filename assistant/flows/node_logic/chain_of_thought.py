@@ -104,12 +104,49 @@ REASONING_USER_PROMPT = """Analyze this query and plan the response:
 Output your reasoning as JSON:"""
 
 
-GENERATION_WITH_REASONING_PROMPT = """You are Portfolia, Noah's AI Assistant.
+GENERATION_WITH_REASONING_PROMPT = """You are Portfolia, Noah's AI Assistant - a senior AI engineer explaining her own architecture.
 
-## REASONING ANALYSIS (Use this to guide your response)
+## REASONING ANALYSIS
 {reasoning}
 
-## RESPONSE GUIDELINES BASED ON REASONING
+## JOHN DANAHER TEACHING STYLE (REQUIRED FOR TECHNICAL QUESTIONS)
+Structure your response with these 5 parts:
+
+**1. CONTEXT-SETTING OPENING** (2-3 sentences with warmth)
+- Start with: "Let me walk you through this systematically..." or "Here's what makes this powerful..."
+- If referencing previous turns, integrate naturally: "Building on our [topic] discussion..."
+- Set expectations for what you'll explain
+
+**2. SYSTEMATIC ENUMERATION** (numbered layers/components)
+For each layer, include:
+- **[Layer Name]**
+- Purpose: Why this exists (1 sentence)
+- Implementation: Specific technologies with numbers
+- Key Metric: One concrete number (latency, cost, count)
+
+Example format:
+**1. Orchestration Layer**
+Purpose: Manages conversation flow through modular, testable nodes.
+Implementation: LangGraph StateGraph with 21 nodes across 7 stages.
+Key Metric: 325ms average node execution time.
+
+**3. QUANTITATIVE EVIDENCE** (real numbers from THIS conversation)
+YOU MUST include these actual metrics in your response:
+- Top retrieval similarity: {top_similarity}
+- Average similarity: {avg_similarity}
+- Current depth level: {current_depth}
+- Topics explored: {topics_explored}
+- Cost per query: ~$0.0003
+
+**4. CRITICAL INSIGHT** (1-3 sentences)
+Connect all layers to an overarching principle.
+Example: "The modularity IS the architecture—each layer independently testable and swappable, so GPT-5 means replacing one node, not rebuilding the system."
+
+**5. INVITATION TO EXPLORE** (3 numbered options)
+Offer specific next explorations based on what user hasn't seen yet:
+{unexplored_suggestions}
+
+## RESPONSE GUIDELINES
 - Depth Level: {depth_level}/3 - {depth_description}
 - Style: {style}
 - User seems: {user_description}
@@ -117,11 +154,13 @@ GENERATION_WITH_REASONING_PROMPT = """You are Portfolia, Noah's AI Assistant.
 
 ## CRITICAL RULES
 1. Speak in FIRST PERSON (I, my, me) - you ARE Portfolia
-2. Never say "Portfolia uses" - say "I use"
+2. NEVER say "Portfolia uses" - say "I use"
 3. Transform third-person context to first person
 4. {clarification_instruction}
 5. Do NOT copy chunks verbatim - synthesize in your own words
 6. Do NOT start with quoted text or section headers from context
+7. Include ACTUAL NUMBERS from the metrics above
+8. {variety_instruction}
 
 ## CONTEXT
 {context}
@@ -132,7 +171,7 @@ GENERATION_WITH_REASONING_PROMPT = """You are Portfolia, Noah's AI Assistant.
 ## USER'S QUESTION
 {query}
 
-Now generate your response following the reasoning plan:"""
+Generate your response following the 5-part Danaher structure:"""
 
 
 # ============================================================================
@@ -202,10 +241,14 @@ def generate_reasoning(
 
         # Try to call with temperature parameter
         try:
-            response = llm.predict(full_prompt, temperature=0.2)
+            response = llm.invoke(full_prompt, temperature=0.2)
         except TypeError:
-            # Some LLM interfaces don't accept temperature in predict()
-            response = llm.predict(full_prompt)
+            # Some LLM interfaces don't accept temperature in invoke()
+            response = llm.invoke(full_prompt)
+
+        # Extract content from AIMessage if needed
+        if hasattr(response, 'content'):
+            response = response.content
 
         reasoning_time = time.time() - start_time
 
@@ -236,7 +279,8 @@ def generate_with_reasoning(
     chat_history: list,
     role: str,
     reasoning: Dict[str, Any],
-    llm
+    llm,
+    metrics: Dict[str, Any] = None
 ) -> Tuple[str, Dict[str, Any]]:
     """Generate response using chain-of-thought reasoning.
 
@@ -250,10 +294,20 @@ def generate_with_reasoning(
         role: User's selected role
         reasoning: Output from generate_reasoning()
         llm: Language model instance
+        metrics: Real-time metrics dict with keys:
+            - top_similarity: float
+            - avg_similarity: float
+            - current_depth: int
+            - topics_explored: str
+            - unexplored_topics: list
+            - is_topic_exhausted: bool
+            - topic_query_count: int
 
     Returns:
         Tuple of (response_text, metadata)
     """
+    metrics = metrics or {}
+
     # Check if clarification is needed
     clarification = reasoning.get("clarification_needed", {})
     if clarification.get("needed") and clarification.get("suggested_question"):
@@ -308,6 +362,33 @@ def generate_with_reasoning(
         "structure": response_plan.get("structure", "")
     }, indent=2)
 
+    # Extract real-time metrics for prompt injection
+    top_similarity = metrics.get("top_similarity", 0.0)
+    avg_similarity = metrics.get("avg_similarity", 0.0)
+    current_depth = metrics.get("current_depth", 1)
+    topics_explored = metrics.get("topics_explored", "None yet")
+    unexplored_topics = metrics.get("unexplored_topics", [])
+    is_topic_exhausted = metrics.get("is_topic_exhausted", False)
+    topic_query_count = metrics.get("topic_query_count", 0)
+
+    # Build unexplored suggestions
+    if unexplored_topics:
+        unexplored_suggestions = "Based on what user hasn't explored:\n" + "\n".join(
+            f"- {topic}" for topic in unexplored_topics[:5]
+        )
+    else:
+        unexplored_suggestions = "1. Dive deeper into implementation details\n2. See the cost analysis at scale\n3. Explore Noah's technical background"
+
+    # Build variety instruction for exhausted topics
+    if is_topic_exhausted:
+        variety_instruction = (
+            f"IMPORTANT: This topic has been discussed {topic_query_count} times. "
+            f"Provide a DIFFERENT ANGLE - focus on unexplored aspects like: {', '.join(unexplored_topics[:3]) if unexplored_topics else 'implementation, cost analysis, or enterprise patterns'}. "
+            f"Show different examples or metrics than previous responses."
+        )
+    else:
+        variety_instruction = "Provide comprehensive coverage of this topic."
+
     # Build generation prompt
     history_str = _format_history_for_reasoning(chat_history)
     prompt = GENERATION_WITH_REASONING_PROMPT.format(
@@ -318,6 +399,12 @@ def generate_with_reasoning(
         user_description=user_description,
         confidence_description=confidence_description,
         clarification_instruction=clarification_instruction,
+        top_similarity=f"{top_similarity:.3f}" if top_similarity else "N/A",
+        avg_similarity=f"{avg_similarity:.3f}" if avg_similarity else "N/A",
+        current_depth=current_depth,
+        topics_explored=topics_explored,
+        unexplored_suggestions=unexplored_suggestions,
+        variety_instruction=variety_instruction,
         context=context,
         history=history_str or "No previous conversation",
         query=query
@@ -328,9 +415,13 @@ def generate_with_reasoning(
         start_time = time.time()
 
         try:
-            response = llm.predict(prompt, temperature=0.7)
+            response = llm.invoke(prompt, temperature=0.7)
         except TypeError:
-            response = llm.predict(prompt)
+            response = llm.invoke(prompt)
+
+        # Extract content from AIMessage if needed
+        if hasattr(response, 'content'):
+            response = response.content
 
         generation_time = time.time() - start_time
 
@@ -386,12 +477,49 @@ def chain_of_thought_generate(
 
     logger.info(f"Starting Chain-of-Thought generation for: {query[:50]}...")
 
+    # Extract real-time metrics from state for prompt injection
+    retrieval_scores = state.get("retrieval_scores", [])
+    session_memory = state.get("session_memory", {})
+
+    # Calculate similarity metrics
+    top_similarity = retrieval_scores[0] if retrieval_scores else 0.0
+    avg_similarity = sum(retrieval_scores) / len(retrieval_scores) if retrieval_scores else 0.0
+
+    # Get conversation context
+    current_depth = state.get("depth_level", 1)
+    topics = session_memory.get("topics", [])
+    topics_explored = ", ".join(topics[-5:]) if topics else "None yet"
+
+    # Get topic exhaustion info
+    topic_query_counts = session_memory.get("topic_query_counts", {})
+    exhausted_topics = session_memory.get("exhausted_topics", [])
+    unexplored_topics = session_memory.get("unexplored_topics", [])
+
+    # Detect current topic and check if exhausted
+    current_topic = _extract_topic_from_query(query)
+    topic_query_count = topic_query_counts.get(current_topic, 0)
+    is_topic_exhausted = current_topic in exhausted_topics or topic_query_count >= 2
+
+    if is_topic_exhausted:
+        logger.info(f"Topic exhaustion detected: '{current_topic}' discussed {topic_query_count} times. Injecting variety instruction.")
+
+    # Build metrics dict
+    metrics = {
+        "top_similarity": top_similarity,
+        "avg_similarity": avg_similarity,
+        "current_depth": current_depth,
+        "topics_explored": topics_explored,
+        "unexplored_topics": unexplored_topics,
+        "is_topic_exhausted": is_topic_exhausted,
+        "topic_query_count": topic_query_count,
+    }
+
     # Phase 1: Reasoning
     reasoning = generate_reasoning(query, context, chat_history, role, llm)
 
-    # Phase 2: Generation with reasoning
+    # Phase 2: Generation with reasoning and metrics
     response, metadata = generate_with_reasoning(
-        query, context, chat_history, role, reasoning, llm
+        query, context, chat_history, role, reasoning, llm, metrics
     )
 
     # Check if this was a clarification response
@@ -497,12 +625,25 @@ def _format_history_for_reasoning(chat_history: list) -> str:
     return "\n".join(parts)
 
 
-def _format_chunks_for_context(chunks: list) -> str:
-    """Format retrieved chunks as context string."""
+def _format_chunks_for_context(chunks: list, max_chunk_chars: int = 2000, max_total_chars: int = 10000) -> str:
+    """Format retrieved chunks as context string with size limits.
+
+    Prevents context length errors by truncating oversized chunks (e.g., prompt
+    template code from ResponseGenerator that can be 15k+ characters).
+
+    Args:
+        chunks: List of retrieved chunk dicts or strings
+        max_chunk_chars: Maximum characters per chunk (default 2000)
+        max_total_chars: Maximum total context characters (default 10000)
+
+    Returns:
+        Formatted context string within size limits
+    """
     if not chunks:
         return "No context available."
 
     parts = []
+    total_chars = 0
     for i, chunk in enumerate(chunks[:5]):  # Limit to 5 chunks
         if isinstance(chunk, dict):
             content = chunk.get("content", "")
@@ -511,8 +652,15 @@ def _format_chunks_for_context(chunks: list) -> str:
             content = str(chunk)
             section = f"Chunk {i+1}"
 
-        if content:
-            parts.append(f"[{section}]\n{content}")
+        # Truncate oversized chunks to prevent context length errors
+        if len(content) > max_chunk_chars:
+            content = content[:max_chunk_chars] + "... [truncated]"
+            logger.debug(f"Truncated chunk '{section}' from {len(chunk.get('content', ''))} to {max_chunk_chars} chars")
+
+        if content and total_chars < max_total_chars:
+            part = f"[{section}]\n{content}"
+            parts.append(part)
+            total_chars += len(part)
 
     return "\n\n".join(parts) if parts else "No context available."
 
@@ -622,6 +770,40 @@ def _simple_similarity(s1: str, s2: str) -> float:
     union = words1 | words2
 
     return len(intersection) / len(union) if union else 0.0
+
+
+def _extract_topic_from_query(query: str) -> str:
+    """Extract the primary topic from a query string.
+
+    Used for topic exhaustion detection and variety injection.
+
+    Args:
+        query: User's query string
+
+    Returns:
+        Extracted topic string or empty string if no match
+    """
+    query_lower = query.lower()
+
+    # Topic detection patterns (ordered by specificity)
+    topic_patterns = {
+        "enterprise": ["enterprise", "customer support", "adapt", "production", "use case", "scale", "deploy"],
+        "orchestration": ["orchestration", "langgraph", "pipeline", "flow", "nodes", "graph", "state"],
+        "architecture": ["architecture", "system design", "how it works", "structure", "tech stack"],
+        "rag": ["rag", "retrieval", "vector", "embedding", "search", "pgvector", "semantic"],
+        "cost": ["cost", "pricing", "tokens", "budget", "expensive", "cheap"],
+        "testing": ["testing", "qa", "test", "pytest", "validation", "quality"],
+        "observability": ["observability", "langsmith", "tracing", "monitoring", "logs", "analytics"],
+        "deployment": ["deployment", "vercel", "deploy", "hosting", "serverless", "production"],
+        "data": ["data", "supabase", "database", "storage", "migration"],
+        "career": ["noah", "career", "background", "experience", "tesla", "resume", "linkedin"],
+    }
+
+    for topic, keywords in topic_patterns.items():
+        if any(kw in query_lower for kw in keywords):
+            return topic
+
+    return "general"
 
 
 # ============================================================================

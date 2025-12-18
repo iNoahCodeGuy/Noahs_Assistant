@@ -72,12 +72,14 @@ def _expand_menu_selection(menu_choice: str, role_mode: str) -> str:
     """
 
     # Technical Hiring Manager menu (from stage2_role_routing.py welcome message)
+    # 5 options matching the welcome message order
     if role_mode == "hiring_manager_technical":
         menu_map = {
-            "1": "full technology stack architecture frontend backend data pipeline observability LangGraph Supabase pgvector deployment infrastructure",
-            "2": "LangGraph orchestration layer nodes states safeguards conversation flow pipeline stage routing error handling",
-            "3": "enterprise adaptation patterns large-scale deployment customization scalability reliability production best practices",
-            "4": "Noah technical background certifications GitHub projects engineering foundation credentials proof skills"
+            "1": "LangGraph orchestration layer nodes states safeguards conversation flow pipeline stage routing",
+            "2": "full technology stack architecture frontend backend observability LangGraph Supabase deployment",
+            "3": "enterprise adaptation patterns large-scale deployment customization scalability reliability production",
+            "4": "data pipeline management embeddings vector storage pgvector chunking analytics ingestion metrics",
+            "5": "Noah technical background certifications GitHub projects engineering foundation skills career Tesla MMA"
         }
         return menu_map.get(menu_choice, menu_choice)
 
@@ -245,6 +247,16 @@ def compose_query(state: ConversationState) -> ConversationState:
                 if missing_terms:
                     logger.warning(f"Composed query missing original terms: {missing_terms}. Adding them back.")
                     composed = f"{composed} {' '.join(missing_terms)}"
+
+        # Boost career_kb terms for background/professional queries
+        # This ensures "professional background" retrieves career facts, not personality traits
+        background_keywords = ["background", "professional", "experience", "career", "journey", "resume"]
+        if any(kw in base_lower for kw in background_keywords):
+            # Add terms that match career_kb entries
+            career_boost_terms = "career Tesla MMA skills projects GitHub certifications achievements journey"
+            if not any(term in composed.lower() for term in ["tesla", "mma", "github"]):
+                composed = f"{composed} {career_boost_terms}"
+                logger.debug("Boosted query with career terms for background query")
 
         # Enhance query with previous topics for progressive inference
         # Include last 2-3 topics to maintain context without query bloat

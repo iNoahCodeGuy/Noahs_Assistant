@@ -329,6 +329,35 @@ def update_memory(state: ConversationState) -> ConversationState:
 
     memory["last_grounding_status"] = state.get("grounding_status")
 
+    # =========================================================================
+    # PILLAR EXPLORATION TRACKING - Track progress through 4 main knowledge pillars
+    # =========================================================================
+    from assistant.flows.node_logic.stage6_formatting_nodes import _get_explored_pillars, MAIN_PILLARS
+
+    role_mode = state.get("role_mode", "explorer")
+    explored_pillars = _get_explored_pillars(memory, role_mode)
+
+    # Store pillar exploration state
+    memory["explored_pillars"] = list(explored_pillars)
+    memory["pillars_remaining"] = max(0, 4 - len(explored_pillars))
+
+    # Get pillar config for this role
+    pillar_config = MAIN_PILLARS.get(role_mode, {})
+    all_pillar_keys = [key for key, _ in pillar_config.get("pillars", [])]
+    unexplored = [key for key in all_pillar_keys if key not in explored_pillars]
+    memory["unexplored_pillar_keys"] = unexplored
+
+    # Log pillar progress
+    if len(explored_pillars) == 1:
+        logger.info(f"📊 First pillar explored: {list(explored_pillars)[0]}. {memory['pillars_remaining']} remaining.")
+    elif len(explored_pillars) >= 4:
+        logger.info("🎯 All 4 main pillars explored - user ready for synthesis/conversion")
+        state.setdefault("conversation_guidance_needed", [])
+        if "all_pillars_explored" not in state["conversation_guidance_needed"]:
+            state["conversation_guidance_needed"].append("all_pillars_explored")
+    elif len(explored_pillars) >= 2:
+        logger.debug(f"📊 Pillars explored: {list(explored_pillars)}. Unexplored: {unexplored}")
+
     # Track discussed code files for conversation-aware code index
     discussed_files = memory.setdefault("discussed_files", [])
     retrieved_chunks = state.get("retrieved_chunks", [])
@@ -498,6 +527,23 @@ def update_memory(state: ConversationState) -> ConversationState:
         # Keep only last 10 similarity scores
         metrics["retrieval_similarity_history"] = metrics["retrieval_similarity_history"][-10:]
 
+    # TOPIC EXHAUSTION TRACKING - For indefinite conversations (100+ turns)
+    # Track how many times each topic has been discussed to detect exhaustion
+    topic_query_counts = memory.setdefault("topic_query_counts", {})
+    current_topic = state.get("query_intent") or _extract_current_topic(query)
+
+    if current_topic:
+        topic_query_counts[current_topic] = topic_query_counts.get(current_topic, 0) + 1
+
+        # Mark topics as exhausted if discussed 3+ times
+        exhausted_topics = memory.setdefault("exhausted_topics", [])
+        if topic_query_counts[current_topic] >= 3 and current_topic not in exhausted_topics:
+            exhausted_topics.append(current_topic)
+            logger.info(f"📚 Topic marked as exhausted: {current_topic} (discussed {topic_query_counts[current_topic]} times)")
+
+    # Track unexplored topics based on conversation arcs
+    _update_unexplored_topics(state, memory)
+
     # Log success criteria status
     _log_success_criteria(state, memory)
 
@@ -584,6 +630,87 @@ def _log_success_criteria(state: ConversationState, session_memory: Dict) -> Non
 
     # Store criteria in state for analytics
     state.setdefault("success_criteria", criteria)
+
+
+def _extract_current_topic(query: str) -> str:
+    """Extract the current topic from a query string.
+
+    Args:
+        query: User's query string
+
+    Returns:
+        Extracted topic or empty string
+    """
+    query_lower = query.lower()
+
+    # Topic detection patterns
+    topic_patterns = {
+        "orchestration": ["orchestration", "langgraph", "pipeline", "flow", "nodes", "graph"],
+        "architecture": ["architecture", "system design", "how it works", "structure"],
+        "rag": ["rag", "retrieval", "vector", "embedding", "search", "pgvector"],
+        "enterprise": ["enterprise", "customer support", "adapt", "production", "use case", "scale"],
+        "deployment": ["deployment", "vercel", "deploy", "hosting", "serverless"],
+        "data": ["data", "supabase", "database", "storage", "analytics"],
+        "cost": ["cost", "pricing", "tokens", "budget", "expensive"],
+        "testing": ["testing", "qa", "test", "pytest", "validation"],
+        "observability": ["observability", "langsmith", "tracing", "monitoring", "logs"],
+        "career": ["noah", "career", "background", "experience", "tesla"],
+    }
+
+    for topic, keywords in topic_patterns.items():
+        if any(kw in query_lower for kw in keywords):
+            return topic
+
+    return ""
+
+
+def _update_unexplored_topics(state: ConversationState, memory: Dict) -> None:
+    """Update the list of unexplored topics based on conversation arcs.
+
+    This enables Portfolia to guide users to new territory when current
+    topics are exhausted.
+
+    Args:
+        state: Conversation state
+        memory: Session memory dict
+    """
+    role_mode = state.get("role_mode", "explorer")
+    explored_topics = set(memory.get("topics", []))
+    exhausted_topics = set(memory.get("exhausted_topics", []))
+
+    # Define all available topics per role
+    all_topics_by_role = {
+        "hiring_manager_technical": [
+            "tech_stack", "architecture", "orchestration", "rag_pipeline", "data_layer",
+            "langgraph_nodes", "state_management", "retrieval", "generation", "observability",
+            "enterprise_adaptation", "customer_support", "internal_docs", "sales_enablement",
+            "cost_analysis", "deployment", "scaling", "testing", "monitoring",
+            "noahs_background", "projects", "philosophy"
+        ],
+        "software_developer": [
+            "architecture", "code_structure", "module_design", "implementation",
+            "langgraph_flow", "pgvector_queries", "debugging", "testing", "performance",
+            "deployment", "monitoring"
+        ],
+        "hiring_manager_nontechnical": [
+            "career", "achievements", "business_impact", "team_fit", "resume", "contact"
+        ],
+        "explorer": [
+            "casual", "what_is_this", "architecture", "behind_scenes", "fun_facts", "mma_background"
+        ]
+    }
+
+    all_topics = set(all_topics_by_role.get(role_mode, []))
+
+    # Calculate unexplored topics (not in explored and not exhausted)
+    unexplored = all_topics - explored_topics - exhausted_topics
+
+    # Store in memory for use by followup generation
+    memory["unexplored_topics"] = list(unexplored)[:10]  # Keep top 10
+
+    # Log for debugging
+    if unexplored:
+        logger.debug(f"📍 Unexplored topics for {role_mode}: {list(unexplored)[:5]}...")
 
 
 def _update_enterprise_affinity(state: ConversationState, memory: dict) -> None:

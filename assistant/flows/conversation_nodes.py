@@ -24,7 +24,7 @@ from assistant.flows.node_logic.stage0_session_management import (
     initialize_conversation_state,
     prompt_for_role_selection,
 )
-from assistant.flows.node_logic.stage2_role_routing import classify_role_mode
+from assistant.flows.node_logic.stage2_role_routing import classify_role_mode, detect_repeated_query
 from assistant.flows.node_logic.stage2_query_classification import classify_intent, classify_query
 from assistant.flows.node_logic.stage2_entity_extraction import extract_entities
 from assistant.flows.node_logic.stage3_clarification import assess_clarification_need, ask_clarifying_question
@@ -105,12 +105,13 @@ def handle_greeting(state, rag_engine):
     return state
 
 
-# Export all nodes for use in conversation_flow.py (18-node consolidated pipeline)
+# Export all nodes for use in conversation_flow.py (22-node consolidated pipeline)
 __all__ = [
-    # Core pipeline nodes (18 active)
+    # Core pipeline nodes (22 active)
     "initialize_conversation_state",
     "prompt_for_role_selection",
     "classify_role_mode",  # Now includes HM technical routing
+    "detect_repeated_query",  # Detect user asking same question twice
     "classify_intent",
     "presentation_controller",  # NEW: Merged depth + display
     "extract_entities",

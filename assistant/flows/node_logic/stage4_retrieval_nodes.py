@@ -353,6 +353,27 @@ def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int 
             state["retrieval_scores"] = scores
             metadata["retrieval_count"] = len(normalized)
 
+            # Boost career_kb chunks for background/career queries
+            # This ensures queries about Noah's background prioritize career_kb over personality_kb
+            if any(kw in query_lower for kw in ["noah", "background", "career", "technical background", "resume"]):
+                boosted = False
+                for i, chunk in enumerate(normalized):
+                    if chunk.get("doc_id") == "career_kb":
+                        if i < len(scores):
+                            scores[i] = min(1.0, scores[i] + 0.15)  # Boost career_kb by 0.15
+                            boosted = True
+
+                if boosted:
+                    # Re-sort chunks by boosted similarity scores
+                    # Create list of (chunk, score) tuples, sort by score descending
+                    chunk_score_pairs = list(zip(normalized, scores))
+                    chunk_score_pairs.sort(key=lambda x: x[1], reverse=True)
+                    normalized = [pair[0] for pair in chunk_score_pairs]
+                    scores = [pair[1] for pair in chunk_score_pairs]
+                    state["retrieved_chunks"] = normalized
+                    state["retrieval_scores"] = scores
+                    logger.info("Boosted career_kb chunks for background query")
+
             if scores:
                 avg_similarity = sum(scores) / len(scores)
                 metadata["avg_similarity"] = round(avg_similarity, 3)
