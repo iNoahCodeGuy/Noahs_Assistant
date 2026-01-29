@@ -56,6 +56,7 @@ class ConversationState(TypedDict, total=False):
     Field Categories:
         Core Conversation: query, role, session_id, chat_history
         Classification: query_type, is_greeting
+        Menu Navigation: current_menu_branch, awaiting_sub_menu, sub_menu_type
         Retrieval: retrieved_chunks, code_snippets
         Generation: answer
         Actions: planned_actions, executed_actions
@@ -99,6 +100,19 @@ class ConversationState(TypedDict, total=False):
 
     menu_choice: str
     """User's menu selection (e.g., '1', '2', '3', '4') when query_type is 'menu_selection'."""
+
+    # --- Menu Navigation State ---
+    current_menu_branch: str
+    """Current menu branch user is in: 'professional_background', 'technical_background', 'explorer', 'confession'."""
+
+    awaiting_sub_menu: bool
+    """True when waiting for user to select from a sub-menu (e.g., certifications vs projects)."""
+
+    sub_menu_type: str
+    """Type of sub-menu being displayed: 'technical_background_choice', 'explorer_choice', 'confession_choice'."""
+
+    confession_is_anonymous: bool
+    """For confession flow: True if user chose anonymous confession, False if with identity."""
 
     query_intent: str
     """Higher level intent grouping (engineering, business, data, action)."""
@@ -267,6 +281,26 @@ class ConversationState(TypedDict, total=False):
 
     hiring_signals_strong: bool
     """Whether hiring signals are strong enough to unlock resume prompts."""
+
+    # --- Engagement Tracking ---
+    engagement_metrics: Dict[str, Any]
+    """Tracks user engagement: projects_viewed, questions_asked, engagement_score, etc.
+
+    Stored in session_memory["engagement"] with structure:
+    {
+        "projects_viewed": ["portfolia", "heatmap"],
+        "certifications_viewed": True,
+        "videos_watched": ["hotdog"],
+        "questions_asked": 3,
+        "resume_offered": False,
+        "resume_sent": False,
+        "linkedin_offered": False,
+        "engagement_score": 5
+    }
+    """
+
+    linkedin_offered: bool
+    """True if LinkedIn has been offered in this session."""
 
     # --- Error Tracking (Graceful Degradation) ---
     error: str | None

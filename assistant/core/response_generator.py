@@ -23,16 +23,8 @@ from typing import List, Dict, Any, Optional
 
 from .langchain_compat import RetrievalQA, PromptTemplate, ChatOpenAI
 
-# Get debug log path - try multiple locations
-def _get_debug_log_path():
-    """Get the debug log file path, trying multiple locations."""
-    # Always use absolute path and ensure directory exists
-    abs_path = Path('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log')
-    try:
-        abs_path.parent.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass  # If mkdir fails, try anyway
-    return str(abs_path)
+# Import centralized path configuration
+from assistant.config.settings import get_debug_log_path as _get_debug_log_path
 
 logger = logging.getLogger(__name__)
 

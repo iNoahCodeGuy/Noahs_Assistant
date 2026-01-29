@@ -94,7 +94,7 @@ class TestAnalyticsQuality:
             mock_analytics.get_kb_coverage.return_value = {}
 
             # Mock confessions
-                with patch('assistant.flows.data_reporting.supabase_analytics.client.table') as mock_table:
+            with patch('assistant.flows.data_reporting.supabase_analytics.client.table') as mock_table:
                 mock_table.return_value.select.return_value.execute.return_value.data = [
                     {"name": "John Doe", "email": "john@example.com", "message": "I like you"}
                 ]

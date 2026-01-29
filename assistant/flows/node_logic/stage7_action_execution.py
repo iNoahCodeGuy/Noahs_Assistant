@@ -350,6 +350,121 @@ class ActionExecutor:
             state["analytics_metadata"] = {}
         state["analytics_metadata"]["linkedin_offer"] = True
 
+    def execute_send_resume_simple(self, state: ConversationState, action: Dict[str, Any]) -> None:
+        """Send resume with optional Noah notification (for new conversation flow).
+
+        This is a simplified version used by the new 4-branch conversation flow.
+        It sends the resume email and optionally notifies Noah via SMS.
+
+        Args:
+            state: Conversation state
+            action: Action dictionary with email, notify_noah flag
+        """
+        recipient_email = action.get("email")
+        notify_noah = action.get("notify_noah", False)
+
+        if not recipient_email:
+            logger.info("Skipping resume send; no email available")
+            return
+
+        # Get or generate signed resume URL
+        resume_url = state.get("resume_signed_url")
+        if not resume_url:
+            storage_service = self._ensure_storage()
+            if not storage_service:
+                logger.error("Storage service unavailable, cannot send resume")
+                return
+            resume_path = action.get("resume_path", "resumes/noah_resume.pdf")
+            expires_in = action.get("expires_in", 86400)
+            try:
+                resume_url = storage_service.get_signed_url(resume_path, expires_in=expires_in)
+                state["resume_signed_url"] = resume_url
+            except Exception as exc:
+                logger.error("Failed to generate signed URL: %s", exc)
+                return
+
+        # Send email via Resend
+        resend_service = self._ensure_resend()
+        if resend_service:
+            try:
+                response = resend_service.send_resume_email(
+                    to_email=recipient_email,
+                    to_name="there",
+                    resume_url=resume_url,
+                    message="Here's Noah's resume as requested!"
+                )
+                if "analytics_metadata" not in state:
+                    state["analytics_metadata"] = {}
+                state["analytics_metadata"]["resume_email_status"] = response.get("status", "unknown")
+                logger.info("Resume sent to %s", recipient_email)
+            except Exception as exc:
+                logger.error("Failed to send resume email: %s", exc)
+                return
+
+        # Notify Noah via SMS if requested
+        if notify_noah:
+            twilio_service = self._ensure_twilio()
+            if twilio_service:
+                try:
+                    twilio_service.send_contact_alert(
+                        from_name="Resume Bot",
+                        from_email=recipient_email,
+                        message_preview=f"📄 Resume sent to {recipient_email}! Someone's interested in your background.",
+                        is_urgent=False
+                    )
+                    if "analytics_metadata" not in state:
+                        state["analytics_metadata"] = {}
+                    state["analytics_metadata"]["noah_notified_resume"] = True
+                    logger.info("Noah notified about resume send to %s", recipient_email)
+                except Exception as exc:
+                    logger.error("Failed to send SMS notification: %s", exc)
+
+        state["resume_sent"] = True
+
+    def execute_send_confession_sms(self, state: ConversationState, action: Dict[str, Any]) -> None:
+        """Send confession to Noah via SMS.
+
+        Args:
+            state: Conversation state
+            action: Action dictionary with confession, is_anonymous, confessor_identity
+        """
+        confession = action.get("confession", "")
+        is_anonymous = action.get("is_anonymous", True)
+        confessor_identity = action.get("confessor_identity")
+
+        if not confession:
+            logger.warning("No confession content to send")
+            return
+
+        twilio_service = self._ensure_twilio()
+        if not twilio_service:
+            logger.error("Twilio service unavailable, cannot send confession SMS")
+            return
+
+        # Build SMS message
+        if is_anonymous:
+            sms_message = f"💌 Anonymous Confession:\n\n{confession[:280]}"
+        else:
+            sms_message = f"💌 Confession from {confessor_identity}:\n\n{confession[:250]}"
+
+        try:
+            twilio_service.send_contact_alert(
+                from_name=confessor_identity if not is_anonymous else "Anonymous Admirer",
+                from_email="confession@portfolia.ai",
+                message_preview=sms_message,
+                is_urgent=False
+            )
+            if "analytics_metadata" not in state:
+                state["analytics_metadata"] = {}
+            state["analytics_metadata"]["confession_sms_sent"] = True
+            state["analytics_metadata"]["confession_is_anonymous"] = is_anonymous
+            logger.info("Confession SMS sent to Noah (anonymous=%s)", is_anonymous)
+        except Exception as exc:
+            logger.error("Failed to send confession SMS: %s", exc)
+            if "analytics_metadata" not in state:
+                state["analytics_metadata"] = {}
+            state["analytics_metadata"]["confession_sms_failed"] = str(exc)
+
     def execute(self, state: ConversationState) -> ConversationState:
         """Execute all pending actions on the conversation state.
 
@@ -367,8 +482,12 @@ class ActionExecutor:
 
             try:
                 if action_type == "send_resume":
-                    self.execute_send_resume(state, action)
-                elif action_type == "send_resume_and_notify":  # NEW - Intelligent Resume Distribution
+                    # Check if this is the new simple format with notify_noah flag
+                    if action.get("notify_noah") is not None:
+                        self.execute_send_resume_simple(state, action)
+                    else:
+                        self.execute_send_resume(state, action)
+                elif action_type == "send_resume_and_notify":  # Intelligent Resume Distribution
                     self.execute_send_resume_and_notify(state, action)
                 elif action_type == "notify_resume_sent":
                     self.execute_notify_resume_sent(state, action)
@@ -376,6 +495,8 @@ class ActionExecutor:
                     self.execute_notify_contact_request(state, action)
                 elif action_type == "send_linkedin":
                     self.execute_send_linkedin(state, action)
+                elif action_type == "send_confession_sms":
+                    self.execute_send_confession_sms(state, action)
             except Exception as exc:  # pragma: no cover - defensive guard
                 logger.error("Action %s failed: %s", action_type, exc)
 

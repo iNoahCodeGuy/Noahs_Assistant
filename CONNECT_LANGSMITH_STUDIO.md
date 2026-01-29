@@ -1,8 +1,22 @@
 # Connect LangSmith Studio to Local Server
 
+## 🚀 Quick Start (Recommended)
+
+Run the connection script:
+
+```bash
+python3 connect_langsmith_studio.py
+```
+
+This script will:
+- ✅ Check prerequisites (langgraph-cli, environment variables)
+- ✅ Start the LangGraph dev server on http://127.0.0.1:2024
+- ✅ Provide the connection URL for LangSmith Studio
+- ✅ Optionally open LangSmith Studio in your browser
+
 ## ✅ Server Status
 
-Your local LangGraph server is now running on **http://127.0.0.1:2024**
+Your local LangGraph server should be running on **http://127.0.0.1:2024**
 
 ## 🔗 Connect LangSmith Studio
 

@@ -71,6 +71,8 @@ import logging
 import time
 from typing import Callable, Optional, Sequence, TYPE_CHECKING, Any
 
+from assistant.config.settings import get_debug_log_path
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -252,7 +254,7 @@ def run_conversation_flow(
         state = node(state)
         if state.get("pipeline_halt") or state.get("is_greeting"):
             # #region agent log
-            with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+            with open(get_debug_log_path(), 'a') as f:
                 import json
                 f.write(json.dumps({
                     "location": "conversation_flow.py:215",
@@ -275,7 +277,7 @@ def run_conversation_flow(
     # Skip only for actual greetings (initial greeting before role selection)
     # Role welcome messages and menu selections are part of conversation and should be preserved
     # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+    with open(get_debug_log_path(), 'a') as f:
         import json
         f.write(json.dumps({
             "location": "conversation_flow.py:221",
@@ -297,7 +299,7 @@ def run_conversation_flow(
     if state.get("answer") and not state.get("is_greeting"):
         chat_history = state.get("chat_history", [])
         # #region agent log
-        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        with open(get_debug_log_path(), 'a') as f:
             import json
             f.write(json.dumps({
                 "location": "conversation_flow.py:228",
@@ -343,7 +345,7 @@ def run_conversation_flow(
         chat_history.append({"role": "assistant", "content": state["answer"]})
         state["chat_history"] = chat_history
         # #region agent log
-        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        with open(get_debug_log_path(), 'a') as f:
             import json
             f.write(json.dumps({
                 "location": "conversation_flow.py:246",

@@ -38,23 +38,8 @@ from assistant.flows.node_logic.chain_of_thought import (
 # Module-level verification - this will print when module is imported
 print(">>> stage5_generation_nodes.py MODULE LOADED <<<", file=sys.stderr, flush=True)
 
-# Get debug log path - try multiple locations
-def _get_debug_log_path():
-    """Get the debug log file path, trying multiple locations."""
-    # Try absolute path first
-    abs_path = Path('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log')
-    if abs_path.parent.exists():
-        return str(abs_path)
-
-    # Try relative to current working directory
-    cwd_path = Path(os.getcwd()) / '.cursor' / 'debug.log'
-    if cwd_path.parent.exists() or Path(os.getcwd()).exists():
-        cwd_path.parent.mkdir(parents=True, exist_ok=True)
-        return str(cwd_path)
-
-    # Fallback: use absolute path anyway (will create directory if needed)
-    abs_path.parent.mkdir(parents=True, exist_ok=True)
-    return str(abs_path)
+# Import centralized path configuration
+from assistant.config.settings import get_debug_log_path as _get_debug_log_path
 
 logger = logging.getLogger(__name__)
 
@@ -1707,7 +1692,7 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     state.setdefault("analytics_metadata", {})
 
     # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+    with open(_get_debug_log_path(), 'a') as f:
         import json
         f.write(json.dumps({
             "location": "stage5_generation_nodes.py:1021",
@@ -1751,7 +1736,7 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         return {"answer": None, "draft_answer": None}
 
     # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+    with open(_get_debug_log_path(), 'a') as f:
         import json
         f.write(json.dumps({
             "location": "stage5_generation_nodes.py:1024",
@@ -2391,7 +2376,7 @@ how well you retrieved information about him.
         )
 
     # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+    with open(_get_debug_log_path(), 'a') as f:
         import json
         f.write(json.dumps({
             "location": "stage5_generation_nodes.py:1247",
@@ -2409,7 +2394,7 @@ how well you retrieved information about him.
     # #endregion
 
     # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+    with open(_get_debug_log_path(), 'a') as f:
         import json
         f.write(json.dumps({
             "location": "stage5_generation_nodes.py:1273",
@@ -2479,7 +2464,7 @@ how well you retrieved information about him.
 
     # Special handling for menu option 2 (orchestration layer walkthrough) - comprehensive 7-stage pipeline explanation
     # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+    with open(_get_debug_log_path(), 'a') as f:
         import json
         f.write(json.dumps({
             "location": "stage5_generation_nodes.py:1269",
@@ -2546,7 +2531,7 @@ how well you retrieved information about him.
     )
 
     # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+    with open(_get_debug_log_path(), 'a') as f:
         import json
         f.write(json.dumps({
             "location": "stage5_generation_nodes.py:1355",
@@ -3350,7 +3335,7 @@ how well you retrieved information about him.
     update["answer"] = cleaned_answer
 
     # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+    with open(_get_debug_log_path(), 'a') as f:
         import json
         f.write(json.dumps({
             "location": "stage5_generation_nodes.py:1926",
@@ -3370,7 +3355,7 @@ how well you retrieved information about him.
     # #endregion
 
     # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+    with open(_get_debug_log_path(), 'a') as f:
         import json
         f.write(json.dumps({
             "location": "stage5_generation_nodes.py:1821",

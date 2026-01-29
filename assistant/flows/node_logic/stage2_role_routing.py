@@ -13,6 +13,7 @@ from typing import Any, Dict
 
 from assistant.state.conversation_state import ConversationState
 from assistant.observability.langsmith_tracer import create_custom_span
+from assistant.config.settings import get_debug_log_path
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,45 @@ def _get_role_welcome_message(role_mode: str) -> str:
     """Return role-specific welcome message explaining available knowledge base."""
 
     messages = {
+        "professional_background": dedent("""\
+            Great choice! Let me tell you about Noah's professional background.
+
+            Noah has built a strong foundation in sales across multiple industries:
+            • **Tesla Sales Advisor** (Current) - Consistently exceeds targets in the competitive EV market
+            • **Real Estate** - Developed client relationships and negotiation skills
+            • **Gym Sales** - Mastered consultative selling and membership conversions
+            • **Logistics** - Built operational efficiency and customer service excellence
+
+            Noah combines this sales expertise with a passion for technology, making him uniquely positioned to bridge business and technical conversations.
+
+            Would you like me to send you Noah's resume? I can email it to you and Noah will receive a notification that you're interested!
+        """),
+
+        "technical_background": dedent("""\
+            Perfect! I'd love to show you Noah's technical side.
+
+            Would you like me to:
+            1️⃣ Go over Noah's certifications?
+            2️⃣ Show what kind of programs Noah has built?
+        """),
+
+        "explorer": dedent("""\
+            Awesome! Just looking around? I've got some fun stuff for you!
+
+            What would you like to see?
+            1️⃣ A video of Noah eating 10 hotdogs 🌭
+            2️⃣ A video of Noah in a cage fight 🥊
+        """),
+
+        "confession": dedent("""\
+            💌 Aww, this is sweet! I'm here to help deliver your message to Noah.
+
+            Would you like to confess:
+            1️⃣ Anonymously (your identity stays secret)
+            2️⃣ With your identity (so Noah can reach out)
+        """),
+
+        # Keep legacy roles for backwards compatibility
         "hiring_manager_nontechnical": dedent("""\
             Perfect! I'll focus on business value and career insights.
 
@@ -58,26 +98,6 @@ def _get_role_welcome_message(role_mode: str) -> str:
 
             Want to see code, discuss architecture, or ask about specific technical implementations?
         """),
-
-        "explorer": dedent("""\
-            Awesome! I'm here to show you whatever interests you.
-
-            I can share:
-            • Career stories and professional highlights
-            • Technical projects and how they work
-            • Behind-the-scenes of how I'm built
-            • Fun facts and personal interests (including MMA!)
-
-            What sounds interesting to you?
-        """),
-
-        "confession": dedent("""\
-            💌 Aww, this is sweet! I'm here to help.
-
-            Your confession will be completely anonymous and sent directly to Noah. I won't judge or analyze it — just pass it along safely.
-
-            When you're ready, go ahead and share what's on your mind!
-        """),
     }
 
     return messages.get(role_mode, "")
@@ -87,33 +107,42 @@ def _get_role_welcome_message(role_mode: str) -> str:
 # ============================================================================
 
 _ROLE_ALIASES = {
+    # New 4-option menu aliases
+    "looking to learn about noah's professional background": "professional_background",
+    "professional background": "professional_background",
+    "looking to learn about his technical background": "technical_background",
+    "technical background": "technical_background",
+    "just looking around": "explorer",
+    "looking to confess crush": "confession",
+    # Legacy aliases for backwards compatibility
     "hiring manager (technical)": "hiring_manager_technical",
     "hiring manager (nontechnical)": "hiring_manager_nontechnical",
     "hiring manager (non-technical)": "hiring_manager_nontechnical",
     "software developer": "software_developer",
-    "just looking around": "explorer",
-    "looking to confess crush": "confession",
 }
 
 _ROLE_DISPLAY = {
+    # New roles
+    "professional_background": "Professional Background",
+    "technical_background": "Technical Background",
+    "explorer": "Just looking around",
+    "confession": "Looking to confess crush",
+    # Legacy roles
     "hiring_manager_technical": "Hiring Manager (technical)",
     "hiring_manager_nontechnical": "Hiring Manager (nontechnical)",
     "software_developer": "Software Developer",
-    "explorer": "Just looking around",
-    "confession": "Looking to confess crush",
 }
 
 _ROLE_SELECTION_MAP = {
-    "1": "hiring_manager_nontechnical",
-    "1️⃣": "hiring_manager_nontechnical",
-    "2": "hiring_manager_technical",
-    "2️⃣": "hiring_manager_technical",
-    "3": "software_developer",
-    "3️⃣": "software_developer",
-    "4": "explorer",
-    "4️⃣": "explorer",
-    "5": "confession",
-    "5️⃣": "confession",
+    # New 4-option menu (matches _INITIAL_GREETING)
+    "1": "professional_background",
+    "1️⃣": "professional_background",
+    "2": "technical_background",
+    "2️⃣": "technical_background",
+    "3": "explorer",
+    "3️⃣": "explorer",
+    "4": "confession",
+    "4️⃣": "confession",
 }
 
 
@@ -141,7 +170,7 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
             # Clear pipeline_halt if it exists (from previous welcome message)
             # Menu selections after role selection should proceed normally
             # #region agent log
-            with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+            with open(get_debug_log_path(), 'a') as f:
                 import json
                 f.write(json.dumps({
                     "location": "stage2_role_routing.py:146",
@@ -161,7 +190,7 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
             if state.get("pipeline_halt") and persona_hints.get("role_welcome_shown"):
                 state.pop("pipeline_halt", None)
                 # #region agent log
-                with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+                with open(get_debug_log_path(), 'a') as f:
                     import json
                     f.write(json.dumps({
                         "location": "stage2_role_routing.py:160",
@@ -180,7 +209,7 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
                 logger.debug(f"Cleared pipeline_halt for menu selection after role welcome: role={normalized}, role_welcome_shown={persona_hints.get('role_welcome_shown')}")
 
             # #region agent log
-            with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+            with open(get_debug_log_path(), 'a') as f:
                 import json
                 f.write(json.dumps({
                     "location": "stage2_role_routing.py:186",
@@ -197,6 +226,14 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
                     "hypothesisId": "E"
                 }) + "\n")
             # #endregion
+
+            # Check if we're awaiting a sub-menu selection for an already established role
+            if state.get("awaiting_sub_menu") and state.get("current_menu_branch") == normalized:
+                from assistant.flows.node_logic.util_menu_handlers import (
+                    handle_sub_menu_selection,
+                )
+                # Handle the sub-menu selection and return the updated state immediately
+                return handle_sub_menu_selection(state)
 
             # Return partial update dict (not full state) to avoid preserving old answer
             # Only include top-level fields that were modified
@@ -218,13 +255,26 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
 
             return partial_update
 
+        # Check for navigation keywords (menu, back, etc.)
+        from assistant.flows.node_logic.util_menu_handlers import _check_navigation_keywords
+        nav_action = _check_navigation_keywords(state.get("query", ""))
+        if nav_action == "menu":
+            # Reset to main menu
+            state["awaiting_sub_menu"] = False
+            state.pop("current_menu_branch", None)
+            state.pop("sub_menu_type", None)
+            from assistant.flows.node_logic.stage0_session_management import _INITIAL_GREETING
+            state["answer"] = _INITIAL_GREETING
+            state["pipeline_halt"] = True
+            return state
+
         # Infer role from query content
         query_raw = state.get("query", "")
         query = query_raw.lower().strip()
         inferred_role = None
         confidence = 0.7
 
-        # Number-based selections from initial prompt (1-5)
+        # Number-based selections from initial prompt (1-4)
         selection_key = query if query in _ROLE_SELECTION_MAP else query.replace(" ", "")
         if selection_key in _ROLE_SELECTION_MAP:
             normalized = _ROLE_SELECTION_MAP[selection_key]
@@ -235,28 +285,26 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
         if not inferred_role and query in _ROLE_ALIASES:
             inferred_role = _ROLE_DISPLAY[_ROLE_ALIASES[query]]
             confidence = 1.0
-        # Also check for close matches (e.g., "I'm a hiring manager (technical)")
+        # Also check for close matches
         elif not inferred_role and any(role_name in query for role_name in _ROLE_ALIASES.keys()):
             for role_name, role_key in _ROLE_ALIASES.items():
                 if role_name in query:
                     inferred_role = _ROLE_DISPLAY[role_key]
                     confidence = 0.95
                     break
-        # Check for hiring/recruiting signals
-        elif not inferred_role and any(keyword in query for keyword in ["hire", "hiring", "recruit", "position", "job opening", "candidate"]):
-            if any(tech_keyword in query for tech_keyword in ["technical", "tech", "engineering", "code", "developer"]):
-                inferred_role = "Hiring Manager (technical)"
-            else:
-                inferred_role = "Hiring Manager (nontechnical)"
+
+        # Check for professional/sales/career signals
+        elif not inferred_role and any(keyword in query for keyword in ["professional", "sales", "career", "background", "experience", "resume", "cv"]):
+            inferred_role = "Professional Background"
             confidence = 0.9
 
-        # Check for developer/engineer signals
-        elif not inferred_role and any(keyword in query for keyword in ["code", "developer", "engineer", "programming", "technical", "architecture", "api", "database"]):
-            inferred_role = "Software Developer"
-            confidence = 0.85
+        # Check for technical/developer/code signals
+        elif not inferred_role and any(keyword in query for keyword in ["technical", "code", "developer", "engineer", "programming", "architecture", "certifications", "projects", "github"]):
+            inferred_role = "Technical Background"
+            confidence = 0.9
 
         # Check for confession signals
-        elif not inferred_role and any(keyword in query for keyword in ["confess", "crush", "secret", "anonymous"]):
+        elif not inferred_role and any(keyword in query for keyword in ["confess", "crush", "secret", "anonymous", "love"]):
             inferred_role = "Looking to confess crush"
             confidence = 0.95
 
@@ -285,8 +333,15 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
                 state["answer"] = welcome_msg
                 state["pipeline_halt"] = True  # Wait for user's first real query
                 persona_hints["role_welcome_shown"] = True
+
+                # Set sub-menu awaiting flag for roles with sub-menus
+                if normalized in ("technical_background", "explorer", "confession"):
+                    state["awaiting_sub_menu"] = True
+                    state["current_menu_branch"] = normalized
+                    state["sub_menu_type"] = f"{normalized}_choice"
+
                 # #region agent log
-                with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+                with open(get_debug_log_path(), 'a') as f:
                     import json
                     f.write(json.dumps({
                         "location": "stage2_role_routing.py:252",
@@ -295,6 +350,7 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
                             "role": normalized,
                             "role_welcome_shown": persona_hints.get("role_welcome_shown"),
                             "pipeline_halt": state.get("pipeline_halt"),
+                            "awaiting_sub_menu": state.get("awaiting_sub_menu"),
                             "answer_length": len(welcome_msg)
                         },
                         "timestamp": int(time.time() * 1000),
@@ -305,8 +361,18 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
                 # #endregion
                 return state
 
-        # Merged: Handle technical HM routing (from route_hiring_manager_technical)
-        # If technical HM role detected, check for menu handling or onboarding
+        # Handle branch-specific sub-menu routing
+        # Each branch may have its own sub-menu that needs handling
+        if normalized in ("technical_background", "explorer", "confession", "professional_background"):
+            from assistant.flows.node_logic.util_menu_handlers import (
+                handle_sub_menu_selection,
+            )
+
+            # Check if we're waiting for a sub-menu selection
+            if state.get("awaiting_sub_menu"):
+                return handle_sub_menu_selection(state)
+
+        # Legacy: Handle technical HM routing (from route_hiring_manager_technical)
         if normalized == "hiring_manager_technical":
             from assistant.flows.node_logic.util_role_specific import (
                 handle_hm_technical_menu_selection,

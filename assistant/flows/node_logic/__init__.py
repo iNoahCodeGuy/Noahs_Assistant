@@ -81,6 +81,17 @@ from assistant.flows.node_logic.util_role_specific import (
     show_certifications,
     show_enterprise_pattern_example,
 )
+from assistant.flows.node_logic.util_menu_handlers import (
+    handle_sub_menu_selection,
+    handle_professional_response,
+    handle_technical_sub_menu,
+    handle_explorer_sub_menu,
+    handle_confession_sub_menu,
+    show_projects,
+    show_hotdog_video,
+    show_cage_fight_video,
+    process_confession,
+)
 
 __all__ = [
     "initialize_conversation_state",
@@ -125,4 +136,14 @@ __all__ = [
     "should_gather_job_details",
     "get_job_details_prompt",
     "extract_job_details_from_query",
+    # New menu handlers
+    "handle_sub_menu_selection",
+    "handle_professional_response",
+    "handle_technical_sub_menu",
+    "handle_explorer_sub_menu",
+    "handle_confession_sub_menu",
+    "show_projects",
+    "show_hotdog_video",
+    "show_cage_fight_video",
+    "process_confession",
 ]

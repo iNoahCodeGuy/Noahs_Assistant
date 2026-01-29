@@ -62,12 +62,34 @@ class RetrievalLogData:
     This helps us understand:
     - Which KB chunks are most useful
     - If similarity scores are good enough
-    - Whether responses are grounded in retrieved context
+    - Whether responses are properly grounded in retrieved context
     """
     message_id: int
     topk_ids: List[int]  # IDs of retrieved kb_chunks
     scores: List[float]  # Similarity scores
     grounded: bool  # Did the response cite sources?
+
+
+@dataclass
+class QualityEventData:
+    """Data structure for logging quality validation events.
+
+    This helps us understand:
+    - How often quality warnings are triggered
+    - Whether warnings are more common for RAG or template responses
+    - At which conversation turn warnings occur most
+    - What specific warning types are most frequent
+
+    Used for data-driven decisions about whether proofreading is needed.
+    """
+    session_id: str
+    conversation_turn: int
+    warning_type: Optional[str]  # None if no warning, else "answer_relevance_low_0.25" etc
+    response_path: str  # "rag" or "template"
+    query_preview: str  # First 200 chars of query
+    answer_preview: Optional[str] = None  # Only for flagged responses (first 500 chars)
+    retry_count: int = 0
+    metadata: Optional[Dict[str, Any]] = None  # role_mode, menu_branch, engagement_score, etc.
 
 
 class SupabaseAnalytics:
@@ -290,6 +312,141 @@ class SupabaseAnalytics:
 
         except Exception as e:
             logger.error(f"Failed to get user behavior insights: {e}")
+            return {'error': str(e)}
+
+    def log_quality_event(self, event: QualityEventData) -> Optional[int]:
+        """Log a quality validation event to the quality_events table.
+
+        This helps track:
+        - How often quality warnings are triggered
+        - Whether warnings are more common for RAG or template responses
+        - At which conversation turn warnings occur most
+        - What specific warning types are most frequent
+
+        Args:
+            event: Quality event data
+
+        Returns:
+            Event ID if successful, None if failed
+
+        Design decisions:
+        - Only store answer_preview if warning_type is set (flagged responses)
+        - This saves storage and respects privacy for unflagged responses
+        - Fails gracefully (logs error but doesn't crash app)
+        """
+        try:
+            # Only store answer_preview if warning_type is set (flagged)
+            answer_preview = event.answer_preview if event.warning_type else None
+
+            result = self.client.table('quality_events').insert({
+                'session_id': event.session_id,
+                'conversation_turn': event.conversation_turn,
+                'warning_type': event.warning_type,
+                'response_path': event.response_path,
+                'query_preview': event.query_preview[:200] if event.query_preview else None,  # Limit to 200 chars
+                'answer_preview': answer_preview[:500] if answer_preview else None,  # Limit to 500 chars
+                'retry_count': event.retry_count,
+                'metadata': event.metadata or {}
+            }).execute()
+
+            event_id = result.data[0]['id'] if result.data else None
+            logger.debug(f"Logged quality event for session {event.session_id}, event_id: {event_id}")
+            return event_id
+
+        except Exception as e:
+            logger.error(f"Failed to log quality event: {e}")
+            return None
+
+    def get_quality_summary(self, days: int = 7) -> Dict[str, Any]:
+        """Get quality metrics for the last N days.
+
+        Returns aggregated statistics about quality warnings:
+        - Total events and warning rate
+        - Breakdown by warning type
+        - Breakdown by response path (RAG vs template)
+        - Average conversation turn when warnings occur
+
+        Args:
+            days: Number of days to analyze (default: 7)
+
+        Returns:
+            Dictionary with quality metrics:
+            {
+                'period_days': 7,
+                'total_events': 150,
+                'events_with_warnings': 12,
+                'warning_rate': 0.08,
+                'by_warning_type': [...],
+                'by_response_path': [...],
+                'avg_turn_with_warning': 2.5
+            }
+        """
+        try:
+            cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+            # Get all events from the last N days
+            events = self.client.table('quality_events')\
+                .select('warning_type, response_path, conversation_turn')\
+                .gte('created_at', cutoff_date)\
+                .execute()
+
+            if not events.data:
+                return {
+                    'period_days': days,
+                    'total_events': 0,
+                    'message': 'No data for this period'
+                }
+
+            total_events = len(events.data)
+            events_with_warnings = sum(1 for e in events.data if e.get('warning_type'))
+
+            # Breakdown by warning type
+            warning_type_counts = {}
+            warning_turns = []
+            for event in events.data:
+                warning_type = event.get('warning_type')
+                if warning_type:
+                    warning_type_counts[warning_type] = warning_type_counts.get(warning_type, 0) + 1
+                    turn = event.get('conversation_turn')
+                    if turn:
+                        warning_turns.append(turn)
+
+            by_warning_type = [
+                {'warning_type': wt, 'count': count}
+                for wt, count in sorted(warning_type_counts.items(), key=lambda x: x[1], reverse=True)
+            ]
+
+            # Breakdown by response path
+            path_counts = {}
+            path_warning_counts = {}
+            for event in events.data:
+                path = event.get('response_path', 'unknown')
+                path_counts[path] = path_counts.get(path, 0) + 1
+                if event.get('warning_type'):
+                    path_warning_counts[path] = path_warning_counts.get(path, 0) + 1
+
+            by_response_path = [
+                {
+                    'response_path': path,
+                    'total_events': count,
+                    'events_with_warnings': path_warning_counts.get(path, 0),
+                    'warning_rate': path_warning_counts.get(path, 0) / count if count > 0 else 0
+                }
+                for path, count in sorted(path_counts.items())
+            ]
+
+            return {
+                'period_days': days,
+                'total_events': total_events,
+                'events_with_warnings': events_with_warnings,
+                'warning_rate': events_with_warnings / total_events if total_events > 0 else 0,
+                'by_warning_type': by_warning_type,
+                'by_response_path': by_response_path,
+                'avg_turn_with_warning': sum(warning_turns) / len(warning_turns) if warning_turns else None
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get quality summary: {e}")
             return {'error': str(e)}
 
     def health_check(self) -> Dict[str, Any]:

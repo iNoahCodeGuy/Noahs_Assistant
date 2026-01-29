@@ -29,6 +29,7 @@ from assistant.analytics.supabase_analytics import (
     UserInteractionData,
     RetrievalLogData,
 )
+from assistant.config.settings import get_debug_log_path
 
 logger = logging.getLogger(__name__)
 
@@ -380,7 +381,7 @@ def update_memory(state: ConversationState) -> ConversationState:
     chat_history = state.get("chat_history", [])
 
     # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+    with open(get_debug_log_path(), 'a') as f:
         import json
         f.write(json.dumps({
             "location": "stage7_logging_nodes.py:319",
@@ -445,7 +446,7 @@ def update_memory(state: ConversationState) -> ConversationState:
             )
 
         # #region agent log
-        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        with open(get_debug_log_path(), 'a') as f:
             import json
             # Convert LangGraph message objects to serializable format
             messages_serializable = []

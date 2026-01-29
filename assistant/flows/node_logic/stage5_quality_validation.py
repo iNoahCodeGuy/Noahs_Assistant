@@ -27,6 +27,25 @@ from assistant.state.conversation_state import ConversationState
 logger = logging.getLogger(__name__)
 
 
+def _determine_response_path(state: ConversationState) -> str:
+    """Determine if response was from RAG pipeline or templated menu handler.
+
+    Args:
+        state: ConversationState to analyze
+
+    Returns:
+        "rag" if response came from RAG pipeline, "template" if from menu handler
+    """
+    # Menu handlers set pipeline_halt to True
+    if state.get("pipeline_halt"):
+        return "template"
+    # RAG responses have retrieved_chunks
+    if state.get("retrieved_chunks"):
+        return "rag"
+    # Default to template (most responses are menu-driven)
+    return "template"
+
+
 def _should_use_teaching_style(state: ConversationState) -> bool:
     """Determine if answer should use John Danaher-style teaching structure.
 
@@ -165,7 +184,72 @@ def validate_answer_quality(state: ConversationState) -> ConversationState:
         state["answer_quality_warning"] = "; ".join(quality_issues)
         logger.info(f"Quality issues detected: {quality_issues}")
 
+    # Log quality event for monitoring
+    _log_quality_event(state)
+
     return state
+
+
+def _log_quality_event(state: ConversationState) -> None:
+    """Log quality validation event to Supabase for monitoring.
+
+    This enables data-driven decisions about whether proofreading is needed.
+    Only logs if analytics module is available (fails gracefully if not).
+
+    Args:
+        state: ConversationState with quality validation results
+    """
+    try:
+        from assistant.analytics.supabase_analytics import supabase_analytics, QualityEventData
+
+        session_id = state.get("session_id", "")
+        if not session_id:
+            logger.debug("Skipping quality event log - no session_id")
+            return
+
+        # Extract answer content for preview (only if flagged)
+        answer = state.get("draft_answer", "")
+        answer_content = ""
+        if isinstance(answer, dict):
+            answer_content = answer.get("content", "")
+        elif hasattr(answer, "content"):
+            answer_content = getattr(answer, "content", "")
+        else:
+            answer_content = str(answer) if answer else ""
+
+        warning_type = state.get("answer_quality_warning")
+        response_path = _determine_response_path(state)
+
+        # Build metadata
+        metadata = {}
+        if state.get("role_mode"):
+            metadata["role_mode"] = state.get("role_mode")
+        if state.get("current_menu_branch"):
+            metadata["menu_branch"] = state.get("current_menu_branch")
+        session_memory = state.get("session_memory", {})
+        engagement = session_memory.get("engagement", {})
+        if engagement.get("engagement_score") is not None:
+            metadata["engagement_score"] = engagement.get("engagement_score")
+
+        # Create event (only include answer_preview if flagged)
+        event = QualityEventData(
+            session_id=session_id,
+            conversation_turn=state.get("conversation_turn", 0),
+            warning_type=warning_type,
+            response_path=response_path,
+            query_preview=state.get("query", "")[:200],
+            answer_preview=answer_content[:500] if warning_type else None,  # Only for flagged
+            retry_count=0,  # Will be updated in stage6 if retry happens
+            metadata=metadata if metadata else None
+        )
+
+        supabase_analytics.log_quality_event(event)
+        logger.debug(f"Logged quality event: warning_type={warning_type}, path={response_path}")
+
+    except ImportError:
+        logger.debug("Supabase analytics not available, skipping quality event log")
+    except Exception as e:
+        logger.warning(f"Failed to log quality event: {e}")
 
 
 def validate_conversation_guidance(state: ConversationState) -> ConversationState:

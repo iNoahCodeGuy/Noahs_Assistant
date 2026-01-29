@@ -4,26 +4,25 @@ This module handles the initial conversation setup in two stages:
 
 1. initialize_conversation_state (Node 1): Sets up default state structure
    - Ensures all required fields exist with safe defaults
-    Before we dive in, which of these feels closest to you?
-    1️⃣ Hiring Manager (Nontechnical)
-    2️⃣ Hiring Manager (Technical)
-    3️⃣ Software Developer
-    4️⃣ Just Looking Around
-    5️⃣ Looking to Confess Crush 💌
 
-    I can go deep on architecture and code, talk through business value and ROI, share career insights about Noah, or just hang out and be a fun demo. What would you like to explore first?
+2. prompt_for_role_selection (Node 2): Shows the 4-option menu:
+    1️⃣ Looking to learn about Noah's professional background
+    2️⃣ Looking to learn about his technical background
+    3️⃣ Just looking around
+    4️⃣ Looking to confess crush 💌
 
-Design: Portfolia messages first, no explicit role selector menu.
-Role is inferred from natural conversation in classify_role_mode (Node 3).
+Design: Portfolia messages first with the menu.
+User selection is processed in classify_role_mode (Node 3).
 """
 
 from __future__ import annotations
 
 from textwrap import dedent
+import time
 
 from assistant.state.conversation_state import ConversationState
 from assistant.observability.langsmith_tracer import create_custom_span
-import time
+from assistant.config.settings import get_debug_log_path
 
 
 # ============================================================================
@@ -77,7 +76,7 @@ def initialize_conversation_state(state: ConversationState) -> ConversationState
                 )
 
         # #region agent log
-        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        with open(get_debug_log_path(), 'a') as f:
             import json
             # Convert LangGraph message objects to serializable format
             chat_history_serializable = []
@@ -146,14 +145,13 @@ def initialize_conversation_state(state: ConversationState) -> ConversationState
 
 _INITIAL_GREETING = dedent(
     """\
-    👋 Hey! I'm Portfolia — Noah's AI Assistant,
+    Hi I'm Portfolia, Noah's AI Assistant.
 
     Before we dive in, what best describes you?
-    1️⃣ Hiring Manager (Nontechnical)
-    2️⃣ Hiring Manager (Technical)
-    3️⃣ Software Developer
-    4️⃣ Just Looking Around
-    5️⃣ Looking to Confess Crush 💌
+    1️⃣ Looking to learn about Noah's professional background
+    2️⃣ Looking to learn about his technical background
+    3️⃣ Just looking around
+    4️⃣ Looking to confess crush 💌
     """
 )
 

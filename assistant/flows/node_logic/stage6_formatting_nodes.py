@@ -30,6 +30,7 @@ from assistant.state.conversation_state import ConversationState
 from assistant.core.rag_engine import RagEngine
 from assistant.flows import content_blocks
 from assistant.flows.node_logic.util_code_validation import is_valid_code_snippet
+from assistant.config.settings import get_debug_log_path
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,87 @@ def _extract_content_from_message(msg) -> str:
         return getattr(msg, "content", "")
     else:
         return str(msg)
+
+
+def _determine_response_path(state: ConversationState) -> str:
+    """Determine if response was from RAG pipeline or templated menu handler.
+
+    Args:
+        state: ConversationState to analyze
+
+    Returns:
+        "rag" if response came from RAG pipeline, "template" if from menu handler
+    """
+    # Menu handlers set pipeline_halt to True
+    if state.get("pipeline_halt"):
+        return "template"
+    # RAG responses have retrieved_chunks
+    if state.get("retrieved_chunks"):
+        return "rag"
+    # Default to template (most responses are menu-driven)
+    return "template"
+
+
+def _log_retry_event(state: ConversationState) -> None:
+    """Log retry event to update quality event with retry count.
+
+    When a retry is triggered, we update the quality event to track that
+    a retry occurred. This helps understand retry frequency and effectiveness.
+
+    Args:
+        state: ConversationState with retry information
+    """
+    try:
+        from assistant.analytics.supabase_analytics import supabase_analytics, QualityEventData
+
+        session_id = state.get("session_id", "")
+        if not session_id:
+            logger.debug("Skipping retry event log - no session_id")
+            return
+
+        # Extract answer content for preview
+        answer = state.get("draft_answer", "")
+        answer_content = ""
+        if isinstance(answer, dict):
+            answer_content = answer.get("content", "")
+        elif hasattr(answer, "content"):
+            answer_content = getattr(answer, "content", "")
+        else:
+            answer_content = str(answer) if answer else ""
+
+        warning_type = state.get("answer_quality_warning")
+        response_path = _determine_response_path(state)
+
+        # Build metadata
+        metadata = {}
+        if state.get("role_mode"):
+            metadata["role_mode"] = state.get("role_mode")
+        if state.get("current_menu_branch"):
+            metadata["menu_branch"] = state.get("current_menu_branch")
+        session_memory = state.get("session_memory", {})
+        engagement = session_memory.get("engagement", {})
+        if engagement.get("engagement_score") is not None:
+            metadata["engagement_score"] = engagement.get("engagement_score")
+
+        # Log retry event with retry_count=1
+        event = QualityEventData(
+            session_id=session_id,
+            conversation_turn=state.get("conversation_turn", 0),
+            warning_type=warning_type,
+            response_path=response_path,
+            query_preview=state.get("query", "")[:200],
+            answer_preview=answer_content[:500] if warning_type else None,
+            retry_count=1,  # This is a retry event
+            metadata=metadata if metadata else None
+        )
+
+        supabase_analytics.log_quality_event(event)
+        logger.debug(f"Logged retry event: warning_type={warning_type}, path={response_path}")
+
+    except ImportError:
+        logger.debug("Supabase analytics not available, skipping retry event log")
+    except Exception as e:
+        logger.warning(f"Failed to log retry event: {e}")
 
 
 def _retry_generation_if_insufficient(state: ConversationState, rag_engine: RagEngine) -> str:
@@ -197,6 +279,9 @@ Your answer should:
         return original_answer
 
     try:
+        # Track retry event for monitoring
+        _log_retry_event(state)
+
         enhanced_answer = rag_engine.response_generator.generate_contextual_response(
             query=state.get("query", ""),
             context=retrieved_chunks,
@@ -1608,7 +1693,7 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
         True
     """
     # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+    with open(get_debug_log_path(), 'a') as f:
         import json
         import time
         f.write(json.dumps({
@@ -1643,7 +1728,7 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
         logger.error("format_answer called without draft_answer")
 
         # #region agent log
-        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+        with open(get_debug_log_path(), 'a') as f:
             import json
             import time
             f.write(json.dumps({
