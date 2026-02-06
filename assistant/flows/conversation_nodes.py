@@ -55,6 +55,12 @@ from assistant.flows.node_logic.util_code_validation import (
     sanitize_generated_answer
 )
 from assistant.flows.node_logic.stage1_greetings import should_show_greeting, is_first_turn
+from assistant.flows.node_logic.stage1_intent_router import (
+    classify_intent as classify_message_intent,
+    handle_non_knowledge_intent,
+    handle_crush_confession,
+    handle_crush_flow_continuation,
+)
 from assistant.flows.node_logic.util_resume_distribution import (
     detect_hiring_signals,
     handle_resume_request,

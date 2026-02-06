@@ -4,6 +4,17 @@
 .env.production
 .env.development
 
+# Build/Deploy Artifacts
+.next/
+.langgraph_api/
+.vercel/
+.turbo/
+out/
+
+# Cache directories
+.cache/
+.cursor/
+
 # macOS System Files
 .DS_Store
 .DS_Store?
@@ -86,3 +97,5 @@ data/*.json
 vector_stores/*/
 faiss_index/
 chroma_db/
+node_modules
+node_modules

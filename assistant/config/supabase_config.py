@@ -23,6 +23,48 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+# ============================================================================
+# LOGGING CONFIGURATION
+# Set noisy HTTP/API loggers to WARNING to reduce debug noise
+# Keep assistant.* loggers at DEBUG for actual application debugging
+# ============================================================================
+def configure_logging():
+    """Configure logging levels to reduce noise from third-party libraries.
+
+    Sets these noisy loggers to WARNING:
+    - hpack: HTTP/2 header compression (very verbose)
+    - urllib3: HTTP client (connection details)
+    - anthropic._base_client: Anthropic API client (HTTP noise)
+    - langsmith: LangSmith tracing (verbose trace data)
+    - httpcore: HTTP core library
+    - httpx: HTTP client
+    - openai: OpenAI API client
+
+    Keeps assistant.* loggers at their default level for debugging.
+    """
+    # List of noisy loggers to silence
+    noisy_loggers = [
+        "hpack",
+        "urllib3",
+        "httpcore",
+        "httpx",
+        "anthropic",
+        "anthropic._base_client",
+        "langsmith",
+        "langsmith.client",
+        "langsmith.run_trees",
+        "openai",
+        "openai._base_client",
+    ]
+
+    for logger_name in noisy_loggers:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+
+# Apply logging configuration on import
+configure_logging()
+
+
 @dataclass
 class SupabaseConfig:
     """Supabase configuration settings.
@@ -86,12 +128,18 @@ class SupabaseSettings:
             anon_key=os.getenv("SUPABASE_ANON_KEY", "").strip() if os.getenv("SUPABASE_ANON_KEY") else None
         )
 
-        # OpenAI configuration (strip to prevent "Illegal header value" errors)
+        # Anthropic configuration (primary LLM provider)
+        self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+        self.anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929").strip()
+
+        # OpenAI configuration (for embeddings only)
         self.openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
-        self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o").strip()  # Changed to gpt-4o for best quality/performance
-        self.openai_reasoning_model = os.getenv("OPENAI_REASONING_MODEL", "o1-preview").strip()
-        self.openai_fast_model = os.getenv("OPENAI_FAST_MODEL", "gpt-4o-mini").strip()  # Changed to gpt-4o-mini (faster than gpt-3.5-turbo)
         self.embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-ada-002").strip()
+
+        # Legacy OpenAI model settings (deprecated, kept for compatibility)
+        self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o").strip()
+        self.openai_reasoning_model = os.getenv("OPENAI_REASONING_MODEL", "o1-preview").strip()
+        self.openai_fast_model = os.getenv("OPENAI_FAST_MODEL", "gpt-4o-mini").strip()
 
         # External services (for Next.js API routes)
         self.resend_api_key = os.getenv("RESEND_API_KEY", "").strip()
@@ -219,6 +267,22 @@ def configure_logging():
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("openai").setLevel(logging.WARNING)
     logging.getLogger("supabase").setLevel(logging.WARNING)
+
+    # Silence extremely verbose HTTP/2 and networking libraries
+    logging.getLogger("hpack").setLevel(logging.ERROR)  # HTTP/2 header compression (very verbose)
+    logging.getLogger("hpack.hpack").setLevel(logging.ERROR)
+    logging.getLogger("hpack.table").setLevel(logging.ERROR)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)  # HTTP connection pooling
+    logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
+
+    # Reduce LangSmith tracing noise in production
+    logging.getLogger("langsmith").setLevel(logging.ERROR if is_production else logging.WARNING)
+    logging.getLogger("langsmith.client").setLevel(logging.ERROR if is_production else logging.WARNING)
+
+    # Keep assistant.* loggers at DEBUG in development for detailed debugging
+    # In production, they'll inherit the root INFO level
+    if not is_production:
+        logging.getLogger("assistant").setLevel(logging.DEBUG)
 
     # Log configuration complete (but only in debug mode to avoid spam)
     logger = logging.getLogger(__name__)

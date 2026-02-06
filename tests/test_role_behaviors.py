@@ -1,3 +1,4 @@
+
 import types
 from agents.role_router import RoleRouter
 from agents.response_formatter import ResponseFormatter
@@ -24,18 +25,18 @@ class DummyRag:
     def retrieve_with_code(self, query: str, role: str = None, include_code: bool = None):
         """Enhanced retrieval method expected by role router after refactor."""
         self.career_calls += 1
-        
+
         # Handle include_code parameter (new refactored path)
         should_include_code = include_code if include_code is not None else (role in ["Hiring Manager (technical)", "Software Developer"])
-        
+
         if should_include_code:
             self.code_calls += 1
         return {
             "matches": ["Career fact A"],
             "skills": ["No explicit skills extracted"],
             "code_snippets": [{
-                "name": "RagEngine", 
-                "citation": "src/core/rag_engine.py:10", 
+                "name": "RagEngine",
+                "citation": "src/core/rag_engine.py:10",
                 "content": "def __init__(self):",
                 "github_url": "https://github.com/noah/repo/blob/main/src/core/rag_engine.py#L10"
             }] if should_include_code else [],

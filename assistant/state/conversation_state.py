@@ -68,6 +68,9 @@ class ConversationState(TypedDict, total=False):
     query: str
     """User's current query text. Required in most flows."""
 
+    original_query: str
+    """Backup of the original query text, preserved at initialization for fallback scenarios."""
+
     role: str
     """Selected user role: 'Software Developer', 'Hiring Manager (technical)', etc."""
 
@@ -105,6 +108,18 @@ class ConversationState(TypedDict, total=False):
 
     intent_confidence: float
     """Confidence score for query intent classification."""
+
+    message_intent: str
+    """High-level message intent: 'knowledge_query', 'crush_confession', 'greeting', 'small_talk', 'off_topic'."""
+
+    skip_rag: bool
+    """True if message intent doesn't require RAG retrieval (small_talk, off_topic, etc.)."""
+
+    awaiting_crush_choice: bool
+    """True when waiting for user's choice in crush confession flow (1=anonymous, 2=reveal)."""
+
+    crush_flow_step: str
+    """Current step in crush confession flow: 'awaiting_choice', 'awaiting_contact_info', or None."""
 
     is_greeting: bool
     """True if query is a greeting (allows pipeline short-circuit)."""

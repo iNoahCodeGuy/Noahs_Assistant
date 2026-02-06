@@ -316,7 +316,8 @@ class ActionExecutor:
         contact_name = state.get("user_name", "there")
         contact_email = state.get("user_email")
         contact_phone = state.get("user_phone")
-        message_preview = state["query"][:120]
+        query = state.get("query", "")
+        message_preview = query[:120] if query else "No message"
 
         # Send email notification via Resend
         resend_service = self._ensure_resend()
@@ -324,7 +325,7 @@ class ActionExecutor:
             resend_service.send_contact_notification(
                 from_name=contact_name,
                 from_email=contact_email,
-                message=state["query"],
+                message=query,
                 user_role=state["role"],
                 phone=contact_phone,
             )

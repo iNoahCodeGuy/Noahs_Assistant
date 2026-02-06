@@ -319,15 +319,15 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         ValueError: If required fields (query, role) are missing
     """
     # Fail-fast validation (Defensibility principle)
-    try:
-        query = state["query"]
-        role = state.get("role_mode") or state.get("role", "Developer")  # Persona already normalized upstream
-    except KeyError as e:
-        logger.error(f"classify_intent: Missing required field: {e}")
-        return {
-            "error": "classification_failed",
-            "error_message": f"Missing required field for classification: {e}"
-        }
+    query = state.get("query", "")
+    if not query:
+        logger.error("classify_intent: Missing required field: 'query'")
+        # CRITICAL: Must return full state, not partial dict (would lose all other fields!)
+        state["error"] = "classification_failed"
+        state["error_message"] = "Missing required field for classification: 'query'"
+        return state
+
+    role = state.get("role_mode") or state.get("role", "Developer")  # Persona already normalized upstream
 
     # Initialize partial update dict (only fields we're modifying)
     update: Dict[str, Any] = {}

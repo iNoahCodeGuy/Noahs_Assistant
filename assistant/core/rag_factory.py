@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Optional, Tuple, Any
 
-from .langchain_compat import OpenAIEmbeddings, ChatOpenAI
+from .langchain_compat import OpenAIEmbeddings, ChatAnthropic
 from .document_processor import DocumentProcessor
 from .response_generator import ResponseGenerator
 
@@ -46,48 +46,52 @@ class RagEngineFactory:
         """Create LLM with fallback and LangSmith wrapping. Returns (llm, is_degraded).
 
         Args:
-            model_name: Optional model override (e.g., "o1-preview" for reasoning tasks).
-                       If None, uses settings.openai_model.
+            model_name: Optional model override.
+                       If None, uses claude-sonnet-4-5-20250929.
         """
         try:
-            # Use provided model or fall back to settings
-            selected_model = model_name or getattr(self.settings, "openai_model", "gpt-3.5-turbo")
+            # Use provided model or fall back to Anthropic Sonnet
+            selected_model = model_name or getattr(self.settings, "anthropic_model", "claude-sonnet-4-5-20250929")
 
-            # Import wrap_openai for automatic tracing
-            try:
-                from langsmith.wrappers import wrap_openai
-                from openai import OpenAI as RawOpenAI
-
-                # Create wrapped OpenAI client for automatic token/cost tracking
-                raw_client = RawOpenAI(api_key=getattr(self.settings, "openai_api_key", None))
-                wrapped_client = wrap_openai(raw_client)
-
-                # Use with ChatOpenAI via openai_client parameter (if supported)
-                llm = ChatOpenAI(
-                    openai_api_key=getattr(self.settings, "openai_api_key", None),
-                    model_name=selected_model,
-                    temperature=0.7,  # Sweet spot: conversational + creative, but still follows structure (0.9 was too high)
-                    max_tokens=4096  # Allow full analytics dashboard (11,772 chars ≈ 3,000 tokens)
-                )
-                logger.debug(f"LLM initialized with model={selected_model} and LangSmith wrapping for automatic tracing")
-            except ImportError:
-                # Fallback to unwrapped if langsmith not available
-                llm = ChatOpenAI(
-                    openai_api_key=getattr(self.settings, "openai_api_key", None),
-                    model_name=selected_model,
-                    temperature=0.7,  # Sweet spot: conversational + creative, but still follows structure (0.9 was too high)
-                    max_tokens=4096
-                )
-                logger.debug(f"LLM initialized with model={selected_model} without LangSmith wrapping (langsmith not installed)")
+            # Use ChatAnthropic with the specified model
+            llm = ChatAnthropic(
+                anthropic_api_key=getattr(self.settings, "anthropic_api_key", None),
+                model_name=selected_model,
+                temperature=0.7,  # Sweet spot: conversational + creative, but still follows structure (0.9 was too high)
+                max_tokens=4096  # Allow full analytics dashboard (11,772 chars ≈ 3,000 tokens)
+            )
+            logger.debug(f"LLM initialized with Anthropic model={selected_model}")
 
             return llm, False
         except Exception as e:
             logger.warning(f"LLM initialization failed, degraded mode responses will be used: {e}")
             class _FallbackLLM:
-                def predict(self, prompt: str):
+                """Fallback LLM that implements both legacy and modern LangChain interfaces."""
+                def predict(self, prompt: str) -> str:
                     words = prompt.strip().split()
                     tail = " ".join(words[-40:])
                     return f"[DEGRADED MODE SYNTHESIS]\n{tail}"
+
+                def invoke(self, input_data, **kwargs):
+                    """Modern LangChain interface - invoke method."""
+                    from langchain_core.messages import AIMessage
+                    # Handle different input types
+                    if isinstance(input_data, str):
+                        prompt = input_data
+                    elif isinstance(input_data, list):
+                        # List of messages - extract content
+                        prompt = " ".join(
+                            getattr(m, 'content', str(m)) for m in input_data
+                        )
+                    else:
+                        prompt = str(input_data)
+
+                    result = self.predict(prompt)
+                    return AIMessage(content=result)
+
+                def __call__(self, *args, **kwargs):
+                    """Make callable for legacy compatibility."""
+                    return self.invoke(*args, **kwargs)
             return _FallbackLLM(), True
 
     def create_career_kb(self, provided_kb=None):

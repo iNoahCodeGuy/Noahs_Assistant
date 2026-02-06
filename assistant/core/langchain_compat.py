@@ -106,23 +106,55 @@ except Exception:
                 self.template = template
                 self.input_variables = input_variables
 
-# --- Resilient ChatOpenAI ---
+# --- Resilient ChatAnthropic ---
 try:
-    from langchain_openai import ChatOpenAI  # type: ignore
+    from langchain_anthropic import ChatAnthropic  # type: ignore
 except Exception:
     try:
-        from langchain.chat_models import ChatOpenAI  # type: ignore
+        from langchain.chat_models import ChatAnthropic  # type: ignore
     except Exception:
         try:
-            from langchain_community.chat_models import ChatOpenAI  # type: ignore
+            from langchain_community.chat_models import ChatAnthropic  # type: ignore
         except Exception:
-            class ChatOpenAI:  # type: ignore
+            class ChatAnthropic:  # type: ignore
+                """Fallback ChatAnthropic that implements both legacy and modern interfaces."""
                 def __init__(self, *_, **__):
                     pass
+
                 def predict(self, prompt: str) -> str:
                     words = prompt.strip().split()
                     tail = " ".join(words[-40:])
                     return f"[DEGRADED MODE SYNTHESIS]\n{tail}"
+
+                def invoke(self, input_data, **kwargs):
+                    """Modern LangChain interface - invoke method."""
+                    try:
+                        from langchain_core.messages import AIMessage
+                    except ImportError:
+                        class AIMessage:
+                            def __init__(self, content):
+                                self.content = content
+
+                    # Handle different input types
+                    if isinstance(input_data, str):
+                        prompt = input_data
+                    elif isinstance(input_data, list):
+                        # List of messages - extract content
+                        prompt = " ".join(
+                            getattr(m, 'content', str(m)) for m in input_data
+                        )
+                    else:
+                        prompt = str(input_data)
+
+                    result = self.predict(prompt)
+                    return AIMessage(content=result)
+
+                def __call__(self, *args, **kwargs):
+                    """Make callable for legacy compatibility."""
+                    return self.invoke(*args, **kwargs)
+
+# Legacy alias for backwards compatibility
+ChatOpenAI = ChatAnthropic
 
 # --- Document Schema ---
 try:

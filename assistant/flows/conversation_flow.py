@@ -82,6 +82,8 @@ from assistant.flows.conversation_nodes import (
     initialize_conversation_state,
     prompt_for_role_selection,
     handle_greeting,
+    classify_message_intent,  # NEW: Intent router before RAG
+    handle_non_knowledge_intent,  # NEW: Handler for non-RAG intents
     classify_role_mode,
     detect_repeated_query,  # Detect user asking same question twice
     classify_intent,
@@ -186,6 +188,16 @@ def run_conversation_flow(
         lambda s: handle_greeting(s, rag_engine),
 
         # ═══════════════════════════════════════════════════════════════════════════
+        # STAGE 1.5: INTENT ROUTING (NEW)
+        # Purpose: Classify message intent before RAG (knowledge vs non-knowledge)
+        # State Modified: message_intent, skip_rag, awaiting_crush_choice
+        # Short-Circuit: Routes to non-RAG handler if skip_rag=True
+        # Performance: ~150ms (fast LLM classification call)
+        # ═══════════════════════════════════════════════════════════════════════════
+        classify_message_intent,
+        lambda s: handle_non_knowledge_intent(s, rag_engine),
+
+        # ═══════════════════════════════════════════════════════════════════════════
         # STAGE 2: CLASSIFICATION (Understanding Intent)
         # Purpose: Infer role, detect intent, extract entities
         # State Modified: role, query_type, query_intent, entities, topic_focus
@@ -250,6 +262,7 @@ def run_conversation_flow(
     start = time.time()
     for node in pipeline:
         state = node(state)
+        # Short-circuit conditions: greeting, pipeline halt, or skip_rag (non-knowledge intent)
         if state.get("pipeline_halt") or state.get("is_greeting"):
             # #region agent log
             with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
@@ -260,6 +273,8 @@ def run_conversation_flow(
                     "data": {
                         "pipeline_halt": state.get("pipeline_halt"),
                         "is_greeting": state.get("is_greeting"),
+                        "skip_rag": state.get("skip_rag"),
+                        "message_intent": state.get("message_intent"),
                         "has_answer": bool(state.get("answer")),
                         "chat_history_len": len(state.get("chat_history", []))
                     },

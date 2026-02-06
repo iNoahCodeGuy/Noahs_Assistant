@@ -124,7 +124,11 @@ def _handle_direct_requests(state: ConversationState) -> None:
 
     We detect these keywords and add the appropriate actions.
     """
-    lowered = state["query"].lower()
+    query = state.get("query", "")
+    if not query:
+        return
+
+    lowered = query.lower()
 
     # Detect what they're asking for
     resume_requested = any(key in lowered for key in ["send resume", "email resume", "resume", "cv"])
@@ -204,7 +208,11 @@ def _plan_hm_technical_actions(state: ConversationState) -> None:
     Junior dev: Think of this as "impress the technical interviewer" mode.
     """
     query_type = state.get("query_type", "general")
-    lowered = state["query"].lower()
+    query = state.get("query", "")
+    if not query:
+        return
+
+    lowered = query.lower()
     toggles = state.get("display_toggles", {})
     layout_variant = state.get("layout_variant", "mixed")
     menu_choice = state.get("menu_choice")
@@ -253,7 +261,11 @@ def _plan_hm_nontechnical_actions(state: ConversationState) -> None:
     Junior dev: This is like "wrong department, let me transfer you" logic.
     """
     query_type = state.get("query_type", "general")
-    lowered = state["query"].lower()
+    query = state.get("query", "")
+    if not query:
+        return
+
+    lowered = query.lower()
 
     # Check if they're asking technical stuff
     code_display_requested = state.get("code_display_requested", False)
@@ -279,7 +291,11 @@ def _plan_developer_actions(state: ConversationState) -> None:
     Junior dev: This is "show me everything" mode - developers want depth.
     """
     query_type = state.get("query_type", "general")
-    lowered = state["query"].lower()
+    query = state.get("query", "")
+    if not query:
+        return
+
+    lowered = query.lower()
     toggles = state.get("display_toggles", {})
     layout_variant = state.get("layout_variant", "mixed")
 
@@ -458,7 +474,12 @@ def _maybe_offer_resume(state: ConversationState) -> None:
         logger.debug("Resume/LinkedIn/GitHub already requested - skipping offer_resume_prompt")
         return
 
-    lowered = state["query"].lower()
+    # Get query defensively
+    query = state.get("query", "")
+    if not query:
+        return
+
+    lowered = query.lower()
     resume_requested = any(key in lowered for key in ["send resume", "email resume"])
     linkedin_requested = any(key in lowered for key in ["linkedin", "linked in", "link me"])
 
@@ -511,7 +532,11 @@ def _detect_hiring_signals(state: ConversationState) -> None:
 
     Updates state with hiring_signals list and strength metadata (≥2 signals → hiring_signals_strong=True).
     """
-    query_lower = state["query"].lower()
+    query = state.get("query", "")
+    if not query:
+        return
+
+    query_lower = query.lower()
     hiring_signals = state.get("hiring_signals", [])
 
     # Pattern 1: Mentioned hiring explicitly
@@ -585,7 +610,11 @@ def _check_explicit_resume_request(state: ConversationState) -> None:
     2. Sends resume immediately after email provided
     3. Bypasses subtle mention logic (user asked directly)
     """
-    query_lower = state["query"].lower()
+    query = state.get("query", "")
+    if not query:
+        return
+
+    query_lower = query.lower()
 
     # Pattern 1: Direct resume request
     resume_patterns = [

@@ -41,8 +41,11 @@ import time  # for latency tracking
 # Clean imports using compatibility layer
 from .langchain_compat import (
     OpenAIEmbeddings, CSVLoader, RecursiveCharacterTextSplitter,
-    RetrievalQA, PromptTemplate, ChatOpenAI, Document
+    RetrievalQA, PromptTemplate, ChatAnthropic, Document
 )
+
+# Legacy alias for backwards compatibility
+ChatOpenAI = ChatAnthropic
 
 # Import Supabase configuration
 from assistant.config.supabase_config import supabase_settings

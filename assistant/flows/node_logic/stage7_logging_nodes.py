@@ -421,15 +421,16 @@ def update_memory(state: ConversationState) -> ConversationState:
                         last_user_msg = last_msg
 
             # Check if query content matches (avoid duplicates)
+            query = state.get("query", "")
             query_matches = False
-            if last_user_msg:
+            if last_user_msg and query:
                 if isinstance(last_user_msg, dict):
-                    query_matches = last_user_msg.get("content") == state["query"]
+                    query_matches = last_user_msg.get("content") == query
                 elif hasattr(last_user_msg, "content"):
-                    query_matches = last_user_msg.content == state["query"]
+                    query_matches = last_user_msg.content == query
 
-            if not query_matches:
-                chat_history.append({"role": "user", "content": state["query"]})
+            if not query_matches and query:
+                chat_history.append({"role": "user", "content": query})
         # Append assistant answer
         chat_history.append({"role": "assistant", "content": state["answer"]})
         state["chat_history"] = chat_history

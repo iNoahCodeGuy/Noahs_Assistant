@@ -45,7 +45,11 @@ def detect_hiring_signals(state: ConversationState) -> ConversationState:
         Result: hiring_signals = ["mentioned_hiring", "described_role", "team_context"]
         Effect: Enables ONE subtle mention in educational response (Mode 2)
     """
-    query_lower = state["query"].lower()
+    query = state.get("query", "")
+    if not query:
+        return state
+
+    query_lower = query.lower()
     hiring_signals = state.get("hiring_signals", [])
 
     # Pattern 1: Mentioned hiring explicitly
@@ -131,7 +135,11 @@ def handle_resume_request(state: ConversationState) -> ConversationState:
         Result: resume_explicitly_requested = True
         Effect: Immediate email collection → resume send (Mode 3)
     """
-    query_lower = state["query"].lower()
+    query = state.get("query", "")
+    if not query:
+        return state
+
+    query_lower = query.lower()
 
     # Pattern 1: Direct resume request
     resume_patterns = [
@@ -309,7 +317,10 @@ def extract_job_details_from_query(state: ConversationState) -> ConversationStat
     Returns:
         Updated state with job_details populated if extracted
     """
-    query = state["query"]
+    query = state.get("query", "")
+    if not query:
+        return state
+
     job_details = state.get("job_details", {})
 
     # Extract company name (case-insensitive)

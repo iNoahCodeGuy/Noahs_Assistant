@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from src.config.supabase_config import get_supabase_client
+from assistant.config.supabase_config import get_supabase_client
 
 # Rate limiting (simple in-memory for demo; use Redis in production)
 _rate_limit_store: Dict[str, List[float]] = {}
@@ -30,48 +30,48 @@ RATE_LIMIT_WINDOW = 60  # seconds
 
 def redact_pii(text: Optional[str]) -> str:
     """Redact emails and phone numbers from text.
-    
+
     Args:
         text: String that may contain PII
-        
+
     Returns:
         Text with emails and phones replaced with [redacted]
     """
     if not text:
         return "—"
-    
+
     # Redact emails
     email_pattern = r'\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b'
     text = re.sub(email_pattern, '[redacted]', text, flags=re.IGNORECASE)
-    
+
     # Redact phone numbers
     phone_pattern = r'\+?\d[\d\s().-]{7,}\d'
     text = re.sub(phone_pattern, '[redacted]', text)
-    
+
     return text
 
 
 def check_rate_limit(ip: str) -> bool:
     """Check if IP has exceeded rate limit.
-    
+
     Args:
         ip: Client IP address
-        
+
     Returns:
         True if within limit, False if exceeded
     """
     now = datetime.now().timestamp()
-    
+
     # Clean old entries
     if ip in _rate_limit_store:
         _rate_limit_store[ip] = [t for t in _rate_limit_store[ip] if now - t < RATE_LIMIT_WINDOW]
     else:
         _rate_limit_store[ip] = []
-    
+
     # Check limit
     if len(_rate_limit_store[ip]) >= RATE_LIMIT_REQUESTS:
         return False
-    
+
     # Add current request
     _rate_limit_store[ip].append(now)
     return True
@@ -79,14 +79,14 @@ def check_rate_limit(ip: str) -> bool:
 
 def fetch_table_data(client: Any, table_name: str, columns: List[str], limit: int = 50, timeout: int = 2500) -> Dict[str, Any]:
     """Fetch data from a Supabase table with timeout and error handling.
-    
+
     Args:
         client: Supabase client
         table_name: Name of the table
         columns: List of column names to select
         limit: Maximum number of rows to return
         timeout: Timeout in milliseconds
-        
+
     Returns:
         Dict with 'data' list and optional 'error' string
     """
@@ -95,7 +95,7 @@ def fetch_table_data(client: Any, table_name: str, columns: List[str], limit: in
         result = client.table(table_name).select(selection).order(
             "created_at" if "created_at" in columns else "id", desc=True
         ).limit(limit).execute()
-        
+
         return {"data": result.data or []}
     except Exception as e:
         logger.error(f"Error fetching {table_name}: {e}")
@@ -104,16 +104,16 @@ def fetch_table_data(client: Any, table_name: str, columns: List[str], limit: in
 
 def fetch_inventory(client: Any) -> Dict[str, int]:
     """Fetch row counts for all tables.
-    
+
     Args:
         client: Supabase client
-        
+
     Returns:
         Dict with table names as keys and counts as values
     """
     inventory = {}
     tables = ["messages", "retrieval_logs", "feedback", "confessions", "kb_chunks", "sms_logs"]
-    
+
     for table in tables:
         try:
             result = client.table(table).select("*", count="exact", head=True).execute()
@@ -121,16 +121,16 @@ def fetch_inventory(client: Any) -> Dict[str, int]:
         except Exception as e:
             logger.warning(f"Could not count {table}: {e}")
             inventory[table] = 0
-    
+
     return inventory
 
 
 def fetch_kb_coverage(client: Any) -> Optional[List[Dict[str, Any]]]:
     """Fetch KB coverage summary via RPC.
-    
+
     Args:
         client: Supabase client
-        
+
     Returns:
         List of {source, count} dicts or None if RPC doesn't exist
     """
@@ -144,7 +144,7 @@ def fetch_kb_coverage(client: Any) -> Optional[List[Dict[str, Any]]]:
 
 class handler(BaseHTTPRequestHandler):
     """Vercel serverless function handler for /api/analytics endpoint."""
-    
+
     def do_GET(self):
         """Handle GET request for analytics data."""
         try:
@@ -152,13 +152,13 @@ class handler(BaseHTTPRequestHandler):
             client_ip = self.headers.get('X-Forwarded-For', '').split(',')[0].strip() or \
                         self.headers.get('X-Real-IP', '') or \
                         self.client_address[0]
-            
+
             if not check_rate_limit(client_ip):
                 self._send_json(429, {
                     "error": "Rate limit exceeded. Maximum 6 requests per minute."
                 })
                 return
-            
+
             # Initialize Supabase client (server-side with service key)
             try:
                 client = get_supabase_client()
@@ -168,46 +168,46 @@ class handler(BaseHTTPRequestHandler):
                     "error": "Analytics temporarily unavailable; would you like a cached summary instead?"
                 })
                 return
-            
+
             # Fetch inventory
             inventory = fetch_inventory(client)
-            
+
             # Fetch dataset details
             messages_data = fetch_table_data(
                 client, "messages",
                 ["id", "role_mode", "user_query", "latency_ms", "token_count", "created_at", "success"]
             )
-            
+
             retrieval_logs_data = fetch_table_data(
                 client, "retrieval_logs",
                 ["message_id", "chunk_id", "similarity_score", "grounded", "created_at"]
             )
-            
+
             feedback_data = fetch_table_data(
                 client, "feedback",
                 ["message_id", "rating", "comment", "contact_requested", "created_at"]
             )
-            
+
             # Redact PII in feedback comments
             if feedback_data.get("data"):
                 for row in feedback_data["data"]:
                     if "comment" in row:
                         row["comment"] = redact_pii(row["comment"])
-            
+
             confessions_data = fetch_table_data(
                 client, "confessions",
                 ["id", "is_anonymous", "created_at"],
                 limit=5  # Only last 5 for privacy
             )
-            
+
             kb_chunks_data = fetch_table_data(
                 client, "kb_chunks",
                 ["id", "section", "created_at"],
                 limit=20  # Sample only
             )
-            
+
             kb_coverage = fetch_kb_coverage(client)
-            
+
             # Build response
             response = {
                 "inventory": inventory,
@@ -219,7 +219,7 @@ class handler(BaseHTTPRequestHandler):
                 "kb_coverage": kb_coverage,
                 "generated_at": datetime.utcnow().isoformat() + "Z"
             }
-            
+
             # Log analytics view
             try:
                 client.table("tool_invocations").insert({
@@ -230,21 +230,21 @@ class handler(BaseHTTPRequestHandler):
                 }).execute()
             except Exception as e:
                 logger.warning(f"Could not log analytics view: {e}")
-            
+
             self._send_json(200, response)
-            
+
         except Exception as e:
             logger.error(f"Error processing analytics request: {str(e)}")
             self._send_json(500, {
                 "error": f"Internal server error: {str(e)}"
             })
-    
+
     def do_OPTIONS(self):
         """Handle CORS preflight request."""
         self.send_response(200)
         self._send_cors_headers()
         self.end_headers()
-    
+
     def _send_json(self, status_code: int, data: Dict[str, Any]):
         """Send JSON response with CORS headers."""
         self.send_response(status_code)
@@ -252,7 +252,7 @@ class handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
         self.wfile.write(json.dumps(data).encode('utf-8'))
-    
+
     def _send_cors_headers(self):
         """Add CORS headers for cross-origin requests."""
         self.send_header('Access-Control-Allow-Origin', '*')

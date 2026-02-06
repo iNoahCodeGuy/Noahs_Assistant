@@ -1497,11 +1497,10 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     # #endregion
 
     # Fail-fast: Validate required fields (Defensibility)
-    try:
-        query = state["query"]
-    except KeyError as e:
+    query = state.get("query", "")
+    if not query:
         logger.error("generate_draft called without query in state")
-        raise KeyError("State must contain 'query' field for generation") from e
+        raise KeyError("State must contain 'query' field for generation")
 
     # Handle reformulation loop edge case early
     # Check for reformulation loop in session_memory (where edge case detection stores it)

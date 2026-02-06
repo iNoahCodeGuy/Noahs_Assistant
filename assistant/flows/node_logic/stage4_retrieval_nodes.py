@@ -247,7 +247,13 @@ def retrieve_chunks(state: ConversationState, rag_engine: RagEngine, top_k: int 
         >>> "pgvector" in str(state["retrieved_chunks"])
         True
     """
-    query = state.get("composed_query") or state["query"]
+    query = state.get("composed_query") or state.get("query", "")
+    if not query:
+        logger.warning("retrieve_chunks called without query or composed_query")
+        state["retrieved_chunks"] = []
+        state["retrieval_metadata"] = {"error": "no_query"}
+        return state
+
     metadata = state.setdefault("analytics_metadata", {})
 
     # Extract active technical subcategories for retrieval hints
@@ -676,13 +682,85 @@ def handle_grounding_gap(state: ConversationState) -> ConversationState:
         }
     else:
         # Normal grounding gap (insufficient context, still on-topic)
-        message = (
-            "I could not find context precise enough to stay factual yet. "
-            "Tell me a little more about what you want to explore and I will pull "
-            "the exact architecture notes or data you need."
-        )
+        # Check if this is a connection/reach-out request
+        # Try multiple sources for the query (defensive - state can lose query field in pipeline)
+        logger = __import__("logging").getLogger(__name__)
+
+        # Extract query from chat_history as PRIMARY source (most reliable)
+        # State fields get lost in the pipeline, but chat_history persists
+        query = ""
+        chat_history = state.get("chat_history", [])
+        if chat_history:
+            for msg in reversed(chat_history):
+                if isinstance(msg, dict) and msg.get("role") == "user":
+                    query = msg.get("content", "")
+                    if query:
+                        logger.info(f"🔍 Extracted query from chat_history: '{query[:50]}'")
+                        break
+                elif hasattr(msg, "type") and msg.type == "human":
+                    query = msg.content if hasattr(msg, "content") else ""
+                    if query:
+                        logger.info(f"🔍 Extracted query from chat_history: '{query[:50]}'")
+                        break
+
+        # Fallback to state fields if chat_history didn't work
+        if not query:
+            query = (
+                state.get("composed_query", "")  # May contain metadata tags, not ideal
+                or state.get("query", "")
+                or state.get("original_query", "")
+                or ""
+            )
+            logger.info(f"🔍 Using state fallback: composed='{state.get('composed_query', '')[:20]}'")
+
+        query_lower = query.lower() if query else ""
+        connection_keywords = [
+            "connect", "reach", "contact", "touch", "see his work", "find him",
+            "hire", "linkedin", "github", "reach out", "get in touch", "where can i"
+        ]
+        is_connection_request = any(keyword in query_lower for keyword in connection_keywords)
+
+        # Debug logging for connection request detection
+        logger = __import__("logging").getLogger(__name__)
+        logger.info(f"🔗 Connection detection: query='{query[:50] if query else 'NONE'}', is_connection={is_connection_request}, query_lower='{query_lower[:50] if query_lower else 'NONE'}'")
+        if query_lower:
+            matched = [kw for kw in connection_keywords if kw in query_lower]
+            logger.info(f"🔗 Matched keywords: {matched}")
+
+        if is_connection_request:
+            # Connection request - include hardcoded links
+            message = (
+                "Hmm, I don't have specifics on that one. But I can tell you all about Noah's projects, "
+                "technical skills, work experience, or career goals — what sounds interesting?\n\n"
+                "Here are some things I can walk you through:\n"
+                "- **Portfolia** (you're talking to it right now!) — RAG-powered AI assistant\n"
+                "- **Tesla Response Time Dashboard** — analytics tool he built at work\n"
+                "- **Employee Attrition Prediction** — 94.75% accuracy ML model\n"
+                "- His technical skills (Python, SQL, RAG architecture)\n"
+                "- His career transition from sales to tech\n"
+                "- His work at Tesla, Total Quality Logistics, and Signature Real Estate\n\n"
+                "Want to connect? Here's where to find him:\n"
+                "- **LinkedIn**: https://www.linkedin.com/in/noah-de-la-calzada-250412358/\n"
+                "- **GitHub**: https://github.com/iNoahCodeGuy"
+            )
+        else:
+            # Always include links in fallback (pragmatic fix for state propagation issues)
+            message = (
+                "Hmm, I don't have specifics on that one. But I can tell you all about Noah's projects, "
+                "technical skills, work experience, or career goals — what sounds interesting?\n\n"
+                "Here are some things I can walk you through:\n"
+                "- **Portfolia** (you're talking to it right now!) — RAG-powered AI assistant\n"
+                "- **Tesla Response Time Dashboard** — analytics tool he built at work\n"
+                "- **Employee Attrition Prediction** — 94.75% accuracy ML model\n"
+                "- His technical skills (Python, SQL, RAG architecture)\n"
+                "- His career transition from sales to tech\n"
+                "- His work at Tesla, Total Quality Logistics, and Signature Real Estate\n\n"
+                "Want to connect? Here's where to find him:\n"
+                "- **LinkedIn**: https://www.linkedin.com/in/noah-de-la-calzada-250412358/\n"
+                "- **GitHub**: https://github.com/iNoahCodeGuy"
+            )
         span_name = "grounding_gap_response"
-        span_data = {"status": state.get("grounding_status")}
+        span_data = {"status": state.get("grounding_status"), "connection_request": is_connection_request}
 
     with create_custom_span(span_name, span_data):
         state["answer"] = message

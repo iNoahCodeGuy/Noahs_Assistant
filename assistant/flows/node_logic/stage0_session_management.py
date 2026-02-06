@@ -44,9 +44,21 @@ def initialize_conversation_state(state: ConversationState) -> ConversationState
     ):
         # Core fields (required by all nodes)
         state.setdefault("query", "")
+        state.setdefault("original_query", "")  # Backup of query for fallback
         state.setdefault("role", "")
         state.setdefault("session_id", "")
         chat_history = state.setdefault("chat_history", [])
+
+        # Preserve original query for fallback scenarios (defensive programming)
+        # Some nodes may modify or lose the query field, so we keep a backup
+        query_val = state.get("query", "")
+        if query_val and not state.get("original_query"):
+            state["original_query"] = query_val
+            logger = __import__("logging").getLogger(__name__)
+            logger.info(f"💾 Preserved original_query: '{query_val[:50]}'")
+        elif not query_val:
+            logger = __import__("logging").getLogger(__name__)
+            logger.warning(f"⚠️ No query to preserve: query_val='{query_val}'")
 
         # Structured containers
         state.setdefault("analytics_metadata", {})
