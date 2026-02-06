@@ -171,6 +171,6 @@ The `RagEngine` class is now **easier to navigate** with clear section headers w
 
 ---
 
-**Last Updated**: October 5, 2025  
-**File**: `src/core/rag_engine.py`  
+**Last Updated**: October 5, 2025
+**File**: `assistant/core/rag_engine.py`
 **Structure Version**: 1.0 (with section headers)

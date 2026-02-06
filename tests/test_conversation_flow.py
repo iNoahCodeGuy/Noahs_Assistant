@@ -4,9 +4,9 @@ from typing import Any, Dict, List
 
 import pytest
 
-from src.flows.conversation_state import ConversationState
-from src.flows import conversation_nodes as nodes
-from src.flows.conversation_flow import run_conversation_flow
+from assistant.state.conversation_state import ConversationState
+from assistant.flows import conversation_nodes as nodes
+from assistant.flows.conversation_flow import run_conversation_flow
 
 
 class DummyResponseGenerator:

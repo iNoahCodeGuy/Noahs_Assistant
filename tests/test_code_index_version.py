@@ -1,8 +1,8 @@
 # filepath: /Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/tests/test_code_index_version.py
 import time
 from pathlib import Path
-from src.core.rag_engine import RagEngine
-from src.config.settings import Settings
+from assistant.core.rag_engine import RagEngine
+from assistant.config.settings import Settings
 
 
 def test_code_index_version_changes(tmp_path):

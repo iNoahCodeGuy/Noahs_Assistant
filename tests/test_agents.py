@@ -1,9 +1,9 @@
 import pytest
 from unittest.mock import Mock
-from src.agents.role_router import RoleRouter
-from src.agents.response_formatter import ResponseFormatter
-from src.core.memory import Memory
-from src.core.rag_engine import RagEngine
+from assistant.agents.role_router import RoleRouter
+from assistant.agents.response_formatter import ResponseFormatter
+from assistant.core.memory import Memory
+from assistant.core.rag_engine import RagEngine
 
 @pytest.fixture
 def role_router():
@@ -17,7 +17,7 @@ def response_formatter():
 def mock_memory():
     return Mock(spec=Memory)
 
-@pytest.fixture  
+@pytest.fixture
 def mock_rag_engine():
     mock = Mock(spec=RagEngine)
     mock.retrieve_code_info.return_value = []
