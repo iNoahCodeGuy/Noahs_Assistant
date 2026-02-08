@@ -5,24 +5,24 @@ Question,Answer
 
 ```mermaid
 graph TB
-    User[👤 User] -->|HTTP Request| Streamlit[Streamlit UI<br/>localhost:8501<br/>src/main.py]
-    Streamlit -->|Query + Role| Router[Role Router<br/>src/agents/role_router.py<br/>Classifies query type]
-    Router -->|Enhanced Query| RAG[RAG Engine<br/>src/core/rag_engine.py<br/>Orchestrates retrieval]
+    User[👤 User] -->|HTTP Request| Streamlit[Streamlit UI<br/>localhost:8501<br/>assistant/main.py]
+    Streamlit -->|Query + Role| Router[Role Router<br/>assistant/agents/role_router.py<br/>Classifies query type]
+    Router -->|Enhanced Query| RAG[RAG Engine<br/>assistant/core/rag_engine.py<br/>Orchestrates retrieval]
     
     RAG -->|Generate Embedding| OpenAI_Embed[OpenAI API<br/>text-embedding-3-small<br/>$0.00002/1K tokens]
     OpenAI_Embed -->|1536-dim vector<br/>~200ms| RAG
     
-    RAG -->|Vector Search| Retriever[pgvector Retriever<br/>src/retrieval/pgvector_retriever.py<br/>Similarity search]
+    RAG -->|Vector Search| Retriever[pgvector Retriever<br/>assistant/retrieval/pgvector_retriever.py<br/>Similarity search]
     Retriever -->|SQL Query<br/>cosine distance| Supabase[(Supabase Postgres<br/>+ pgvector extension<br/>IVFFLAT index)]
-    Supabase -->|Top 3 Chunks<br/>similarity > 0.7<br/>~300ms| Retriever
+    Supabase -->|Top 3 Chunks<br/>similarity > 0.50<br/>~300ms| Retriever
     Retriever -->|Retrieved Context| RAG
     
-    RAG -->|Prompt + Context<br/>Role-aware| Generator[Response Generator<br/>src/core/response_generator.py<br/>Builds LLM prompt]
-    Generator -->|Chat Completion| OpenAI_LLM[OpenAI API<br/>GPT-4o-mini<br/>$0.15/$0.60 per 1M tokens]
+    RAG -->|Prompt + Context<br/>Role-aware| Generator[Response Generator<br/>assistant/core/response_generator.py<br/>Builds LLM prompt]
+    Generator -->|Chat Completion| OpenAI_LLM[OpenAI API<br/>Claude Sonnet 4.5<br/>$0.15/$0.60 per 1M tokens]
     OpenAI_LLM -->|Generated Answer<br/>~1-2s| Generator
-    Generator -->|Response Object| Formatter[Response Formatter<br/>src/agents/response_formatter.py<br/>Markdown formatting]
+    Generator -->|Response Object| Formatter[Response Formatter<br/>assistant/agents/response_formatter.py<br/>Markdown formatting]
     
-    Formatter -->|Formatted Response| Analytics[Analytics Logger<br/>src/analytics/supabase_analytics.py<br/>Track metrics]
+    Formatter -->|Formatted Response| Analytics[Analytics Logger<br/>assistant/analytics/supabase_analytics.py<br/>Track metrics]
     Analytics -->|INSERT messages<br/>retrieval_logs| Supabase
     Analytics -->|Response + Sources<br/>Display| Streamlit
     
@@ -37,27 +37,27 @@ graph TB
 
 ## 📁 Core Components Breakdown
 
-### **1. Frontend Layer** (`src/main.py`)
+### **1. Frontend Layer** (`assistant/main.py`)
 - **Technology**: Streamlit (Python web framework)
 - **Current**: localhost:8501
 - **Future**: Next.js migration (Phase 3)
 - **Features**: Role selection, chat interface, source citations, analytics dashboard
 - **Latency**: ~50ms rendering
 
-### **2. Agent Layer** (`src/agents/`)
+### **2. Agent Layer** (`assistant/agents/`)
 - **Role Router** (`role_router.py`): Classifies queries and adds role context
 - **Response Formatter** (`response_formatter.py`): Markdown formatting, source citations
 
-### **3. Core RAG Engine** (`src/core/`)
+### **3. Core RAG Engine** (`assistant/core/`)
 - **rag_engine.py**: Main orchestration - retrieval → generation → formatting
 - **response_generator.py**: LLM prompt construction and OpenAI API calls
 - **Latency**: Total ~2-4 seconds per query
 
-### **4. Retrieval Layer** (`src/retrieval/`)
+### **4. Retrieval Layer** (`assistant/retrieval/`)
 - **pgvector_retriever.py**: Vector similarity search using pgvector
 - **Algorithm**: Cosine similarity with IVFFLAT indexing
 - **Performance**: O(√n) complexity vs O(n) sequential scan
-- **Threshold**: 0.7 minimum similarity score
+- **Threshold**: 0.50 primary / 0.30 fallback similarity score
 
 ### **5. Database Layer** (Supabase)
 - **Type**: Managed Postgres with pgvector extension
@@ -66,7 +66,7 @@ graph TB
 - **Security**: Row Level Security (RLS) policies
 
 ### **6. External Services**
-- **OpenAI**: text-embedding-3-small (embeddings) + GPT-4o-mini (chat)
+- **OpenAI**: text-embedding-3-small (embeddings) + Claude Sonnet 4.5 (chat)
 - **LangSmith**: Tracing, cost tracking, error monitoring
 - **Resend**: Email notifications (Phase 2)
 - **Twilio**: SMS alerts for high-value interactions
@@ -87,9 +87,9 @@ graph TB
 2. Role Router enhances query with context
 3. RAG Engine generates embedding via OpenAI
 4. pgvector searches Supabase for similar chunks
-5. Top 3 chunks retrieved (similarity > 0.7)
+5. Top 3 chunks retrieved (similarity > 0.50)
 6. Response Generator builds prompt with context
-7. GPT-4o-mini generates role-aware response
+7. Claude Sonnet 4.5 generates role-aware response
 8. Response Formatter adds markdown + citations
 9. Analytics Logger tracks metrics to Supabase
 10. Streamlit displays response with sources
@@ -112,7 +112,7 @@ graph TB
                  │
                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ 2. ROLE ROUTER (src/agents/role_router.py)                     │
+│ 2. ROLE ROUTER (assistant/agents/role_router.py)                     │
 │ • Adds role context: ""[Software Developer perspective]""        │
 │ • Classifies query type: ""technical""                           │
 │ • Enhanced query: ""[Dev] What tech stack do you use?""         │
@@ -133,14 +133,14 @@ graph TB
 │ • SQL: SELECT * FROM kb_chunks                                  │
 │        ORDER BY embedding <=> $query_vector                     │
 │        LIMIT 3                                                  │
-│ • Returns: Top 3 chunks with similarity scores > 0.7           │
+│ • Returns: Top 3 chunks with similarity scores > 0.50           │
 │ • Example: [chunk_42: 0.89, chunk_7: 0.82, chunk_19: 0.76]    │
 │ • Latency: ~300ms (IVFFLAT index optimization)                 │
 └────────────────┬────────────────────────────────────────────────┘
                  │
                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ 5. CONTEXT ASSEMBLY (src/core/rag_engine.py)                   │
+│ 5. CONTEXT ASSEMBLY (assistant/core/rag_engine.py)                   │
 │ • Formats retrieved chunks with metadata                        │
 │ • Adds role-specific instructions                               │
 │ • Constructs prompt:                                            │
@@ -151,8 +151,8 @@ graph TB
                  │
                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ 6. LLM GENERATION (OpenAI GPT-4o-mini)                         │
-│ • Model: gpt-4o-mini                                            │
+│ 6. LLM GENERATION (Anthropic Claude Sonnet 4.5)                         │
+│ • Model: claude-sonnet-4-5-20250929                                            │
 │ • Temperature: 0.7 (balanced creativity)                        │
 │ • Max tokens: 500                                               │
 │ • Output: Contextual response with technical details           │
@@ -161,7 +161,7 @@ graph TB
                  │
                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ 7. RESPONSE FORMATTING (src/agents/response_formatter.py)      │
+│ 7. RESPONSE FORMATTING (assistant/agents/response_formatter.py)      │
 │ • Adds markdown formatting                                      │
 │ • Includes source citations                                     │
 │ • Adds expandable sections                                      │
@@ -169,7 +169,7 @@ graph TB
                  │
                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ 8. ANALYTICS LOGGING (src/analytics/supabase_analytics.py)     │
+│ 8. ANALYTICS LOGGING (assistant/analytics/supabase_analytics.py)     │
 │ • Logs to messages table: query, answer, role, latency, tokens │
 │ • Logs to retrieval_logs: chunk IDs, similarity scores         │
 │ • Tracks: session_id, success rate, grounded flag              │
@@ -279,7 +279,7 @@ graph TB
 ## Core Retrieval Code
 
 ```python
-# src/retrieval/pgvector_retriever.py
+# assistant/retrieval/pgvector_retriever.py
 
 from typing import List, Dict, Any, Optional
 from openai import OpenAI
@@ -310,7 +310,7 @@ class PgvectorRetriever:
         self, 
         query: str, 
         top_k: int = 3, 
-        threshold: float = 0.7,
+        threshold: float = 0.50,
         doc_filter: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         \"\"\"
@@ -324,7 +324,7 @@ class PgvectorRetriever:
         Args:
             query: User's search query
             top_k: Number of results to return (default: 3)
-            threshold: Minimum similarity score 0-1 (default: 0.7)
+            threshold: Minimum similarity score 0-1 (default: 0.50)
             doc_filter: List of doc_ids to search (e.g., ['technical_kb', 'career_kb'])
         
         Returns:
@@ -410,7 +410,7 @@ class PgvectorRetriever:
 # Function 1: Basic similarity search
 CREATE OR REPLACE FUNCTION match_kb_chunks(
     query_embedding vector(1536),
-    match_threshold float DEFAULT 0.7,
+    match_threshold float DEFAULT 0.50,
     match_count int DEFAULT 3
 )
 RETURNS TABLE (
@@ -443,7 +443,7 @@ $$;
 # Function 2: With doc_id filtering
 CREATE OR REPLACE FUNCTION match_kb_chunks_filtered(
     query_embedding vector(1536),
-    match_threshold float DEFAULT 0.7,
+    match_threshold float DEFAULT 0.50,
     match_count int DEFAULT 3,
     doc_filter text[] DEFAULT NULL
 )
@@ -503,7 +503,7 @@ ON kb_chunks (doc_id, section);
 ### **Key Operators**
 - **<=>**: Cosine distance (0 = identical, 2 = opposite)
 - **1 - distance**: Similarity score (0 = different, 1 = identical)
-- **threshold > 0.7**: Only high-quality matches returned
+- **threshold > 0.50**: Only high-quality matches returned (0.30 fallback for broader recall)
 
 ## 🎯 Usage Examples
 
@@ -513,7 +513,7 @@ retriever = PgvectorRetriever()
 results = retriever.retrieve(
     query=\"What's the tech stack?\",
     top_k=3,
-    threshold=0.7
+    threshold=0.50
 )
 
 for chunk in results:
@@ -543,13 +543,13 @@ embeddings = retriever.batch_embed(texts)
 1. **Query Embedding**: Convert text to 1536-dim vector using OpenAI
 2. **Vector Search**: Use pgvector's <=> operator for cosine distance
 3. **IVFFLAT Index**: Approximate nearest neighbor search (99.5% accurate)
-4. **Threshold Filter**: Only return chunks with similarity > 0.7
+4. **Threshold Filter**: Only return chunks with similarity > 0.50
 5. **Top-K Selection**: Return best 3 matches to avoid context overflow
 6. **Metadata Return**: Include doc_id, section, similarity for citations"
 "Show me how the response generation works","Here's the response generation implementation:
 
 ```python
-# src/core/response_generator.py
+# assistant/core/response_generator.py
 
 from openai import OpenAI
 from typing import List, Dict, Any
@@ -572,7 +572,7 @@ class ResponseGenerator:
         1. Role-specific system prompt
         2. Retrieved context from knowledge base
         3. User's original query
-        4. LLM generation with GPT-4o-mini
+        4. LLM generation with Claude Sonnet 4.5
         """"""
         
         # Step 1: Build role-specific system prompt
@@ -587,9 +587,9 @@ class ResponseGenerator:
             {""role"": ""user"", ""content"": f""Context:\\n{context}\\n\\nQuestion: {query}""}
         ]
         
-        # Step 4: Call OpenAI GPT-4o-mini
+        # Step 4: Call Anthropic Claude Sonnet 4.5
         response = self.client.chat.completions.create(
-            model=""gpt-4o-mini"",
+            model=""claude-sonnet-4-5-20250929"",
             messages=messages,
             temperature=0.7,  # Balance between creativity and accuracy
             max_tokens=500,   # Limit response length
@@ -662,13 +662,13 @@ print(f""Tokens used: {result['tokens_prompt']} + {result['tokens_completion']}"
 **Flow:**
 1. **System Prompt**: Sets role-specific instructions
 2. **Context Assembly**: Formats retrieved chunks with similarity scores
-3. **LLM Call**: GPT-4o-mini generates response with context
+3. **LLM Call**: Claude Sonnet 4.5 generates response with context
 4. **Token Tracking**: Logs usage for cost monitoring
 5. **Response**: Returns answer + metadata for analytics"
 "Show me the role routing logic","Here's how role-based routing works:
 
 ```python
-# src/agents/role_router.py
+# assistant/agents/role_router.py
 
 from typing import Dict, Tuple
 import re
@@ -771,7 +771,7 @@ class RoleRouter:
         """"""Determine optimal retrieval parameters based on query and role.""""""
         params = {
             ""top_k"": 3,
-            ""threshold"": 0.7,
+            ""threshold"": 0.50,
             ""doc_filter"": None  # Filter by doc_id if needed
         }
         
@@ -812,7 +812,7 @@ print(result[""retrieval_params""])  # {""top_k"": 5, ""doc_filter"": [...]}
 ```
 noahs-ai-assistant/
 │
-├── 📁 src/                          # Main source code
+├── 📁 assistant/                          # Main source code
 │   ├── 📁 core/                     # Core RAG engine
 │   │   ├── rag_engine.py           # Main orchestration (300 lines)
 │   │   ├── response_generator.py   # LLM prompt construction (200 lines)
@@ -896,23 +896,23 @@ noahs-ai-assistant/
 ## 📋 Key Files Explained
 
 ### **Entry Points**
-- **src/main.py**: Streamlit app - UI, role selection, chat interface, analytics dashboard
+- **assistant/main.py**: Streamlit app - UI, role selection, chat interface, analytics dashboard
 
 ### **Core RAG Pipeline**
-1. **src/core/rag_engine.py**: Orchestrates retrieval → generation → formatting
-2. **src/retrieval/pgvector_retriever.py**: Vector search with Supabase
-3. **src/core/response_generator.py**: LLM prompt construction & OpenAI calls
+1. **assistant/core/rag_engine.py**: Orchestrates retrieval → generation → formatting
+2. **assistant/retrieval/pgvector_retriever.py**: Vector search with Supabase
+3. **assistant/core/response_generator.py**: LLM prompt construction & OpenAI calls
 
 ### **Agent Layer**
-- **src/agents/role_router.py**: Classifies queries, adds role context
-- **src/agents/response_formatter.py**: Markdown formatting, source citations
+- **assistant/agents/role_router.py**: Classifies queries, adds role context
+- **assistant/agents/response_formatter.py**: Markdown formatting, source citations
 
 ### **Analytics & Monitoring**
-- **src/analytics/supabase_analytics.py**: Logs every query to Supabase
-- **src/analytics/comprehensive_analytics.py**: Dashboard queries (7-day metrics, success rate, etc.)
+- **assistant/analytics/supabase_analytics.py**: Logs every query to Supabase
+- **assistant/analytics/comprehensive_analytics.py**: Dashboard queries (7-day metrics, success rate, etc.)
 
 ### **Configuration**
-- **src/config/supabase_config.py**: Supabase client singleton, API key management
+- **assistant/config/supabase_config.py**: Supabase client singleton, API key management
 
 ### **Data Migration**
 - **scripts/migrate_data_to_supabase.py**: Batch CSV → Supabase with embeddings
@@ -964,19 +964,19 @@ main.py (display)
 4. Knowledge immediately searchable
 
 ### **To modify retrieval logic:**
-1. Edit `src/retrieval/pgvector_retriever.py`
+1. Edit `assistant/retrieval/pgvector_retriever.py`
 2. Adjust threshold, top_k, or add filters
 3. Test with `tests/test_retriever_fixed.py`
 
 ### **To add a new role:**
-1. Edit `src/agents/role_router.py` - add to ROLE_PROMPTS dict
-2. Edit `src/main.py` - add role to sidebar selection
+1. Edit `assistant/agents/role_router.py` - add to ROLE_PROMPTS dict
+2. Edit `assistant/main.py` - add role to sidebar selection
 3. Test with `tests/test_role_functionality.py`
 
 ## 🚀 Future Additions
 
-- **src/document_processors/**: Resume/cover letter parsing (Phase 4)
-- **src/voice/**: Speech-to-text interface (Phase 5)
+- **assistant/document_processors/**: Resume/cover letter parsing (Phase 4)
+- **assistant/voice/**: Speech-to-text interface (Phase 5)
 - **frontend/**: Next.js app to replace Streamlit (Phase 3)
 - **api/**: REST API endpoints for external integrations"
 "Explain the conversation nodes pipeline","# 🧠 Portfolia's Conversation Nodes: LangGraph-Style Pipeline
@@ -998,7 +998,7 @@ User Query → handle_greeting → classify_query → retrieve_chunks
 ## The 8 Conversation Nodes (Detailed Breakdown)
 
 ### Node 1: handle_greeting - First Impression Manager
-**File**: `src/flows/greetings.py`  
+**File**: `assistant/flows/greetings.py`  
 **Purpose**: Detect first-turn greetings and respond warmly without RAG
 
 **What it does**:
@@ -1026,7 +1026,7 @@ def handle_greeting(state, rag_engine):
 ---
 
 ### Node 2: classify_query - Intent Detective  
-**File**: `src/flows/query_classification.py`  
+**File**: `assistant/flows/query_classification.py`  
 **Purpose**: Analyze query intent to enable proactive intelligence
 
 **What it does**:
@@ -1067,13 +1067,13 @@ def classify_query(state):
 ---
 
 ### Node 3: retrieve_chunks - Knowledge Retriever (THIS IS RAG!)  
-**File**: `src/flows/core_nodes.py` → `src/retrieval/pgvector_retriever.py`  
+**File**: `assistant/flows/core_nodes.py` → `assistant/retrieval/pgvector_retriever.py`  
 **Purpose**: Find relevant knowledge from vector database
 
 **What it does**:
-1. Converts query to **768-dimensional embedding** using `text-embedding-3-small` ($0.00002/1K tokens)
+1. Converts query to **1536-dimensional embedding** using `text-embedding-3-small` ($0.00002/1K tokens)
 2. Searches Supabase `kb_chunks` table using **pgvector cosine similarity**  
-3. Returns top-k (usually 4) most relevant chunks with similarity scores > 0.7
+3. Returns top-k (usually 4) most relevant chunks with similarity scores > 0.50
 4. For technical roles, also pulls relevant code snippets from `code_chunks/`
 
 **Why it matters**:
@@ -1102,7 +1102,7 @@ LIMIT 4;
 ---
 
 ### Node 4: generate_answer - Response Composer  
-**File**: `src/flows/core_nodes.py` → `src/core/response_generator.py`  
+**File**: `assistant/flows/core_nodes.py` → `assistant/core/response_generator.py`  
 **Purpose**: Use LLM to synthesize natural response from retrieved context
 
 **What it does**:
@@ -1111,7 +1111,7 @@ LIMIT 4;
    - Role-specific instructions (technical vs business audience)
    - Dynamic affordances (code display, analytics, contact offers)
    - Query classification flags (from node 2)
-2. Calls `gpt-4o-mini` with **temperature 0.4** (balanced factual + conversational)  
+2. Calls `claude-sonnet-4-5-20250929` with **temperature 0.4** (balanced factual + conversational)  
 3. Enforces Q&A synthesis (no ""Q: ... A: ..."" verbatim format per QA policy)
 4. Returns generated answer
 
@@ -1156,7 +1156,7 @@ response = llm.predict(prompt, temperature=0.4)
 ---
 
 ### Node 5: plan_actions - Side Effects Planner  
-**File**: `src/flows/action_planning.py`  
+**File**: `assistant/flows/action_planning.py`  
 **Purpose**: Determine what side effects needed (without executing yet)
 
 **What it does**:
@@ -1197,7 +1197,7 @@ def plan_actions(state):
 ---
 
 ### Node 6: apply_role_context - Personality Injector  
-**File**: `src/flows/core_nodes.py`  
+**File**: `assistant/flows/core_nodes.py`  
 **Purpose**: Add role-specific enhancements to answer
 
 **What it does**:
@@ -1243,7 +1243,7 @@ def apply_role_context(state, rag_engine):
 ---
 
 ### Node 7: execute_actions - Side Effects Executor  
-**File**: `src/flows/action_execution.py`  
+**File**: `assistant/flows/action_execution.py`  
 **Purpose**: Execute planned side effects (email, SMS, logging)
 
 **What it does**:
@@ -1297,7 +1297,7 @@ def get_resend_service():
 ---
 
 ### Node 8: log_and_notify - Observability Reporter  
-**File**: `src/flows/core_nodes.py`  
+**File**: `assistant/flows/core_nodes.py`  
 **Purpose**: Log interaction for analytics, monitoring, and continuous improvement
 
 **What it does**:
@@ -1367,13 +1367,13 @@ def log_and_notify(state, session_id, latency_ms):
    ✓ Technical question: needs_longer_response=True, code_would_help=True
 
 3. retrieve_chunks
-   ✓ Embed query: [0.123, -0.456, ...] (768 dimensions)
+   ✓ Embed query: [0.123, -0.456, ...] (1536 dimensions)
    ✓ pgvector search: Returns 4 chunks about RAG, embeddings, pgvector (avg similarity 0.87)
    ✓ Code snippets: Pulls vector search implementation from code_chunks/
 
 4. generate_answer
    ✓ Prompt: ""Explain vector search using these chunks, include code since technical query""
-   ✓ GPT-4o-mini generates: Paragraph explanation + code snippet
+   ✓ Claude Sonnet 4.5 generates: Paragraph explanation + code snippet
    ✓ Temperature 0.4: Factual but readable (not robotic)
 
 5. plan_actions
@@ -1463,7 +1463,7 @@ logger.info(f""Node {node_name} completed in {elapsed_ms}ms"")
 1. handle_greeting → ""Hello! How can I help you today?""
 2. classify_query → Detect: billing question vs technical issue vs general inquiry
 3. retrieve_chunks → Search product docs + troubleshooting KB + billing policies
-4. generate_answer → GPT-4 synthesizes answer with links to help articles
+4. generate_answer → Claude synthesizes answer with links to help articles
 5. plan_actions → Create Zendesk ticket if unresolved, escalate to human if frustrated
 6. apply_role_context → VIP customers get ""white glove"" tone, standard users get efficient tone
 7. execute_actions → Create ticket via Zendesk API, send confirmation email

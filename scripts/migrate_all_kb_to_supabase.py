@@ -23,7 +23,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from openai import OpenAI
-from src.config.supabase_config import get_supabase_client, supabase_settings
+from assistant.config.supabase_config import get_supabase_client, supabase_settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,17 +43,29 @@ KNOWLEDGE_BASES = {
     'career_kb': {
         'path': 'data/career_kb.csv',
         'description': 'Career history, achievements, experience',
-        'doc_id': 'career_kb'
+        'doc_id': 'career_kb',
+        'format': 'csv'
     },
     'technical_kb': {
         'path': 'data/technical_kb.csv',
         'description': 'Technical implementations, RAG system details',
-        'doc_id': 'technical_kb'
+        'doc_id': 'technical_kb',
+        'format': 'csv'
     },
-    'architecture_kb': {
-        'path': 'data/architecture_kb.csv',
-        'description': 'System architecture, diagrams, code examples',
-        'doc_id': 'architecture_kb'
+    # architecture_kb REMOVED: Multi-line CSV produces 550+ broken chunks that
+    # contaminate search results. Its content is covered by technical_kb and
+    # noah_career_md. If re-enabling, convert to markdown format first.
+    # 'architecture_kb': {
+    #     'path': 'data/architecture_kb.csv',
+    #     'description': 'System architecture, diagrams, code examples',
+    #     'doc_id': 'architecture_kb',
+    #     'format': 'csv'
+    # },
+    'noah_career_md': {
+        'path': 'data/noah_career_kb.md',
+        'description': 'Detailed career narrative, projects, coaching, Tesla day-to-day',
+        'doc_id': 'noah_career_md',
+        'format': 'markdown'
     }
 }
 
@@ -72,6 +84,44 @@ class EnhancedMigration:
             'start_time': time.time()
         }
     
+    def read_kb_markdown(self, md_path: str) -> List[Dict[str, str]]:
+        """Read markdown knowledge base, splitting on ## headers."""
+        logger.info(f"📄 Reading markdown {md_path}...")
+
+        with open(md_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        chunks = []
+        current_section = ""
+        current_body = []
+
+        for line in content.split('\n'):
+            if line.startswith('## '):
+                # Save previous section
+                if current_section and current_body:
+                    body = '\n'.join(current_body).strip()
+                    if body:
+                        chunks.append({
+                            'question': current_section,
+                            'answer': body
+                        })
+                current_section = line.lstrip('#').strip()
+                current_body = []
+            else:
+                current_body.append(line)
+
+        # Save last section
+        if current_section and current_body:
+            body = '\n'.join(current_body).strip()
+            if body:
+                chunks.append({
+                    'question': current_section,
+                    'answer': body
+                })
+
+        logger.info(f"   ✅ Read {len(chunks)} sections")
+        return chunks
+
     def read_kb_csv(self, csv_path: str) -> List[Dict[str, str]]:
         """Read knowledge base CSV."""
         logger.info(f"📄 Reading {csv_path}...")
@@ -230,7 +280,11 @@ class EnhancedMigration:
                 self.delete_existing(doc_id)
         
         # Migration pipeline
-        rows = self.read_kb_csv(csv_path)
+        kb_format = kb_config.get('format', 'csv')
+        if kb_format == 'markdown':
+            rows = self.read_kb_markdown(csv_path)
+        else:
+            rows = self.read_kb_csv(csv_path)
         chunks = self.create_chunks(rows, doc_id)
         chunks = self.generate_embeddings(chunks)
         self.insert_chunks(chunks, doc_id)

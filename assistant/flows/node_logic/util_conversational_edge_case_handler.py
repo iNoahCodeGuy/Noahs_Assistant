@@ -95,17 +95,9 @@ def _build_edge_case_prompt(
 
 {edge_case_description}
 
-Your task: Generate a warm, conversational response that:
-1. **Acknowledges their query naturally** - Don't just say "I can't help with that"
-2. **Shows inference** - Demonstrate you understand what they might be trying to do
-3. **Subtly redirect or help** - Gently guide them back to what you CAN help with, or clarify what they need
-4. **Stay in character** - Use your natural, warm, teaching-focused personality
+Your task: Generate a warm, conversational response that acknowledges their query naturally (not just "I can't help"), shows you understand what they might need, gently redirects to what you CAN help with, and stays in character.
 
-Keep it:
-- Conversational and warm (not robotic)
-- Short (2-3 sentences max for redirect, +1 sentence for meta-offer if technical)
-- Naturally redirecting (not pushy)
-- In first person when talking about yourself
+Keep it conversational and warm, 2-3 sentences max, naturally redirecting without being pushy, and always in first person. Do NOT use bold text, bullet points, or numbered lists. Write in flowing prose.
 
 {meta_teaching_offer}
 
@@ -115,14 +107,7 @@ Generate the response now:"""
     edge_case_descriptions = {
         "off_topic": f"""This question is completely unrelated to what you can help with (Noah's background, technical projects, career experience, or how you're built).
 
-IMPORTANT: Redirect to the 5 core knowledge pillars:
-1. Orchestration layer — nodes, states, safeguards in the conversation pipeline
-2. Full tech stack — frontend (Streamlit/Next.js), backend (LangGraph), observability (LangSmith)
-3. Enterprise adaptation — how assistants like you handle customer support, internal docs
-4. Data pipeline — embeddings, vector storage, chunking, analytics tracking
-5. Noah's background — certifications, GitHub projects, engineering foundation
-
-Ask which of these 5 areas sounds interesting in a conversational way.""",
+Redirect the user naturally. Do NOT use bold text, bullet points, or numbered lists. Write in flowing conversational prose. Mention a few things you can talk about — like Noah's background, his projects, your own architecture, or how the data pipeline works — and ask what sounds interesting. Keep it to 2-3 sentences max.""",
 
         "empty_query": """User sent an empty or whitespace-only query.""",
 
@@ -338,16 +323,11 @@ def _get_fallback_response(edge_case_type: str, is_technical: bool) -> str:
         Fallback response string
     """
     fallbacks = {
-        # Fix 7: Updated off_topic redirect with explicit 5 pillars
         "off_topic": (
-            "That's outside my knowledge base, but I'd love to show you what I can help with!\n\n"
-            "I can dive into:\n"
-            "1️⃣ My orchestration layer — nodes, states, and safeguards working together\n"
-            "2️⃣ Full tech stack — frontend to backend to observability\n"
-            "3️⃣ Enterprise adaptation — how assistants like me handle customer support\n"
-            "4️⃣ Data pipeline — embeddings, vector storage, chunking, analytics\n"
-            "5️⃣ Noah's background — certifications, GitHub projects, engineering foundation\n\n"
-            "Which sounds interesting?"
+            "That's a bit outside my wheelhouse, but I've got plenty to talk about. "
+            "I can walk you through Noah's background and career path, his technical projects, "
+            "how my own pipeline works under the hood, or the data architecture powering all of this. "
+            "What sounds interesting?"
         ),
 
         "empty_query": "Hmm, I didn't catch that! Drop me a question and let's explore something together.",

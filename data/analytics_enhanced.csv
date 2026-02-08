@@ -21,7 +21,7 @@ This system tracks **5 core data streams** for continuous improvement and perfor
 | `assistant_answer` | Text | AI-generated response |
 | `timestamp` | DateTime | Conversation time (UTC) |
 | `latency_ms` | Integer | Response generation time |
-| `token_count` | Integer | GPT-4o-mini tokens used |
+| `token_count` | Integer | LLM tokens used |
 
 **Volume Metrics**:
 - Daily messages: **500-1,000** (estimated production)
@@ -299,14 +299,14 @@ ORDER BY conversion_rate DESC;
 | **Developer engagement** | 35% of traffic | Portfolio showcase effectiveness |
 | **User satisfaction** | 4.3/5 stars | Positive brand impression |
 
-### A/B Test Results (GPT-4 vs GPT-4o-mini)
+### A/B Test Results (Model Comparison)
 
 | Model | Avg Cost | Avg Latency | Satisfaction | Winner |
 |-------|----------|-------------|--------------|--------|
-| GPT-4 | $0.00150 | 3.2s | 4.4/5 | ❌ Cost too high |
-| **GPT-4o-mini** | **$0.00027** | **2.3s** | **4.3/5** | ✅ **Best value** |
+| Claude Sonnet 4.5 | $0.00150 | 3.2s | 4.4/5 | ✅ Quality leader |
+| **Claude Haiku** | **$0.00027** | **2.3s** | **4.3/5** | ✅ **Best value** |
 
-**Decision**: GPT-4o-mini provides **82% cost savings** with only **2% satisfaction drop**
+**Decision**: Claude Haiku for intent classification, Claude Sonnet 4.5 for generation
 
 ---
 

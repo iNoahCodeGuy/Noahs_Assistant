@@ -283,6 +283,26 @@ class ConversationState(TypedDict, total=False):
     hiring_signals_strong: bool
     """Whether hiring signals are strong enough to unlock resume prompts."""
 
+    # --- Visitor Detection & Engagement Pacing ---
+    visitor_type: str
+    """Detected visitor type: 'unknown', 'hiring_manager', 'crush', 'casual'."""
+
+    message_count: int
+    """Number of user messages in this session (computed from chat_history)."""
+
+    questions_asked_about_visitor: int
+    """How many times Portfolia asked about the visitor's context (computed from chat_history)."""
+
+    buying_signals_count: int
+    """Number of distinct buying signals detected across all user messages."""
+
+    # --- Hiring Manager Data Capture ---
+    hm_capture_step: str
+    """Current step in HM data capture: 'awaiting_hm_response', 'awaiting_hm_details', or None."""
+
+    hm_soft_offer_made: bool
+    """True if the soft data capture offer has been made around message 10."""
+
     # --- Error Tracking (Graceful Degradation) ---
     error: str | None
     """Error type if node failed: 'classify_failed', 'retrieval_failed', etc."""

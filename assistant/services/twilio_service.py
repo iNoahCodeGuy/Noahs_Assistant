@@ -66,7 +66,7 @@ class TwilioService:
         """Initialize Twilio service with credentials."""
         self.account_sid = os.getenv('TWILIO_ACCOUNT_SID')
         self.auth_token = os.getenv('TWILIO_AUTH_TOKEN')
-        self.from_phone = os.getenv('TWILIO_PHONE_NUMBER')
+        self.from_phone = os.getenv('TWILIO_PHONE_NUMBER') or os.getenv('TWILIO_FROM')
         self.admin_phone = os.getenv('ADMIN_PHONE_NUMBER')
 
         if not TWILIO_AVAILABLE:

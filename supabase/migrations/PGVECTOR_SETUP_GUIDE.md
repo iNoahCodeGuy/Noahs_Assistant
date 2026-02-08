@@ -1,6 +1,6 @@
 # pgvector IVFFLAT Index Setup Guide
 
-This guide walks you through setting up native pgvector search with IVFFLAT indexing for **10x performance improvement**.
+This guide walks you through setting up native pgvector search with IVFFLAT indexing for **faster approximate nearest-neighbor search**.
 
 ## 🎯 What This Does
 

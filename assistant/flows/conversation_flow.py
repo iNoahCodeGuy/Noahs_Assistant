@@ -261,7 +261,13 @@ def run_conversation_flow(
 
     start = time.time()
     for node in pipeline:
-        state = node(state)
+        result = node(state)
+        # Some nodes return partial update dicts (designed for LangGraph StateGraph merging).
+        # The functional pipeline needs to merge these into the full state.
+        if result is not state and isinstance(result, dict):
+            state.update(result)
+        else:
+            state = result
         # Short-circuit conditions: greeting, pipeline halt, or skip_rag (non-knowledge intent)
         if state.get("pipeline_halt") or state.get("is_greeting"):
             # #region agent log
@@ -309,71 +315,15 @@ def run_conversation_flow(
         }) + "\n")
     # #endregion
 
-    if state.get("answer") and not state.get("is_greeting"):
+    # For normal pipeline runs, chat_history append is handled by update_memory()
+    # in stage7_logging_nodes.py. But when pipeline_halt is True (crush flow, etc.),
+    # the pipeline breaks early and update_memory never runs — so we append here.
+    if state.get("pipeline_halt") and state.get("answer") and not state.get("is_greeting"):
         chat_history = state.get("chat_history", [])
-        # #region agent log
-        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-            import json
-            f.write(json.dumps({
-                "location": "conversation_flow.py:228",
-                "message": "Inside chat_history append block",
-                "data": {
-                    "chat_history_before": len(chat_history),
-                    "has_query": bool(state.get("query")),
-                    "query": state.get("query", "")
-                },
-                "timestamp": int(time.time() * 1000),
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "B"
-            }) + "\n")
-        # #endregion
-
-        # Append user query if present and not already in history
         if state.get("query"):
-            # Check if this query was already added (avoid duplicates)
-            # Support both dict format and LangChain message objects
-            last_user_msg = None
-            if chat_history:
-                last_msg = chat_history[-1]
-                # Check if last message is a user message (both formats)
-                if isinstance(last_msg, dict):
-                    if last_msg.get("role") == "user" or last_msg.get("type") == "human":
-                        last_user_msg = last_msg
-                elif hasattr(last_msg, "type"):
-                    if last_msg.type == "human" or getattr(last_msg, "role", None) == "user":
-                        last_user_msg = last_msg
-
-            # Check if query content matches (avoid duplicates)
-            query_matches = False
-            if last_user_msg:
-                if isinstance(last_user_msg, dict):
-                    query_matches = last_user_msg.get("content") == state["query"]
-                elif hasattr(last_user_msg, "content"):
-                    query_matches = last_user_msg.content == state["query"]
-
-            if not query_matches:
-                chat_history.append({"role": "user", "content": state["query"]})
-        # Append assistant answer
+            chat_history.append({"role": "user", "content": state["query"]})
         chat_history.append({"role": "assistant", "content": state["answer"]})
         state["chat_history"] = chat_history
-        # #region agent log
-        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-            import json
-            f.write(json.dumps({
-                "location": "conversation_flow.py:246",
-                "message": "After chat_history append",
-                "data": {
-                    "chat_history_after": len(chat_history),
-                    "messages": chat_history
-                },
-                "timestamp": int(time.time() * 1000),
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "B"
-            }) + "\n")
-        # #endregion
-        logger.debug(f"Appended to chat_history: {len(chat_history)} messages total")
 
     elapsed_ms = int((time.time() - start) * 1000)
     state = log_and_notify(state, session_id=session_id, latency_ms=elapsed_ms)

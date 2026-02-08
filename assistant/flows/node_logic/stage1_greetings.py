@@ -72,11 +72,19 @@ def should_show_greeting(query: str, chat_history: list) -> bool:
 
     query_lower = query.lower().strip()
 
-    # Check if query is primarily a greeting (≤5 words and contains greeting)
+    # Check if query is primarily a greeting (≤5 words and IS a greeting)
     words = query_lower.split()
     if len(words) <= 5:
         for pattern in greeting_patterns:
-            if pattern in query_lower:
-                return True
+            # For single-word patterns, check word boundaries to avoid
+            # substring false positives (e.g., "coaching" matching "hi")
+            if ' ' in pattern:
+                # Multi-word pattern: check if it appears as a phrase
+                if pattern in query_lower:
+                    return True
+            else:
+                # Single-word pattern: must be a standalone word
+                if pattern in words:
+                    return True
 
     return False

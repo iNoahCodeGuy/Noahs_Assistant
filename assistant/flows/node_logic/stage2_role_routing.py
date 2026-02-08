@@ -198,25 +198,14 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
                 }) + "\n")
             # #endregion
 
-            # Return partial update dict (not full state) to avoid preserving old answer
-            # Only include top-level fields that were modified
-            # Note: session_memory is modified in place, so LangGraph will merge it automatically
-            # We don't need to include it in the partial update to avoid overwriting nested dicts
-            partial_update: Dict[str, Any] = {
-                "role_mode": normalized,
-                "role_confidence": 1.0,
-                "role": state["role"],
-                # CRITICAL: Clear old answer when role is already set and we're continuing pipeline
-                # This prevents preserving the welcome message from Turn 2 when Turn 3 runs
-                "answer": None,
-                "draft_answer": None
-            }
-            # If pipeline_halt was cleared (popped), explicitly set it to None in update
-            # This ensures LangGraph clears it from state
+            # Clear stale answer/draft from previous turns to avoid carryover
+            state["answer"] = None
+            state["draft_answer"] = None
+            # Clear pipeline_halt if it was already popped
             if not state.get("pipeline_halt"):
-                partial_update["pipeline_halt"] = None
+                state["pipeline_halt"] = None
 
-            return partial_update
+            return state
 
         # Infer role from query content
         query_raw = state.get("query", "")

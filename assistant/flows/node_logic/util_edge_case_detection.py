@@ -111,7 +111,9 @@ def detect_edge_cases(state: ConversationState) -> Dict[str, Any]:
         return edge_cases
 
     # 12. Query reformulation loop (requires chat history)
-    if _detect_reformulation_loop(chat_history):
+    # Skip for continuation-expanded queries ("tell me more" → "Go deeper on: X")
+    # These intentionally repeat the previous topic and should not be flagged as loops
+    if not state.get("is_continuation") and _detect_reformulation_loop(chat_history):
         edge_cases["is_reformulation_loop"] = True
         edge_cases["edge_case_type"] = "reformulation_loop"
         return edge_cases
@@ -190,9 +192,18 @@ def _is_off_topic(query: str, chat_history: list) -> bool:
         # Portfolio-specific
         "how do you work", "how does this work", "show me", "explain",
         "tell me about", "what is", "how is", "why did",
+        "built", "build", "how were you", "how are you",
+        "your retrieval", "your pipeline", "your architecture",
 
         # Fun topics
         "mma", "fight", "confess", "crush", "hobby", "fun fact",
+
+        # Career-specific topics
+        "coaching", "coach", "tesla", "tql", "logistics", "real estate",
+        "biology", "unlv", "bjj", "xtreme couture", "sales",
+
+        # Future/plans topics
+        "next", "future", "plan", "goal", "roadmap", "vision",
 
         # Meta questions about Portfolia
         "who are you", "what are you", "what can you do", "help me",
@@ -777,7 +788,9 @@ def _is_negative_query(query: str) -> bool:
     """Detect negative queries (what can't, weaknesses, etc.).
 
     Detects queries asking about limitations, weaknesses, or things
-    that can't be done.
+    that can't be done. Exempts questions directed at Portfolia itself
+    (e.g. "what are your limitations") — those are self-knowledge queries
+    handled by the retrieval pipeline.
 
     Args:
         query: User's query text
@@ -785,6 +798,16 @@ def _is_negative_query(query: str) -> bool:
     Returns:
         True if negative query detected, False otherwise
     """
+    lowered = query.lower()
+
+    # Exempt: Questions about Portfolia's own limitations → self-knowledge
+    self_directed = ["your limitation", "your weakness", "you bad at",
+                     "you fall short", "you missing", "you not do",
+                     "can't you do", "cant you do", "don't you know",
+                     "dont you know", "can you not"]
+    if any(phrase in lowered for phrase in self_directed):
+        return False
+
     negative_patterns = [
         r"what.*can.*t.*do",
         r"what.*can.*not",
@@ -798,15 +821,15 @@ def _is_negative_query(query: str) -> bool:
         r"doesn.*t.*have"
     ]
 
-    lowered = query.lower()
     return any(re.search(pattern, lowered) for pattern in negative_patterns)
 
 
 def _is_meta_question(query: str) -> bool:
     """Detect meta-questions about the system itself.
 
-    Detects questions asking about how Portfolia works, why she said
-    something, or how she detected something.
+    Detects questions asking about why Portfolia said something or
+    how she detected something. Does NOT catch legitimate architecture
+    questions like "how does your retrieval work?" — those are knowledge queries.
 
     Args:
         query: User's query text
@@ -814,18 +837,25 @@ def _is_meta_question(query: str) -> bool:
     Returns:
         True if meta-question detected, False otherwise
     """
+    lowered = query.lower()
+
+    # If query contains technical keywords, it's a knowledge query, not a meta-question
+    technical_keywords = [
+        "retrieval", "architecture", "pipeline", "embedding", "vector",
+        "rag", "langgraph", "pgvector", "supabase", "generation",
+        "node", "chunk", "built", "build", "stack", "code",
+    ]
+    if any(kw in lowered for kw in technical_keywords):
+        return False
+
     meta_patterns = [
         r"why.*did.*you.*say",
         r"what.*made.*you.*think",
         r"how.*did.*you.*know",
         r"why.*did.*you.*answer",
         r"explain.*your.*reasoning",
-        r"how.*do.*you.*work",
-        r"how.*does.*this.*work",
-        r"explain.*how.*you"
     ]
 
-    lowered = query.lower()
     return any(re.search(pattern, lowered) for pattern in meta_patterns)
 
 

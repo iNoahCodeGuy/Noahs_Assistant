@@ -146,14 +146,9 @@ AMBIGUOUS_QUERIES = {
         "options": ["code snippets", "data flow", "system diagram", "high-level explanation"],
         "context": "How Portfolia answers questions"
     },
-    "how do you work": {
-        "options": ["code snippets", "data flow", "system diagram", "high-level explanation"],
-        "context": "RAG pipeline and conversation flow"
-    },
-    "how does this work": {
-        "options": ["code examples", "data flow", "architecture diagram", "plain English"],
-        "context": "Portfolia's RAG system"
-    },
+    # "how do you work" and "how does this work" REMOVED from ambiguous queries.
+    # These are self-knowledge questions about Portfolia with clear answers —
+    # they should go through retrieval + generation, not Ask Mode.
 }
 
 # Vague query expansion mappings (for queries that are specific enough but too short)
@@ -244,7 +239,7 @@ def _is_ambiguous_query(query: str) -> tuple[bool, dict | None]:
     # (e.g., "how does architecture work" but not "architecture adapts to customer support")
     if word_count > 3:
         # Check for very generic ambiguous patterns that indicate broad questions
-        generic_patterns = ["how does this work", "show me how you work", "how do you work"]
+        generic_patterns = ["show me how you work"]
         for pattern in generic_patterns:
             if pattern in lowered:
                 return True, AMBIGUOUS_QUERIES.get(pattern)
@@ -363,7 +358,8 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         logger.info(f"Menu selection detected: '{query}' → option {menu_choice}")
         # DEBUG: Verify state update will propagate
         logger.info(f"✅ Menu choice SET in update dict: menu_choice={menu_choice}, query_type={update['query_type']}")
-        return update  # Return partial update - LangGraph will merge into state
+        state.update(update)
+        return state
 
     # =========================================================================
     # PRIORITY: Detect ACTION REQUESTS (resume, linkedin, github, contact)
@@ -444,7 +440,8 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         update["_debug_trace"] = debug_trace
 
         logger.info(f"Action request detected: '{query}' → resources: {requested_resources}")
-        return update  # Return partial update - action planning will handle links
+        state.update(update)
+        return state
 
     # =========================================================================
     # PRIORITY: Detect ANALYTICS REQUESTS (dashboard, metrics, performance data)
@@ -458,7 +455,8 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         # Analytics is always fresh data - don't treat as repeated
         update["force_fresh_response"] = True
         logger.info(f"Analytics request detected: '{query}'")
-        return update
+        state.update(update)
+        return state
 
     # Track query timestamp for rapid-fire detection
     session_memory = state.setdefault("session_memory", {})
@@ -485,7 +483,8 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         session_memory["last_edge_case_query"] = query
 
         logger.info(f"Edge case detected: {edge_cases['edge_case_type']} for query: '{query[:50]}...'")
-        return update  # Return early, skip normal classification
+        state.update(update)
+        return state
 
     chat_history = state.get("chat_history", [])
     # Count user messages (support both dict format and LangGraph message objects)
@@ -517,7 +516,11 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
     update["topic_focus"] = detect_topic_focus(query)
 
     # First, check if query is ambiguous (should trigger Ask Mode)
-    is_ambiguous, ambiguity_config = _is_ambiguous_query(query)
+    # Skip ambiguity check for continuation-expanded queries (is_continuation is set
+    # by the intent router when "tell me more" etc. are expanded with topic context)
+    is_ambiguous, ambiguity_config = False, None
+    if not state.get("is_continuation"):
+        is_ambiguous, ambiguity_config = _is_ambiguous_query(query)
 
     if is_ambiguous:
         update["topic_focus"] = detect_topic_focus(query)
@@ -528,7 +531,8 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         update["query_type"] = "ambiguous"
         logger.info(f"Ambiguous query detected: '{query}' → Ask Mode triggered")
         # Don't expand ambiguous queries - we want user to clarify
-        return update  # Return partial update - LangGraph will merge into state
+        state.update(update)
+        return state
 
     # If not ambiguous, expand vague queries for better retrieval (pure function)
     expanded_query = _expand_vague_query(query)
@@ -724,8 +728,8 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         update["clarification_needed"] = True
         logger.info(f"Low confidence query detected ({overall_confidence:.2f}), requesting clarification")
 
-    # Return partial update - LangGraph will merge into state
-    return update
+    state.update(update)
+    return state
 
 
 def classify_query(state: ConversationState) -> Dict[str, Any]:

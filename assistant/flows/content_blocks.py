@@ -96,7 +96,7 @@ def cost_latency_grounded_block() -> Tuple[List[str], str]:
     bullets = [
         "Average latency holds around 1.3 s based on October QA runs.",
         "Grounded answers stay above 94% (retrieval logs review).",
-        "Per-turn OpenAI cost: ≈$0.0003 from pgvector + gpt-4o-mini usage.",
+        "Per-turn cost: ≈$0.0003 from pgvector + Claude Haiku usage.",
     ]
     source = "QA snapshot (cached)"
     if 'fallback_reason' in locals() and fallback_reason:
@@ -161,8 +161,8 @@ def fun_facts_block() -> str:
     """
     return (
         "- Noah competed in 10 MMA fights (8 amateur including two title bouts, 2 professional).\n"
-        "- He once ate 10 hot dogs in under eight minutes during a charity challenge.\n"
-        "- Outside of tech he loves chess puzzles and coaching youth wrestling."
+        "- He coaches kids BJJ (ages 6-12) and amateur MMA fighters at Xtreme Couture in Vegas.\n"
+        "- He started coding in August 2024 after watching AlphaZero beat Stockfish at chess."
     )
 
 
@@ -235,10 +235,10 @@ def architecture_snapshot() -> str:
 This is where orchestration happens. When you ask me a question, LangGraph routes it through a series of reasoning nodes — embedding your query, searching my knowledge base, generating the answer, and logging everything for observability. It's modular by design, so each node has a single responsibility and can be tested independently.
 
 💾 Data Layer (Supabase + pgvector)
-My memory lives here. Noah took every piece of his career history and technical knowledge, chunked it into meaningful segments, converted each into a 768-dimensional vector embedding, and stored it in Supabase with pgvector. When you ask a question, I perform cosine similarity search to find the most relevant chunks — that's what keeps my answers grounded in real data, not hallucinations.
+My memory lives here. Noah took every piece of his career history and technical knowledge, chunked it into meaningful segments, converted each into a 1536-dimensional vector embedding, and stored it in Supabase with pgvector. When you ask a question, I perform cosine similarity search to find the most relevant chunks — that's what keeps my answers grounded in real data, not hallucinations.
 
-🤖 RAG Engine (OpenAI GPT-4o-mini)
-This is where reasoning happens. I take the retrieved context chunks, combine them with your question and conversation history, then pass everything to GPT-4o-mini with a temperature of 0.2 for factual responses. The LLM generates an answer that's auditable — every claim traces back to a specific knowledge chunk.
+🤖 RAG Engine (Anthropic Claude Sonnet 4.5)
+This is where reasoning happens. I take the retrieved context chunks, combine them with your question and conversation history, then pass everything to Claude Sonnet 4.5 with a temperature of 0.7 for conversational but grounded responses. The LLM generates an answer that's auditable — every claim traces back to a specific knowledge chunk.
 
 🎨 Frontend (Next.js + Streamlit)
 The interface bridges production and prototype. Next.js powers the deployed Vercel version you're using right now, while Streamlit handles local development and rapid iteration. Session management is UUID-based, conversation history lives client-side.
@@ -246,7 +246,7 @@ The interface bridges production and prototype. Next.js powers the deployed Verc
 ⚙️ Testing + Deployment
 I run 98% test coverage via pytest, with mocked external dependencies so tests stay fast and deterministic. The CI/CD pipeline deploys automatically through Vercel's serverless environment — every push triggers tests, builds, and deployment with zero downtime.
 
-Here's why this matters: this same architecture pattern scales to customer support bots, internal documentation assistants, and sales enablement tools. The modular design means you can swap components — replace Supabase with Pinecone, GPT-4o-mini with Claude, Vercel with AWS Lambda — without rewriting the orchestration logic.
+Here's why this matters: this same architecture pattern scales to customer support bots, internal documentation assistants, and sales enablement tools. The modular design means you can swap components — replace Supabase with Pinecone, Claude with GPT, Vercel with AWS Lambda — without rewriting the orchestration logic.
 
 Would you like me to visualize how the data flows through these layers, or dive deeper into the RAG pipeline?"""
 
@@ -569,16 +569,16 @@ def rag_pipeline_explanation() -> str:
     return """Perfect — let me show you what happens under the hood when you ask me a question. This is the full retrieval-augmented generation pipeline in action.
 
 🔹 Query Embedding (text-embedding-3-small)
-First, I convert your question into a 768-dimensional vector using OpenAI's embedding model. This captures the semantic meaning of your query — so "What's your backend?" and "How's your system designed?" map to similar vectors even though the words are different. Cost is $0.00001 per query, latency around 45ms.
+First, I convert your question into a 1536-dimensional vector using OpenAI's embedding model. This captures the semantic meaning of your query — so "What's your backend?" and "How's your system designed?" map to similar vectors even though the words are different. Cost is $0.00001 per query, latency around 45ms.
 
 🔹 Vector Search (pgvector in Supabase)
-Next, I compare your query embedding against 847 knowledge chunks stored in Supabase using cosine similarity. The SQL operator is `embedding <=> $query_vector` — lower distance means higher relevance. I only return the top 3 matches above a 0.75 similarity threshold to avoid irrelevant results. This takes about 850ms with IVFFLAT indexing (upgrading to HNSW would drop it to ~200ms).
+Next, I compare your query embedding against 847 knowledge chunks stored in Supabase using cosine similarity. The SQL operator is `embedding <=> $query_vector` — lower distance means higher relevance. I only return the top 3 matches above a 0.50 similarity threshold (with a 0.30 fallback for broader recall). This takes about 850ms with IVFFLAT indexing (upgrading to HNSW would drop it to ~200ms).
 
 🔹 Context Assembly
 I take the matched chunks, concatenate them with proper citations, add conversation history for continuity, and build the LLM prompt. This is where grounding happens — every fact I state comes from a specific chunk ID I can trace back to.
 
-🔹 LLM Generation (GPT-4o-mini)
-I pass the assembled context to GPT-4o-mini with temperature 0.2 for factual responses. The LLM generates your answer using only the retrieved information — no improvisation, no hallucinations. This takes about 1200ms and costs $0.0002 per query.
+🔹 LLM Generation (Claude Sonnet 4.5)
+I pass the assembled context to Anthropic Claude Sonnet 4.5 with temperature 0.7 for conversational, grounded responses. The LLM generates your answer using only the retrieved information — no improvisation, no hallucinations.
 
 🔹 Analytics Logging
 Finally, I store the query, answer, latency, similarity scores, and token counts to Supabase. This enables performance monitoring, A/B testing, and continuous quality improvements. I literally measure which types of questions I answer well versus poorly.
@@ -650,7 +650,7 @@ retrieve_chunks
    ↓
 generate_answer
 ├─ Assemble context (chunks + history)
-├─ Call GPT-4o-mini with role-specific prompt
+├─ Call Claude Sonnet 4.5 with role-specific prompt
 └─ Return grounded answer
    ↓
 plan_actions
@@ -721,7 +721,7 @@ Four main API routes: /api/chat, /api/analytics, /api/email, /api/feedback. Orch
 Database is Supabase Postgres (hosted, managed). Vector store uses the pgvector extension — currently 847 chunks with IVFFLAT indexing. Five main tables: kb_chunks, messages, retrieval_logs, feedback, links. Storage handles resumes, headshots, and documents via Supabase Storage.
 
 🏗️ RAG Architecture
-Embeddings use OpenAI text-embedding-3-small (768 dimensions). Generation runs on OpenAI gpt-4o-mini (cost-optimized). Retrieval leverages pgvector cosine similarity search. Every answer cites specific KB chunks for grounding.
+Embeddings use OpenAI text-embedding-3-small (1536 dimensions). Generation runs on Anthropic Claude Sonnet 4.5. Retrieval leverages pgvector cosine similarity search. Every answer cites specific KB chunks for grounding.
 
 🧪 QA & Testing
 Framework is pytest with 95%+ coverage. Mocking uses @patch for Supabase, OpenAI, and external services. Edge cases include empty queries, XSS attempts, and concurrent sessions. CI/CD runs through GitHub Actions with automated deployment.
@@ -748,7 +748,7 @@ def cost_analysis_table() -> str:
 | Database | $0 (free tier) | $25/mo (Supabase Pro) | $50/mo (separate Postgres) |
 | Vector Store | $0 (pgvector) | $0 (included) | $280/mo (Pinecone Standard) |
 | Embeddings | $3/mo | $90/mo | $90/mo (same) |
-| LLM | $6/mo | $180/mo (GPT-4o-mini) | $430/mo (GPT-4) |
+| LLM | $6/mo | $180/mo (Claude Haiku) | $430/mo (Claude Sonnet) |
 | Hosting | $0 (Vercel Hobby) | $20/mo (Vercel Pro) | $50/mo (AWS ECS) |
 | Total | $9/mo | $270/mo | $850/mo |
 

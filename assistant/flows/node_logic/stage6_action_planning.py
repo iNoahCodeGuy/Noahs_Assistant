@@ -334,10 +334,12 @@ def _plan_explorer_actions(state: ConversationState) -> None:
     Junior dev: This is "casual conversation" mode - no hard sell.
     """
     query_type = state.get("query_type", "general")
+    chat_history = state.get("chat_history", [])
 
     if query_type == "mma":
         state["pending_actions"].append({"type": "share_mma_link"})
-    else:
+    elif len(chat_history) <= 2:
+        # Only share fun facts on the first interaction, not every response
         state["pending_actions"].append({"type": "share_fun_facts"})
 
 

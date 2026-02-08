@@ -15,9 +15,9 @@ Portfolia is Noah's flagship project — an AI-powered portfolio assistant built
 
 Noah built a Python-based heatmap dashboard that visualizes lead response time patterns. It's designed as a generic, reusable tool — it uses a sample dataset to demonstrate how any sales team can identify coverage gaps and optimize when leads are being contacted. The dashboard uses Python with pandas for data processing and matplotlib/seaborn for heatmap visualization. What makes it notable is that Noah saw a real operational problem — teams not knowing when their response coverage was weakest — and built a generalizable solution that works with any team's data.
 
-### Project 3: Employee Attrition Prediction Model (DATA 430)
+### Project 3: Employee Attrition Prediction Model
 
-For his DATA 430 coursework at UNLV, Noah built a logistic regression model predicting employee attrition. He achieved 94.75% accuracy and his professor specifically called out his "real modeling discipline." The project demonstrated skills in logistic regression, Bayesian classification, feature engineering, and statistical analysis. It wasn't just an academic exercise — Noah approached it like a real business problem.
+Noah built a logistic regression model predicting employee attrition. He achieved 94.75% accuracy through rigorous methodology. The project demonstrated skills in logistic regression, Bayesian classification, feature engineering, and statistical analysis. Noah approached it like a real business problem — identifying retention risk factors and building a model that could actually inform HR decisions.
 
 ---
 
@@ -25,7 +25,7 @@ For his DATA 430 coursework at UNLV, Noah built a logistic regression model pred
 
 ### Inside Sales Advisor Role
 
-Noah works as an Inside Sales Advisor at Tesla in Las Vegas. He achieved Q3 Plaid Club Top Performer recognition, placing him in the top 10% of the sales team. This recognition demonstrates his ability to perform at a high level in a competitive, metrics-driven environment.
+Noah works as an Inside Sales Advisor at Tesla in Las Vegas. He achieved Plaid Club recognition, placing him in the top 10% of the sales team. This recognition demonstrates his ability to perform at a high level in a competitive, metrics-driven environment.
 
 ### Why Transitioning to Tech
 
@@ -62,7 +62,7 @@ The hardest part was uncertainty. He often had to make commitments before knowin
 
 From his logistics experience, Noah learned to:
 - Think in systems, not single transactions
-- Make decisions under pressure with imperfect data
+- Price freight in real-time against fluctuating market conditions
 - Balance short-term margins against long-term relationships
 - Communicate clearly during high-stress situations
 
@@ -123,7 +123,7 @@ Through his biology degree, Noah developed:
 - Evaluating signal vs. noise in real-world data where clean results are rare
 - Identifying confounders, bias, and the importance of proper experimental controls
 
-This foundation trained him to reason quantitatively in complex systems and made it easier to later apply statistics and data analysis in non-academic domains like logistics, real estate, and machine-learning coursework.
+This foundation trained him to reason quantitatively in complex systems and made it easier to later apply statistics and data analysis in domains like logistics, real estate, and machine learning.
 
 ---
 
@@ -133,14 +133,14 @@ This foundation trained him to reason quantitatively in complex systems and made
 
 Repository: https://github.com/iNoahCodeGuy/Noahs_Assistant.git
 
-Portfolia is Noah's flagship project — a production-grade AI-powered portfolio assistant built with a 22-node LangGraph pipeline. It uses RAG (Retrieval-Augmented Generation) to answer questions about Noah's professional background, technical skills, and projects.
+Portfolia is Noah's flagship project — a production-grade AI-powered portfolio assistant built with a LangGraph pipeline. It uses RAG (Retrieval-Augmented Generation) to answer questions about Noah's professional background, technical skills, and projects.
 
 ### Technical Architecture
 
-Portfolia's 22-node pipeline (assistant/flows/conversation_flow.py):
+Portfolia's pipeline (assistant/flows/conversation_flow.py):
 - **Orchestration**: LangGraph for stateful conversation management
 - **Retrieval**: Supabase pgvector with text-embedding-3-small (1536 dimensions)
-- **Generation**: Claude Sonnet 4.5 (claude-sonnet-4-5-20250929) at temperature 0.7
+- **Generation**: Anthropic Claude Sonnet 4.5 (claude-sonnet-4-5-20250929), with Claude Haiku for intent classification
 - **Backend**: Python with FastAPI for API endpoints
 - **State Management**: TypedDict-based ConversationState with 46 fields
 - **Observability**: LangSmith tracing for all LLM calls
@@ -189,7 +189,7 @@ Traditional portfolios are static. Portfolia allows dynamic, conversational expl
 The Portfolia project demonstrates Noah's skills in:
 - RAG architecture design and implementation
 - Vector database optimization (pgvector)
-- LangGraph pipeline orchestration (22 nodes)
+- LangGraph pipeline orchestration
 - LLM prompt engineering and response formatting
 - Python backend development
 - FastAPI API design
@@ -203,73 +203,61 @@ The Portfolia project demonstrates Noah's skills in:
 
 Repository: https://github.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Logistic-Regression.git
 
-This is a machine learning project that predicts whether employees will leave a company based on various features like satisfaction level, number of projects, average monthly hours, time spent at company, work accidents, promotions, department, and salary.
-
-### Problem Statement
-
-Employee attrition is costly for organizations. Being able to predict which employees are at risk of leaving allows companies to intervene proactively—whether through retention programs, workload adjustments, or compensation changes.
+This is a machine learning project that predicts whether employees will leave a company using the Kaggle "Employee Future Prediction" dataset (4,653 rows, 9 columns). Features include Education, JoiningYear, City, PaymentTier, Age, Gender, EverBenched, and ExperienceInCurrentDomain — with LeaveOrNot as the binary target (34.4% left, 65.6% stayed).
 
 ### Technical Approach
 
-Noah used:
-- Algorithm: Logistic regression for binary classification
-- Data preprocessing: Feature engineering, handling categorical variables, normalization
-- Model evaluation: Accuracy, precision, recall, F1-score, ROC-AUC
-- Interpretation: Analyzed coefficient weights to understand which factors most influence attrition
+Noah used Python with pandas, NumPy, scikit-learn, matplotlib, and seaborn. The pipeline includes:
+- One-hot encoding of categorical variables (Education, City, Gender, EverBenched) with drop_first=True to avoid the dummy variable trap
+- 80/20 train/test split with stratification to preserve class balance
+- StandardScaler fit only on training data to prevent data leakage
+- Logistic regression with GridSearchCV hyperparameter tuning (C values from 0.001 to 100, L1/L2 penalty, liblinear solver, 5-fold cross-validation)
+
+### Results
+
+- Accuracy: 79.1% on the test set
+- Precision: 73.7%
+- Recall: 54.0% (acknowledged as a limitation — model misses many actual attritions)
+- F1 Score: 0.623
+- AUC-ROC: 0.725
 
 ### Key Findings
 
-The model identified satisfaction level, number of projects, and average monthly hours as the strongest predictors of employee attrition. Employees with low satisfaction, high project loads, and long hours were significantly more likely to leave.
+The model revealed a striking gender disparity: 47.1% of female employees left versus 25.8% of males. Location mattered significantly — Pune had 50.4% attrition compared to 26.7% in Bangalore. Payment tier and education level were also strong predictors. Noah converted coefficients to odds ratios for interpretability and visualized predicted probability distributions to understand the classification boundary.
 
 ### Skills Demonstrated
 
 This project demonstrates:
-- Understanding of supervised learning and classification problems
-- Feature engineering and data preprocessing
-- Model evaluation and interpretation (not just accuracy, but understanding what drives predictions)
-- Ability to translate statistical results into business insights
-- Python (pandas, scikit-learn, NumPy)
-- Logistic regression implementation and tuning
-- Statistical evaluation metrics
-- Data visualization for model interpretation
+- Logistic regression for binary classification with hyperparameter tuning via GridSearchCV
+- Proper train/test methodology (stratified split, scaling without leakage)
+- Model evaluation beyond accuracy (precision, recall, F1, ROC-AUC, confusion matrix)
+- Feature importance analysis through coefficient interpretation and odds ratios
+- Data visualization (confusion matrix heatmap, ROC curve, coefficient bar charts, probability distributions)
+- Python (pandas, NumPy, scikit-learn, matplotlib, seaborn)
 
 ---
 
-## GitHub Project: Response Time Call Center Analysis
+## GitHub Project: Response Time CL Analysis
 
 ### Repository and Overview
 
 Repository: https://github.com/iNoahCodeGuy/response_time_cl_analysis.git
 
-This is a statistical analysis of call center response time performance, examining whether response times differ significantly across different periods or conditions.
-
-### Business Context
-
-In sales and customer service environments, response time directly impacts conversion rates and customer satisfaction. This project analyzes response time patterns to identify when performance degrades and what might be causing it.
+This project has a personal origin — from Noah's first phone sales job at UFC FIT, he always wondered what the actual impact of response time was on close rates. Using statistical inference, he built a program that can investigate this relationship. His assumption is that results would differ across industries, making it a flexible analytical tool.
 
 ### Technical Approach
 
-Noah used:
-- Statistical testing: Hypothesis testing to determine if response time differences are statistically significant
-- Data analysis: Descriptive statistics, distribution analysis, outlier detection
-- Visualization: Time-series plots, distribution plots, comparative analysis
-- Insights: Identified specific time windows or conditions where response times spike
-
-### Problem Solved
-
-Rather than relying on anecdotal evidence ("we feel slower on Mondays"), this provides statistical proof of performance patterns. It enables data-driven decisions about staffing, process improvements, or system optimizations.
+Python with pandas for data processing, statistical analysis including confidence intervals and hypothesis testing. The sample data in the program is AI-generated, but any dataset can be plugged in — it's designed as a reusable analytical framework.
 
 ### Skills Demonstrated
 
 This project demonstrates:
-- Hypothesis-driven analysis
-- Statistical significance testing
-- Time-series data analysis
-- Translating statistical results into operational recommendations
-- Understanding of experimental design and controls
+- Statistical inference and hypothesis testing
+- Confidence interval analysis
+- Reusable analytical framework design
 - Python (pandas, scipy.stats, matplotlib/seaborn)
-- Data cleaning and preparation
-- Exploratory data analysis (EDA)
+- Data-driven investigation of business questions
+- Translating personal observations into testable hypotheses
 
 ---
 
@@ -350,7 +338,7 @@ Noah designs and implements RAG architecture, works with vector databases (Supab
 
 ### Backend Development
 
-Noah builds APIs with FastAPI, designs database schemas, implements production error handling and logging, and optimizes systems (achieving 4.3x performance improvement in Portfolia).
+Noah builds APIs with FastAPI, designs database schemas, implements production error handling and logging, and optimizes systems for production deployment.
 
 ### Development Tools
 
@@ -360,43 +348,29 @@ Noah uses Jupyter notebooks for analysis, VS Code for development, LangSmith for
 
 ## Combat Sports Background
 
-### Current Role and Rank
+### Coaching at Xtreme Couture
 
-Noah coaches kids BJJ and the amateur MMA team at Xtreme Couture. He holds a purple belt in Brazilian Jiu-Jitsu.
+Noah's coaching journey started when he was an assistant coach for his younger brother's high school wrestling team. When the head kids coach at Xtreme Couture reached out to him, it felt like a natural progression — he now coaches kids ages 6-12 in BJJ. Additionally, when Noah retired from competing in MMA, he started coaching amateur fighters and corners them on the regional circuit.
 
-### Professional Impact of Combat Sports
+His coaching philosophy centers on teaching the higher purpose behind each action rather than drilling memorized sequences. His reasoning: strict memorization has low retention, and any variation from the sequence during live competition can throw off an athlete. He believes in understanding WHY a technique works so athletes can adapt in real time. He sees this as an allegory for other aspects of life — understanding principles over memorizing steps.
 
-Combat sports have had a direct impact on how Noah operates professionally.
+### MMA Fighting Career
 
-Discipline under discomfort: Progress only happens through consistent, unglamorous work—showing up tired, drilling fundamentals, and trusting process over emotion. That carries over into work where results compound quietly long before they're visible.
-
-Problem-solving under pressure: In a fight, plans rarely survive first contact. You're forced to adapt in real time, recognize patterns, and make decisions with incomplete information. That's the same mindset Noah uses in professional environments where conditions change quickly and perfect data doesn't exist.
-
-Emotional regulation: If you panic, rush, or react impulsively, you get punished immediately. Learning to stay calm, assess, and respond deliberately has translated into clearer communication and better decision-making in high-stress situations.
-
-Accountability: There's no one else to blame in a fight. Preparation, execution, and outcomes are yours. That mindset carries into Noah's professional life—he takes ownership of results, especially when things go wrong, and focuses on improving the process rather than externalizing responsibility.
-
-Overall, combat sports trained Noah to stay composed, adaptable, and accountable in environments where pressure, uncertainty, and consequences are real.
+Noah is a veteran of 10 MMA fights: 8 amateur (including 2 amateur title fights, one of which he won by defeating 5-0 Edgar Sorto for the Fierce Fighting Championship's 135lb title) and 2 professional fights. He holds a purple belt in Brazilian Jiu-Jitsu.
 
 ---
 
-## Career Goals
-
-### Target Roles
-
-Noah is targeting roles as a Data Analyst, Business Intelligence Analyst, or Software Engineer. His ideal role in 2-3 years is a technical data analyst or software engineering position.
-
-### What Differentiates Noah
+## What Differentiates Noah
 
 Noah is not coming from theory alone—he's coming from operating in real, high-stakes systems where decisions have consequences and uncertainty is constant.
 
-He has spent years making decisions with incomplete information in logistics, real estate, and sales. That trained him to think in terms of risk, trade-offs, and incentives, not just idealized solutions. When he learns technical concepts, he naturally maps them to real systems and failure modes rather than treating them as abstract exercises.
+He spent 16 months managing freight logistics at TQL — coordinating carriers, negotiating rates, and solving routing problems under tight deadlines. In real estate, he handled end-to-end transactions where a missed detail could kill a deal. At Tesla, he closed vehicle sales and earned Plaid Club top 10% recognition. Each role required weighing trade-offs quickly and owning the outcome. When he learns technical concepts, he maps them to real systems and failure modes rather than treating them as abstract exercises.
 
 Noah has a strong foundation in quantitative reasoning from his biology background. He was trained to think in hypotheses, evaluate evidence, and avoid over-interpreting noisy data. That makes it easier for him to understand statistics, machine learning, and model limitations—not just how to use tools, but when they break.
 
 Unlike many career switchers, Noah is already comfortable with production pressure. He has owned outcomes, handled failures publicly, and been accountable to customers and stakeholders in real time. That translates directly to engineering environments where systems fail, priorities shift, and clear communication matters as much as clean code.
 
-Noah has proven he can learn hard things in demanding environments. He maintained high performance in his sales role (Top 10% at Tesla) while separately building technical projects and completing graduate analytics coursework. That signals adaptability, endurance, and the ability to grow without needing perfect conditions.
+Noah has proven he can learn hard things in demanding environments. He maintained high performance in his sales role (Top 10% at Tesla) while separately building technical projects. That signals adaptability, endurance, and the ability to grow without needing perfect conditions.
 
 Noah is not transitioning into tech to escape pressure. He is moving into it because his skill set is already aligned with how real technical systems are built, evaluated, and improved.
 
@@ -430,12 +404,88 @@ Noah enjoys pickleball, competitive chess, and yoga in his free time. These acti
 
 ---
 
+## Tesla Day-to-Day
+
+### What Noah Actually Does at Tesla
+
+Noah's day at Tesla starts with responding to his leads and covering his teammates' leads when they're not in office. He checks his follow-ups for the day, reaches out to customers, handles incoming leads, and completes follow-up appointments while covering for teammates.
+
+His sales approach centers on understanding customer motivation — he figures out which Model the customer is interested in and why, then uses that understanding to better serve them through the entire process.
+
+A key skill is time management and qualifying buyers early — he can quickly identify if a customer has significant negative equity, poor credit, or other obstacles, and knows when to invest time versus when to move on.
+
+He relates the job to the myth of Sisyphus — every day you start at zero and push the rock up the mountain again. What he values most is knowing he provided a good service while meeting company KPIs.
+
+Noah is on a team of 10-15 people and considers himself friends with all his colleagues. He's able to appreciate and connect with people from a variety of different backgrounds.
+
+Note: Noah has signed an NDA regarding Tesla's internal systems, processes, and specific customer interactions. Portfolia should not speculate about Tesla internals.
+
+---
+
+## TQL Experience Detail
+
+### Inside TQL — Freight Logistics Under Pressure
+
+At TQL, Noah managed 30+ active shipper accounts simultaneously, each with different lanes, volumes, and service requirements. On any given day he was pricing freight in real-time based on market conditions, securing carriers, tracking live shipments, and solving problems when things went sideways — which they did regularly.
+
+The hardest part was carrier fallouts. A carrier would accept a load, then cancel day-of, leaving Noah scrambling to find coverage before the shipper's warehouse closed. This happened multiple times per week. His job was to absorb the stress, find a solution, and keep the customer's operation running without escalation.
+
+Pricing was essentially real-time negotiation against market data. He had to factor in truck availability by region, fuel costs, driver willingness to run specific lanes, weather and seasonal patterns, and how urgently the load needed to move. Get it wrong and you either lose the load to a competitor or eat the margin.
+
+This is where Noah first learned to make decisions with incomplete information under time pressure — a skill that directly translates to technical environments where systems fail, priorities shift, and you need to act before you have perfect data.
+
+---
+
+## Real Estate Experience Detail
+
+### Real Estate — Managing High-Stakes Transactions
+
+At Signature Real Estate Group, Noah handled end-to-end residential transactions — from initial client consultation through closing. The work involved market analysis, property pricing, contract negotiation, and coordinating with lenders, inspectors, appraisers, escrow officers, and title companies.
+
+The most transferable skill: managing mid-transaction problems. Deals fall apart because of appraisal gaps, inspection findings, financing delays, and buyer cold feet. Noah's job wasn't just to negotiate terms — it was to keep rational decision-making happening when emotions were running high and stakes were real (people's homes, life savings, timelines).
+
+He learned to coordinate across 5-7 different parties who all had different incentives, timelines, and communication preferences. That's essentially stakeholder management — keeping everyone aligned on shared outcomes when each party optimizes for different things.
+
+---
+
+## Learning Path and Origin Story
+
+### How Noah Learned to Code
+
+Noah started coding in August 2024 — less than two years ago. He didn't come from a CS background or a bootcamp. He started because he noticed his daily screen time was 8+ hours and decided if he was going to stare at a screen that long, it should be building something.
+
+The catalyst was actually chess. Noah is a competitive chess player, and the story of AlphaZero beating Stockfish fascinated him — a system that learned purely through self-play, without any human chess knowledge, and developed completely novel strategies that grandmasters had never seen. That intersection of strategy, learning systems, and AI is what pulled him in.
+
+He started with Python fundamentals, then moved into data analysis (pandas, NumPy), then statistical modeling (scikit-learn), then into AI/ML systems. Within months he was building Portfolia — a full RAG pipeline — as a way to learn by shipping, not just studying.
+
+### Certifications and Formal Training
+
+- IBM AI Engineering Professional Certificate
+- IBM AI Developer Professional Certificate
+- IBM Data Science Professional Certificate
+- Applied Machine Learning (94.75% grade)
+
+What's notable isn't the certifications themselves — it's the velocity. Noah went from zero coding experience to building production AI systems in under a year while maintaining top 10% sales performance at Tesla. That signals learning speed, not just effort.
+
+---
+
+## Portfolia Development Challenges
+
+### Hardest Part of Building Portfolia
+
+When asked about the hardest part of building Portfolia, Noah says it's dealing with edge cases gracefully and minimizing hallucinations. That's the real engineering challenge — not getting the happy path working, but handling all the ways a conversation can go sideways while still giving accurate, grounded responses.
+
+### What's Next for Portfolia
+
+Noah's next goal for Portfolia is giving it access to the internet. If someone asks a question outside the knowledge base, instead of just saying "I don't know," Portfolia would be able to say something like "That's not in my knowledge base — want me to look it up for you?" This would make Portfolia a more complete assistant rather than being limited to just what's been embedded.
+
+---
+
 ## Contact Information
 
 - **Location**: Las Vegas, Nevada
-- **GitHub**: https://github.com/noahxl10
-- **LinkedIn**: https://linkedin.com/in/noahcuellar
+- **GitHub**: https://github.com/iNoahCodeGuy
+- **LinkedIn**: https://www.linkedin.com/in/noah-de-la-calzada-250412358/
 - **Email**: [Contact via Portfolia chat interface]
 - **Location**: Las Vegas, NV
 
-Noah is open to opportunities in data analysis, business intelligence, and software engineering roles where he can apply his unique combination of technical skills, business operations experience, and quantitative reasoning.

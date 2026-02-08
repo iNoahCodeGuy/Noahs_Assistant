@@ -247,6 +247,69 @@ class RagEngine:
         return result
 
     # ========== CORE GENERATION ==========
+
+    # Keywords that indicate the user is asking about Portfolia's own architecture.
+    # When pgvector returns 0 chunks for these, inject self-knowledge context.
+    _SELF_KNOWLEDGE_KEYWORDS = [
+        "built", "build", "retrieval", "pipeline", "architecture", "rag",
+        "langgraph", "pgvector", "embedding", "vector", "node", "generation",
+        "how do you work", "how does your", "how were you", "how are you built",
+        "what model", "which model", "tech stack", "supabase", "intent",
+        "classification", "how does this work", "routing", "grounding",
+        "similarity", "threshold", "hallucination", "crush flow", "crush",
+        "error", "graceful", "degradation", "quality", "validation",
+        "self-knowledge", "self knowledge", "memory", "bounded",
+        "stage 1", "stage 2", "stage 3", "stage 4", "stage 5", "stage 6", "stage 7",
+        "go deeper on", "explain how", "tell me about your",
+    ]
+
+    _SELF_KNOWLEDGE_CONTEXT = (
+        "I am Portfolia — Noah's AI portfolio assistant.\n\n"
+        "MY 21-NODE PIPELINE (assistant/flows/conversation_flow.py):\n"
+        "Each node receives the full state dict and returns a partial update.\n\n"
+        "Stage 1 — INTENT ROUTING (assistant/flows/node_logic/stage1_intent_router.py):\n"
+        "classify_message_intent() calls Claude Haiku (~150ms) to classify: knowledge_query, "
+        "crush_confession, greeting, small_talk, off_topic. Crush flow is a state machine "
+        "recovered from chat_history markers. _is_anonymous_choice()/_is_reveal_choice() use "
+        "exact-match for '1'/'2' to prevent false positives on phone numbers. "
+        "_looks_like_contact_info() uses regex for phone, email, and social handles. "
+        "Short continuations ('yes', 'go deeper') get expanded via the previous user question.\n\n"
+        "Stage 2 — CLASSIFICATION (stage2_query_classification.py, stage2_role_routing.py):\n"
+        "classify_role_mode() infers visitor type. classify_intent() determines query type "
+        "(technical, career, project, action_request). extract_entities() captures company names, "
+        "role titles, timeline hints.\n\n"
+        "Stage 3 — QUERY PREPARATION (stage3_query_composition.py):\n"
+        "assess_clarification_need(), compose_query() builds retrieval-ready prompt.\n\n"
+        "Stage 4 — RETRIEVAL & GROUNDING (stage4_retrieval_nodes.py):\n"
+        "retrieve_chunks() calls Supabase RPC match_kb_chunks for pgvector cosine similarity. "
+        "OpenAI text-embedding-3-small (1536 dims). Thresholds: 0.5 strict, 0.3 fallback. "
+        "validate_grounding() checks scores. handle_grounding_gap() detects self-knowledge "
+        "queries and injects synthetic chunks so I can answer about my own architecture.\n\n"
+        "Stage 5 — GENERATION (stage5_generation_nodes.py):\n"
+        "generate_draft() uses Claude Sonnet 4.5 (claude-sonnet-4-5-20250929). Chain-of-thought "
+        "for complex queries. hallucination_check() compares output against retrieved chunks.\n\n"
+        "Stage 6 — ENRICHMENT (stage6_action_planning.py, stage6_formatting_nodes.py):\n"
+        "plan_actions() detects hiring signals. format_answer() structures response.\n\n"
+        "Stage 7 — FINALIZATION (stage7_logging_nodes.py):\n"
+        "execute_actions() fires SMS via Twilio, email via Resend. update_memory() stores "
+        "signals with bounded sliding windows (10 topics, 20 entities).\n\n"
+        "RETRIEVAL: OpenAI text-embedding-3-small → Supabase pgvector cosine similarity "
+        "via match_kb_chunks RPC. File: assistant/retrieval/pgvector_retriever.py\n\n"
+        "GENERATION: Anthropic Claude Sonnet 4.5. Intent classification: Claude Haiku.\n\n"
+        "ERROR HANDLING: Graceful degradation if retrieval fails. Grounding validation catches "
+        "low-similarity results. Intent routing bypasses RAG for greetings/crush/off-topic. "
+        "Hallucination check compares generated text against source chunks. Bounded memory "
+        "prevents bloat in long conversations.\n\n"
+        "SYSTEM PROMPT: assistant/core/response_generator.py contains the inline system prompt "
+        "for terminal chat. assistant/prompts/prompt_hub.py contains the prompt for the API pipeline.\n\n"
+        "Code: https://github.com/iNoahCodeGuy"
+    )
+
+    def _is_self_knowledge_query(self, query: str) -> bool:
+        """Check if query is about Portfolia's own architecture."""
+        q = query.lower()
+        return any(kw in q for kw in self._SELF_KNOWLEDGE_KEYWORDS)
+
     @trace_generation
     def generate_response(self, query: str, chat_history: Optional[List[Dict[str, str]]] = None) -> str:
         """Generate an answer using RetrievalQA chain if available.
@@ -264,11 +327,19 @@ class RagEngine:
 
         # Retrieve context
         retrieved = self.retrieve(query)
+        matches = retrieved.get("matches", [])
+
+        # Self-knowledge fallback: if retrieval returned nothing and the query
+        # is about Portfolia's architecture, inject self-knowledge context so
+        # she can answer from her system prompt knowledge.
+        if not matches and self._is_self_knowledge_query(query):
+            logger.info(f"Self-knowledge fallback: 0 chunks for '{query[:60]}', injecting architecture context")
+            matches = [self._SELF_KNOWLEDGE_CONTEXT]
 
         # Generate response with context and chat history
         response = self.response_generator.generate_basic_response(
             query,
-            fallback_docs=retrieved.get("matches", []),
+            fallback_docs=matches,
             chat_history=chat_history
         )
 

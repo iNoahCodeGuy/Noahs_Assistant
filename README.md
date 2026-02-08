@@ -28,7 +28,7 @@ The assistant adapts its teaching style based on user roles (technical vs. non-t
 
 Recent improvements:
 - **Knowledge Base Cleanup**: Removed 661 broken chunks (89.2% of KB), now 100% high-quality content
-- **Performance Optimization**: 4.3x faster retrieval (72ms) using native pgvector RPC
+- **Performance Optimization**: Native pgvector RPC for fast semantic retrieval
 - **Interactive Chat**: New terminal interface (`chat_with_portfolia.py`) with debug mode
 - **Import Path Resolution**: Fixed all module imports to use `assistant/` directory
 - **Template Ready**: 26-section KB template available for expansion
@@ -136,7 +136,7 @@ This assistant demonstrates **every layer of a production AI application**:
 
 ### 📊 Data Pipeline Management
 - **ETL Process**: Document ingestion, parsing, chunking (500-token strategy)
-- **Embedding Generation**: OpenAI text-embedding-3-small (768 dimensions, $0.0001/1K tokens)
+- **Embedding Generation**: OpenAI text-embedding-3-small (1536 dimensions, $0.00002/1K tokens)
 - **Storage**: Supabase Postgres + pgvector, idempotent migrations
 - **Enterprise Application**: Scales to Confluence, Zendesk, SharePoint ingestion
 - **Ask:** "Show me the data pipeline" | "How do you process documents?"
