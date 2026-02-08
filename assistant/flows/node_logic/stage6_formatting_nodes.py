@@ -33,6 +33,67 @@ from assistant.flows.node_logic.util_code_validation import is_valid_code_snippe
 
 logger = logging.getLogger(__name__)
 
+# ── Link throttling constants ──────────────────────────────────────
+_LINK_PATTERN = re.compile(
+    r'https?://(?:github\.com/iNoahCodeGuy|linkedin\.com/in/noah[^\s)]*)',
+    re.IGNORECASE,
+)
+_LINK_COOLDOWN = 2  # require at least 2 link-free responses between link appearances
+
+
+def _throttle_links(answer: str, chat_history: list) -> str:
+    """Strip GitHub/LinkedIn links if they appeared too recently in the conversation.
+
+    Scans the last N assistant messages. If any of the most recent _LINK_COOLDOWN
+    responses already contain a link, all portfolio links are removed from the
+    current answer. This caps link frequency to roughly every 3rd–4th response.
+
+    Direct contact/connection requests are exempt — if the user explicitly asks
+    for links, they always get them.
+    """
+    if not _LINK_PATTERN.search(answer):
+        return answer  # no links to throttle
+
+    # Collect recent assistant messages (most recent first)
+    recent_assistant: list[str] = []
+    for msg in reversed(chat_history):
+        if isinstance(msg, dict):
+            role = msg.get("role", "") or msg.get("type", "")
+            content = msg.get("content", "")
+        elif hasattr(msg, "type"):
+            role = getattr(msg, "type", "") or getattr(msg, "role", "")
+            content = getattr(msg, "content", "")
+        else:
+            continue
+        if role in ("assistant", "ai") and content:
+            recent_assistant.append(content)
+        if len(recent_assistant) >= _LINK_COOLDOWN:
+            break
+
+    # If any of the last _LINK_COOLDOWN responses had a link, suppress this one
+    if any(_LINK_PATTERN.search(resp) for resp in recent_assistant):
+        stripped = _LINK_PATTERN.sub("", answer)
+        # Clean up orphaned formatting left behind (e.g. "GitHub:  |")
+        stripped = re.sub(r'\|\s*$', '', stripped, flags=re.MULTILINE)
+        stripped = re.sub(r':\s*\|', ' |', stripped)
+        stripped = re.sub(r'\|\s*\|', '|', stripped)
+        stripped = re.sub(r'\s*\|\s*$', '', stripped, flags=re.MULTILINE)
+        # Remove lines that are now empty or just whitespace + punctuation
+        lines = stripped.split('\n')
+        cleaned_lines = []
+        for line in lines:
+            # Skip lines that became just labels with no URL
+            if re.match(r'^\s*(GitHub|LinkedIn|GitHub \(.*\)|LinkedIn \(.*\))\s*:?\s*$', line, re.IGNORECASE):
+                continue
+            cleaned_lines.append(line)
+        stripped = '\n'.join(cleaned_lines)
+        # Collapse triple+ newlines
+        stripped = re.sub(r'\n{3,}', '\n\n', stripped)
+        logger.info("Link throttle: suppressed links (cooldown not met)")
+        return stripped.strip()
+
+    return answer
+
 
 def _extract_content_from_message(msg) -> str:
     """Extract content from message (handles dict, LangChain message objects, and strings).
@@ -203,7 +264,7 @@ Your answer should:
             role=state.get("role", ""),
             chat_history=state.get("chat_history", []),
             extra_instructions=retry_instructions,
-            model_name=state.get("analytics_metadata", {}).get("selected_model", "gpt-4o-mini")
+            model_name=state.get("analytics_metadata", {}).get("selected_model", "claude-sonnet-4-5-20250929")
         )
 
         # Validate retry succeeded
@@ -409,6 +470,108 @@ def _remove_markdown_headers(text: str) -> str:
     return result.strip()
 
 
+def _strip_menu_endings(text: str) -> str:
+    """Remove trailing sentences that offer menu-style multiple options.
+
+    Detects and strips endings like:
+    - "Want to hear about X or Y?"
+    - "Would you like to explore X or Y?"
+    - "Shall I go into X or Y?"
+    - "Want to see the code, or should I go deeper on one of them?"
+
+    Args:
+        text: Answer text that may end with a menu-style question
+
+    Returns:
+        Text with menu endings removed
+    """
+    if not text:
+        return text
+
+    stripped = text.rstrip()
+
+    # Find the last sentence boundary (". " or "! " or "? " or newline)
+    last_boundary = -1
+    for m in re.finditer(r'(?:[.!?]\s+|\n)', stripped):
+        last_boundary = m.end()
+
+    if last_boundary > 0:
+        last_sentence = stripped[last_boundary:]
+    else:
+        last_sentence = stripped
+
+    # Menu patterns to detect
+    menu_patterns = [
+        # trigger word + "or" + question mark
+        re.compile(
+            r'(?:Want|Would you like|Shall I|Interested in|Curious about)'
+            r'.*?\bor\b.*?\?',
+            re.IGNORECASE,
+        ),
+        # "Want" + question mark (no "or" needed)
+        re.compile(r'\bWant\b.*?\?', re.IGNORECASE),
+        # "would you rather"
+        re.compile(r'\bwould you rather\b.*?\?', re.IGNORECASE),
+        # "should I" + question mark
+        re.compile(r'\bshould I\b.*?\?', re.IGNORECASE),
+    ]
+
+    matched = False
+    for pattern in menu_patterns:
+        if pattern.search(last_sentence):
+            matched = True
+            break
+
+    if matched:
+        logger.info("Menu ending detected: '%s'", last_sentence[:80])
+        if last_boundary > 0:
+            result = stripped[:last_boundary].rstrip()
+            if result:
+                logger.info("Stripped menu ending successfully")
+                return result
+        # Entire text is the menu sentence — return as-is
+        logger.info("Menu ending IS the entire text — keeping as-is")
+    else:
+        logger.debug("No menu ending detected in: '%s'", last_sentence[:80])
+
+    return text
+
+
+def _strip_italic_emphasis(text: str) -> str:
+    """Remove italic emphasis formatting while preserving bold.
+
+    Strips single-asterisk italic pairs (*word* -> word) and
+    underscore italic pairs (_word_ -> word). Preserves bold (**word**).
+
+    Args:
+        text: Answer text that may contain italic formatting
+
+    Returns:
+        Text with italic emphasis removed
+    """
+    if not text:
+        return text
+
+    # First, protect bold pairs by replacing them with a placeholder
+    bold_placeholder = "\x00BOLD\x00"
+    protected = re.sub(r'\*\*(.+?)\*\*', lambda m: f"{bold_placeholder}{m.group(1)}{bold_placeholder}", text)
+
+    # Strip remaining single-asterisk italic pairs
+    protected = re.sub(r'\*([^*\n]+?)\*', r'\1', protected)
+
+    # Restore bold pairs
+    result = protected.replace(bold_placeholder, "**")
+
+    # Strip underscore italics (_word_ -> word), but not __bold__
+    # Protect double underscores first
+    dunder_placeholder = "\x00DUNDER\x00"
+    result = re.sub(r'__(.+?)__', lambda m: f"{dunder_placeholder}{m.group(1)}{dunder_placeholder}", result)
+    result = re.sub(r'(?<!\w)_([^_\n]+?)_(?!\w)', r'\1', result)
+    result = result.replace(dunder_placeholder, "__")
+
+    return result
+
+
 def _add_subcategory_code_blocks(
     sections: List[str],
     active_subcats: List[str],
@@ -450,14 +613,7 @@ def _add_subcategory_code_blocks(
                         description="ConversationState schema with all tracked fields",
                     )
                     sections.append("")
-                    sections.append(
-                        content_blocks.render_block(
-                            "State Management Schema",
-                            formatted_code,
-                            summary="See the ConversationState dataclass",
-                            open_by_default=depth >= 3,
-                        )
-                    )
+                    sections.append(formatted_code)
 
         # Data pipeline: Show pgvector retrieval
         if "data_pipeline_depth" in active_subcats:
@@ -475,14 +631,7 @@ def _add_subcategory_code_blocks(
                         description="Vector search with Supabase RPC",
                     )
                     sections.append("")
-                    sections.append(
-                        content_blocks.render_block(
-                            "RAG Pipeline Code",
-                            formatted_code,
-                            summary="See the pgvector retrieval implementation",
-                            open_by_default=depth >= 3,
-                        )
-                    )
+                    sections.append(formatted_code)
 
     except Exception as exc:
         logger.warning(f"Subcategory code enrichment failed: {exc}")
@@ -1714,20 +1863,16 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
     body_text, sources_text = _split_answer_and_sources(base_answer)
     # Remove chunk citation phrases that break first-person narrative
     body_text = _remove_chunk_citations(body_text)
-    summary_lines = _summarize_answer(body_text, depth)
+    # Remove markdown headers that leak from KB chunks
+    body_text = _remove_markdown_headers(body_text)
+    # Strip italic emphasis (*word* -> word) while preserving bold
+    body_text = _strip_italic_emphasis(body_text)
+    # Strip menu-style endings ("Want X or Y?")
+    body_text = _strip_menu_endings(body_text)
 
+    # Clean, conversational output — no HTML wrappers or "Teaching Takeaways" template
     sections: List[str] = []
-    sections.append("**Teaching Takeaways**")
-    sections.extend(summary_lines or ["- I pulled the relevant context and kept the answer grounded."])
-
-    details_block = content_blocks.render_block(
-        "Full Walkthrough",
-        body_text,
-        summary="Expand for the detailed explanation",
-        open_by_default=depth >= 2,
-    )
-    sections.append("")
-    sections.append(details_block)
+    sections.append(body_text)
 
     # Extract active technical subcategories for smart artifact selection
     active_subcats = state.get("analytics_metadata", {}).get("technical_subcategories", [])
@@ -1750,14 +1895,7 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
 
             analytics_report = render_live_analytics(analytics_data, state.get("role"), focus=None)
             sections.append("")
-            sections.append(
-                content_blocks.render_block(
-                    "Live Analytics Snapshot",
-                    analytics_report,
-                    summary="View Supabase analytics",
-                    open_by_default=depth >= 3,
-                )
-            )
+            sections.append(f"**Live Analytics Snapshot**\n{analytics_report}")
         except Exception as exc:
             logger.error(f"Failed to fetch live analytics: {exc}")
             sections.append("")
@@ -1766,40 +1904,19 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
     # Cost/latency/grounding metrics
     if "include_metrics_block" in action_types:
         metrics, source = content_blocks.cost_latency_grounded_block()
-        metrics_body = list(metrics) + [f"Source: {source}"]
+        metrics_lines = "\n".join(f"- {m}" for m in metrics)
         sections.append("")
-        sections.append(
-            content_blocks.render_block(
-                "Cost · Latency · Grounding",
-                metrics_body,
-                summary="Metrics snapshot",
-                open_by_default=depth >= 3,
-            )
-        )
+        sections.append(f"**Cost · Latency · Grounding**\n{metrics_lines}\n_Source: {source}_")
 
     # Engineering sequence diagram
     if "include_sequence_diagram" in action_types or (show_technical_depth and "architecture_depth" in active_subcats):
         sections.append("")
-        sections.append(
-            content_blocks.render_block(
-                "Engineering Sequence",
-                content_blocks.engineering_sequence_diagram(),
-                summary="See the LangGraph handoff",
-                open_by_default=depth >= 2,
-            )
-        )
+        sections.append(content_blocks.engineering_sequence_diagram())
 
     # Enterprise adaptation diagram
     if "include_adaptation_diagram" in action_types:
         sections.append("")
-        sections.append(
-            content_blocks.render_block(
-                "Enterprise Adaptation",
-                content_blocks.enterprise_adaptation_diagram(),
-                summary="Show the adaptation map",
-                open_by_default=False,
-            )
-        )
+        sections.append(content_blocks.enterprise_adaptation_diagram())
 
     # Subcategory-aware code enrichments
     if show_technical_depth and active_subcats:
@@ -1865,15 +1982,7 @@ def build_conversation_graph():
                 description="LangGraph StateGraph orchestration with 18 nodes across 7 pipeline stages",
             )
             sections.append("")
-            sections.append(
-                content_blocks.render_block(
-                    "Architecture Code Reference",
-                    formatted_code,
-                    summary="View the conversation pipeline structure",
-                    open_by_default=depth >= 3,
-                )
-            )
-            sections.append(content_blocks.code_display_guardrails())
+            sections.append(formatted_code)
         else:
             # Normal code retrieval from code index
             try:
@@ -1895,15 +2004,7 @@ def build_conversation_graph():
                         description="Core logic referenced in this explanation",
                     )
                     sections.append("")
-                    sections.append(
-                        content_blocks.render_block(
-                            "Code Reference",
-                            formatted_code,
-                            summary="Peek at the implementation",
-                            open_by_default=depth >= 3,
-                        )
-                    )
-                    sections.append(content_blocks.code_display_guardrails())
+                    sections.append(formatted_code)
             elif "include_code_reference" in action_types:
                 sections.append("")
                 sections.append("Code index is refreshing; happy to walk through the architecture instead.")
@@ -1923,48 +2024,18 @@ def build_conversation_graph():
                     when_to_switch=explanation_data.get("when_to_switch", ""),
                 )
                 sections.append("")
-                sections.append(
-                    content_blocks.render_block(
-                        f"Why {import_name}",
-                        formatted,
-                        summary=f"Stack choice: {import_name}",
-                        open_by_default=False,
-                    )
-                )
+                sections.append(f"**Why {import_name}?**\n{formatted}")
         else:
             relevant_imports = search_import_explanations(query, role, top_k=3)
             if relevant_imports:
-                bullets = []
-                for imp_data in relevant_imports:
-                    bullets.append(
-                        f"{imp_data['import']}: {imp_data['explanation']}"
-                    )
+                bullets = "\n".join(f"- **{imp_data['import']}**: {imp_data['explanation']}" for imp_data in relevant_imports)
                 sections.append("")
-                sections.append(
-                    content_blocks.render_block(
-                        "Stack Justifications",
-                        bullets,
-                        summary="Why these libraries?",
-                        open_by_default=False,
-                    )
-                )
+                sections.append(f"**Stack Justifications**\n{bullets}")
 
     # Fun facts
     if "share_fun_facts" in action_types:
         sections.append("")
-        fun_fact_lines = [
-            line.lstrip("- ").strip()
-            for line in content_blocks.fun_facts_block().split("\n")
-            if line.strip()
-        ]
-        sections.append(
-            content_blocks.render_block(
-                "Fun Facts",
-                fun_fact_lines,
-                summary="Quick facts about Noah",
-                open_by_default=False,
-            )
-        )
+        sections.append(content_blocks.fun_facts_block())
 
     # MMA fight link
     if "share_mma_link" in action_types or state.get("query_type") == "mma":
@@ -2004,17 +2075,8 @@ def build_conversation_graph():
             "💌 Your message is safe. Share it anonymously or add contact info and I'll pass it privately to Noah."
         )
 
-    # Sources (citations from retrieval)
-    if sources_text:
-        sections.append("")
-        sections.append(
-            content_blocks.render_block(
-                "Sources",
-                [line.strip() for line in sources_text.splitlines() if line.strip()],
-                summary="Show citations",
-                open_by_default=False,
-            )
-        )
+    # Sources — omit from displayed answer to keep output clean.
+    # The sources are still available in the retrieved_chunks state field.
 
     # Merged: Generate followup prompts (from suggest_followups node)
     # Use subcategory-aware logic for precision targeting
@@ -2059,10 +2121,9 @@ def build_conversation_graph():
         query=query  # Pass query to filter current topic from suggestions
     )
 
+    # Store followup prompts in state for the frontend to use as suggestion chips,
+    # but don't append them to the answer text — keeps the response conversational.
     if followups:
-        sections.append("")
-        sections.append("**Where next?**")
-        sections.extend(f"- {item}" for item in followups)
         state["followup_prompts"] = followups
 
     # SUBTLE AVAILABILITY MENTION - Natural transition to resume when engagement is high
@@ -2101,45 +2162,11 @@ def build_conversation_graph():
 
     enriched_answer = "\n".join(section for section in sections if section is not None)
 
-    # SAFETY NET: Ensure turn references are present for Turn 3+
-    chat_history = state.get("chat_history", [])
-    current_turn = sum(1 for msg in chat_history
-                       if (isinstance(msg, dict) and msg.get("role") == "user") or
-                          (hasattr(msg, "type") and msg.type == "human")) + 1
-
-    if current_turn >= 3 and enriched_answer:
-        # Check if answer already has turn references
-        turn_reference_patterns = ["turn 1", "turn 2", "turn 3", "building on", "earlier discussion"]
-        has_reference = any(pattern in enriched_answer.lower() for pattern in turn_reference_patterns)
-
-        if not has_reference:
-            # Inject turn reference at the start
-            # Fix 5: Pass current query to avoid mismatched turn references
-            previous_topic = _detect_previous_topic(chat_history, query)
-            if previous_topic:
-                turn_prefix = f"Building on our {previous_topic} discussion from Turn {current_turn - 1}, "
-                # Lowercase first letter of answer to make it flow naturally
-                if enriched_answer and enriched_answer[0].isupper():
-                    enriched_answer = turn_prefix + enriched_answer[0].lower() + enriched_answer[1:]
-                else:
-                    enriched_answer = turn_prefix + enriched_answer
-                logger.info(f"Injected turn reference at format_answer: Turn {current_turn}")
-
-    # Validate answer for cross-turn references and memory demonstration
-    if enriched_answer and chat_history and len(chat_history) >= 4:
-        # Validate cross-turn references
-        validation = _validate_cross_turn_references(enriched_answer, chat_history)
-        state.setdefault("answer_validation", {})["cross_turn_references"] = validation
-
-        # Validate memory demonstration (if query asks about inference/memory)
-        query_lower = state.get("query", "").lower()
-        is_memory_query = any(phrase in query_lower for phrase in [
-            "memory", "inference", "how do you", "progressive", "improve", "success criteria"
-        ])
-
-        if is_memory_query:
-            memory_validation = _validate_memory_demonstration(enriched_answer)
-            state.setdefault("answer_validation", {})["memory_demonstration"] = memory_validation
+    # ── Link throttling ───────────────────────────────────────────────
+    # Count recent assistant responses that already contained a link.
+    # If a link appeared in the last 2 responses, strip links from this one.
+    # This ensures links appear on at most every 3rd–4th response.
+    enriched_answer = _throttle_links(enriched_answer, chat_history)
 
     # Return partial update dict (not full state) to avoid preserving old fields
     # In LangGraph StateGraph, nodes should return partial updates

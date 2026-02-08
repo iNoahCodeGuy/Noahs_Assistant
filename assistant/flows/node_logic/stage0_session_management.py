@@ -142,12 +142,32 @@ def initialize_conversation_state(state: ConversationState) -> ConversationState
         state.setdefault("clarification_needed", False)
         state.setdefault("clarifying_question", "")
 
-        # CRITICAL: Clear volatile classification fields from previous turns
-        # These must be re-computed for each query by classify_intent
+        # Visitor detection & engagement pacing
+        state.setdefault("visitor_type", "unknown")
+        state.setdefault("message_count", 0)
+        state.setdefault("questions_asked_about_visitor", 0)
+        state.setdefault("buying_signals_count", 0)
+        state.setdefault("hm_capture_step", None)
+        state.setdefault("hm_soft_offer_made", False)
+
+        # CRITICAL: Clear volatile per-turn fields from previous turns.
+        # These must be re-computed each turn. Without this, flags like
+        # pipeline_halt or clarification_needed persist and cause the
+        # pipeline to short-circuit with stale data on subsequent turns.
         state["query_type"] = None  # Will be set by classify_intent
         state["menu_choice"] = None  # Will be set if menu selection detected
         state["is_repeated_menu_selection"] = False  # Reset per turn
         state["edge_case_type"] = None  # Will be set by edge case detection
+        state["pipeline_halt"] = False  # Re-set by nodes that need to halt
+        state["skip_rag"] = False  # Re-set by classify_message_intent
+        state["message_intent"] = None  # Re-set by classify_message_intent
+        state["is_greeting"] = False  # Re-set by handle_greeting
+        state["is_continuation"] = False  # Re-set by classify_intent
+        state["is_self_referential"] = False  # Re-set by classify_intent
+        state["clarification_needed"] = False  # Re-set by assess_clarification_need
+        state["clarifying_question"] = ""  # Re-set by ask_clarifying_question
+        state["answer"] = ""  # Will be set by generation or short-circuit
+        state["draft_answer"] = ""  # Will be set by generate_draft
 
     return state
 

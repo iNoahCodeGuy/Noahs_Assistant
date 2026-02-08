@@ -949,6 +949,84 @@ DATA_PIPELINE_KEYWORDS = [
 ]
 
 
+def _build_engagement_context(state: dict) -> str | None:
+    """Build dynamic engagement pacing instructions based on conversation state.
+
+    Returns a prompt string to inject into extra_instructions, or None if
+    no special pacing is needed.
+    """
+    msg_count = state.get("message_count", 0)
+    visitor_type = state.get("visitor_type", "unknown")
+    questions_asked = state.get("questions_asked_about_visitor", 0)
+    buying_signals = state.get("buying_signals_count", 0)
+    soft_offer_made = state.get("hm_soft_offer_made", False)
+
+    lines = ["\n\nIMPORTANT GUIDANCE — CONVERSATION PACING:"]
+    lines.append(f"Message #{msg_count} | Visitor: {visitor_type} | "
+                 f"Buying signals: {buying_signals} | Questions asked about visitor: {questions_asked}")
+
+    # Core pacing rules
+    lines.append(
+        "RULES (follow strictly):\n"
+        "- Maximum ONE question per response. Zero questions is fine. Two is never fine.\n"
+        "- NEVER offer menus or multiple-choice lists ('Want to hear about A, B, or C?'). "
+        "Instead, make ONE natural suggestion or end without a question.\n"
+        "  Bad: 'Want to hear about his projects, skills, or background?'\n"
+        "  Good: 'The attrition model is the most technically interesting if you want to go deeper.'\n"
+        "  Good: End with a statement that invites follow-up, not a question."
+    )
+
+    # Message-based visitor question pacing
+    if msg_count == 1:
+        lines.append("- This is message 1. Answer their question. Do NOT ask about them yet.")
+    elif msg_count in (2, 3) and questions_asked < 2:
+        # Visitor question rule is injected as the VERY LAST instruction
+        # (see below, after RESPONSE FORMAT REMINDER) so it's freshest in
+        # Claude's context window and doesn't get buried by the knowledge answer.
+        pass
+    elif msg_count >= 4:
+        lines.append(
+            "- Message 4+: Only ask about the visitor if the conversation naturally opens a door. "
+            "Don't force it. Focus on answering well."
+        )
+
+    # Curiosity gaps (every 3rd-4th response)
+    if msg_count >= 3 and msg_count % 3 == 0:
+        lines.append(
+            "- CURIOSITY GAP: In this response, briefly mention something interesting without "
+            "fully explaining it. Let them ask. Examples:\n"
+            "  'The dual threshold system is the part most people find surprising.'\n"
+            "  'His path into tech started with a chess match he watched in 2017.'\n"
+            "  'The grounding validation is what really separates this from most chatbots.'"
+        )
+
+    # Wit reminder (every 3rd-4th, offset from curiosity gaps)
+    if msg_count >= 2 and (msg_count + 1) % 4 == 0:
+        lines.append(
+            "- OPINIONS: If this answer touches something you have a genuine opinion about "
+            "(from your OPINIONS YOU HOLD list), state it. Start with WHY before WHAT."
+        )
+
+    # Visitor-type-specific guidance
+    if visitor_type == "hiring_manager":
+        lines.append(
+            "- HIRING MANAGER detected. Match Noah's skills to their implied needs. "
+            "Build trust before asking for anything."
+        )
+        # Soft offer injection
+        if soft_offer_made and msg_count >= 10 and buying_signals == 0:
+            lines.append(
+                "- Include this naturally at the end: 'By the way, if you'd like to connect "
+                "with Noah directly, just let me know and I'll set it up.'"
+            )
+    elif visitor_type == "crush":
+        lines.append("- CRUSH detected. Be a fun, conspiratorial wingman.")
+    elif visitor_type == "casual":
+        lines.append("- CASUAL visitor. Let them drive. Follow their curiosity. Low pressure.")
+
+    return "\n".join(lines)
+
+
 def _is_data_pipeline_query(query: str) -> bool:
     """Detect if query is about data pipeline/data flow.
 
@@ -1064,6 +1142,16 @@ def _assess_query_complexity(query: str, chat_history: List[Dict], retrieved_chu
     query_lower = query.lower()
     word_count = len(query.split())
 
+    # Self-knowledge queries about Portfolia's own architecture are never "simple"
+    # — they require the system prompt's self-knowledge section to answer well
+    self_knowledge_keywords = [
+        "built", "retrieval", "pipeline", "architecture", "rag", "langgraph",
+        "pgvector", "embedding", "vector", "node", "generation", "how do you work",
+        "how does your", "how were you", "tech stack", "supabase",
+    ]
+    if any(kw in query_lower for kw in self_knowledge_keywords):
+        return "medium"
+
     # Simple: Short queries, menu selections, greetings
     if word_count <= 5 or query_lower in ["1", "2", "3", "4"]:
         return "simple"
@@ -1080,81 +1168,21 @@ def _assess_query_complexity(query: str, chat_history: List[Dict], retrieved_chu
 
 
 def select_model_for_task(state: ConversationState) -> str:
-    """Select appropriate OpenAI model based on query complexity, type, and role.
+    """Select model for generation.
 
-    Uses different models for different reasoning depths:
-    - Reasoning model (o1-preview): Complex architecture, multi-step reasoning, planning
-    - Technical model (gpt-4o-mini): Technical queries for hiring managers/developers
-    - Default model (gpt-4): Most queries requiring balanced quality/speed
-    - Fast model (gpt-3.5-turbo): Simple factual queries, greetings
-    - Model routing based on complexity: Simple queries → gpt-4o-mini, Complex → gpt-4o
+    Generation now uses Anthropic Claude Sonnet 4.5 (claude-sonnet-4-5-20250929)
+    for all queries. Returns None to use the default model configured in
+    rag_factory.py. The previous OpenAI model routing (gpt-4o, gpt-4o-mini)
+    is no longer applicable since the backend switched to Anthropic.
 
     Args:
         state: Current conversation state with query and classification metadata
 
     Returns:
-        Model name string (e.g., "o1-preview", "gpt-4o-mini", "gpt-4", "gpt-3.5-turbo")
+        None (uses default Claude Sonnet 4.5)
     """
-    query = state.get("query", "").lower()
-    role_mode = state.get("role_mode", "")
-    query_type = state.get("query_type", "")
-    chat_history = state.get("chat_history", [])
-    retrieved_chunks = state.get("retrieved_chunks", [])
-
-    # Use GPT-4o for structured technical responses requiring comprehensive explanations
-    # gpt-4o-mini struggles with structured output at temperature=0.9
-    technical_query_types = ["menu_selection", "technical", "architecture", "code_related"]
-    technical_roles = ["hiring_manager_technical", "software_developer"]
-
-    # Menu option 1 (tech stack) requires structured output - use gpt-4o
-    is_menu_option_one = (
-        query_type == "menu_selection" and state.get("menu_choice") == "1"
-        or state.get("entities", {}).get("menu_selection") == "1"
-        or query.strip() == "1"
-    )
-    if is_menu_option_one:
-        logger.info(f"Using gpt-4o for structured tech stack response (menu option 1)")
-        return "gpt-4o"
-
-    # Model routing based on query complexity
-    query_complexity = _assess_query_complexity(state.get("query", ""), chat_history, retrieved_chunks)
-
-    if (query_type in technical_query_types or role_mode in technical_roles):
-        if query_complexity == "simple":
-            # Simple queries → faster model (but still high quality)
-            selected_model = "gpt-4o-mini"
-            logger.info(f"Model routing: complexity=simple, model={selected_model}")
-            return selected_model
-        elif query_complexity == "complex":
-            # Complex queries → best model for quality
-            selected_model = "gpt-4o"
-            logger.info(f"Model routing: complexity=complex, model={selected_model}")
-            return selected_model
-        else:
-            # Medium complexity → use gpt-4o for best quality (portfolio priority)
-            logger.info(f"Using gpt-4o for technical query (type={query_type}, role={role_mode}, complexity=medium)")
-            return "gpt-4o"
-
-    # Use reasoning model for complex tasks requiring extended thinking
-    complex_keywords = [
-        "compare", "tradeoffs", "why choose", "planning", "strategy",
-        "optimization", "scaling", "enterprise", "evaluate", "recommend"
-    ]
-
-    # Check for complex reasoning needs (but not basic architecture explanations)
-    if any(kw in query for kw in complex_keywords) and "architecture" not in query:
-        logger.info(f"Using reasoning model for complex query: {query[:50]}...")
-        return supabase_settings.openai_reasoning_model
-
-    # Use fast model for simple queries
-    simple_keywords = [
-        "hello", "hi", "hey", "thanks", "thank you",
-        "what is", "who is", "when", "where"
-    ]
-
-    if any(kw in query for kw in simple_keywords) and len(query.split()) < 8:
-        logger.info(f"Using fast model for simple query: {query[:50]}...")
-        return supabase_settings.openai_fast_model
+    # All generation uses the default Claude Sonnet 4.5 configured in rag_factory.py
+    return None
 
     # Default to standard model for most queries
     return supabase_settings.openai_model
@@ -1421,7 +1449,7 @@ def _should_use_chain_of_thought(state: ConversationState) -> bool:
         return True
 
     # Explicit explanation requests
-    explanation_patterns = ["explain", "walk me through", "how does", "why does", "teach me"]
+    explanation_patterns = ["explain", "walk me through", "how does", "how did", "how were", "how was", "how are", "why does", "teach me"]
     if any(p in query for p in explanation_patterns):
         logger.info(f"CoT triggered: explanation request detected")
         return True
@@ -1840,6 +1868,21 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     # Add display intelligence based on query classification
     extra_instructions = []
 
+    # CONTINUATION DETECTION - When user says "tell me more" / "go deeper",
+    # instruct LLM to build on previous answer instead of repeating it.
+    if state.get("is_continuation"):
+        extra_instructions.append(
+            "\n\nCRITICAL - CONTINUATION REQUEST:\n"
+            f"The user's original message was: \"{state.get('original_query', '')}\"\n"
+            "They are asking you to GO DEEPER on the topic you already discussed.\n"
+            "DO NOT repeat your previous answer. Instead:\n"
+            "- Provide NEW details, technical specifics, or implementation insights\n"
+            "- Dive into aspects you didn't cover in your previous response\n"
+            "- If the topic is your own architecture, explain HOW things work, not just WHAT they are\n"
+            "- Reference your previous answer briefly ('As I mentioned...') then expand\n"
+        )
+        logger.info(f"Added continuation instructions for original_query='{state.get('original_query', '')}'")
+
     # OUT-OF-SCOPE DETECTION - Gracefully handle queries outside knowledge base
     from assistant.flows.node_logic.stage6_formatting_nodes import detect_out_of_scope
     is_out_of_scope, bridge_pillar, bridge_prompt = detect_out_of_scope(query, state.get("role_mode", "explorer"))
@@ -1894,7 +1937,7 @@ Key Metric: 4 chunks × ~500 tokens = 2000 tokens context.
 
 **5. Response Generation**
 Purpose: Synthesize grounded response from context.
-Implementation: GPT-4o-mini (default), temperature 0.3, grounding validation.
+Implementation: Claude Sonnet 4.5 (default), temperature 0.3, grounding validation.
 Key Metric: $0.0003/query average cost.
 
 **6. Analytics Logging**
@@ -2909,6 +2952,30 @@ how well you retrieved information about him.
             "7. Connect the current architecture to the enterprise use case clearly\n"
         )
 
+    # ── Engagement pacing context ──────────────────────────────────────────
+    engagement_ctx = _build_engagement_context(state)
+    if engagement_ctx:
+        extra_instructions.append(engagement_ctx)
+
+    # Reinforce output format rules (these override any conflicting instructions)
+    extra_instructions.append(
+        "\n\nRESPONSE FORMAT REMINDER: Write in natural conversational paragraphs. "
+        "Do NOT use markdown headers (# or ##). Do NOT use bold text for section labels "
+        "like '**1. Name**' or '**Stage 1**'. Weave information into flowing prose. "
+        "Bold is only for emphasis on a key phrase within a sentence. "
+        "Do NOT use italic emphasis (*word*). NEVER end with a menu offering two+ options ('Want X or Y?')."
+    )
+
+    # ── VISITOR QUESTION — injected LAST so it's freshest in context window ──
+    _vq_msg_count = state.get("message_count", 0)
+    _vq_questions_asked = state.get("questions_asked_about_visitor", 0)
+    if _vq_msg_count in (2, 3) and _vq_questions_asked < 2:
+        extra_instructions.append(
+            "\n\nYOUR FINAL SENTENCE IN THIS RESPONSE MUST BE A QUESTION ABOUT THE VISITOR. "
+            "This is not optional. Examples: 'What brings you to Noah's portfolio?' / "
+            "'Are you in tech yourself?' / 'What kind of role are you looking at?'"
+        )
+
     # Build the instruction suffix
     instruction_suffix = " ".join(extra_instructions) if extra_instructions else None
     base_instruction_suffix = instruction_suffix
@@ -3294,7 +3361,13 @@ how well you retrieved information about him.
         logger.debug("Applied post-generation first-person enforcement")
 
         # Detect and remove verbatim copying
-        if retrieved_chunks:
+        # Skip for self-knowledge chunks (source="self_knowledge") — verbatim use of
+        # authoritative self-knowledge is correct behavior, not a quality issue
+        is_self_knowledge = any(
+            isinstance(c, dict) and c.get("source") == "self_knowledge"
+            for c in (retrieved_chunks or [])
+        )
+        if retrieved_chunks and not is_self_knowledge:
             verbatim_check = _detect_verbatim_copying(answer, retrieved_chunks)
             if verbatim_check["severity"] in ["high", "medium"]:
                 logger.info(f"📝 Verbatim copying detected (severity: {verbatim_check['severity']}): {verbatim_check.get('detected_phrases', [])[:3]}")

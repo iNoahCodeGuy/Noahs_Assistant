@@ -145,7 +145,8 @@ Before we dive in, what best describes you?
 
                 # Show retrieval process
                 print_debug("\n🔍 Retrieving relevant chunks from knowledge base...")
-                chunks = retriever.retrieve(user_input, top_k=3)
+                effective_query = conversation_state.get("query", user_input)
+                chunks = retriever.retrieve(effective_query, top_k=3)
                 chunks_list = chunks if isinstance(chunks, list) else chunks.get('chunks', [])
 
                 if chunks_list:
@@ -165,12 +166,16 @@ Before we dive in, what best describes you?
 
             # Generate response
             try:
-                # Update state for intent router (preserve crush flow state)
+                # Update state for intent router
+                # chat_history is set so _detect_crush_flow_from_history can
+                # recover crush flow state even if fields were lost.
                 conversation_state["query"] = user_input
                 conversation_state["chat_history"] = chat_history
-                # Clear previous intent for re-classification (but keep crush flow state)
-                if not conversation_state.get("awaiting_crush_choice"):
-                    conversation_state.pop("message_intent", None)
+                # Clear volatile fields so they get re-classified each turn
+                conversation_state.pop("message_intent", None)
+                conversation_state.pop("skip_rag", None)
+                conversation_state.pop("pipeline_halt", None)
+                conversation_state.pop("is_self_referential", None)
 
                 # Run intent classification BEFORE RAG
                 conversation_state = classify_intent(conversation_state)
@@ -191,8 +196,14 @@ Before we dive in, what best describes you?
                         print_debug(f"Handled by intent router (no RAG)")
                 else:
                     # Knowledge query - use RAG
+                    # Use the (possibly expanded) query from intent router,
+                    # NOT the raw user_input. This matters for continuations
+                    # like "yes" which get expanded to the previous topic.
+                    effective_query = conversation_state.get("query", user_input)
+                    if debug_mode and effective_query != user_input:
+                        print_debug(f"Query expanded: '{user_input}' → '{effective_query}'")
                     response = rag_engine.generate_response(
-                        query=user_input,
+                        query=effective_query,
                         chat_history=chat_history
                     )
 
