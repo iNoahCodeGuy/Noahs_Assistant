@@ -38,7 +38,7 @@ _LINK_PATTERN = re.compile(
     r'https?://(?:github\.com/iNoahCodeGuy|linkedin\.com/in/noah[^\s)]*)',
     re.IGNORECASE,
 )
-_LINK_COOLDOWN = 2  # require at least 2 link-free responses between link appearances
+_LINK_COOLDOWN = 3  # require at least 3 link-free responses between link appearances
 
 
 def _throttle_links(answer: str, chat_history: list) -> str:
@@ -92,6 +92,7 @@ def _throttle_links(answer: str, chat_history: list) -> str:
         logger.info("Link throttle: suppressed links (cooldown not met)")
         return stripped.strip()
 
+    logger.debug(f"Link throttle: allowed (no links in last {_LINK_COOLDOWN} assistant messages)")
     return answer
 
 
@@ -479,6 +480,9 @@ def _strip_menu_endings(text: str) -> str:
     - "Shall I go into X or Y?"
     - "Want to see the code, or should I go deeper on one of them?"
 
+    Scans the last 3 sentences backward so trailing emoji / short phrases
+    after the menu question don't hide the match.
+
     Args:
         text: Answer text that may end with a menu-style question
 
@@ -490,50 +494,71 @@ def _strip_menu_endings(text: str) -> str:
 
     stripped = text.rstrip()
 
-    # Find the last sentence boundary (". " or "! " or "? " or newline)
-    last_boundary = -1
+    # Collect all sentence boundary positions (end of ". " / "! " / "? " / "\n")
+    boundaries = []
     for m in re.finditer(r'(?:[.!?]\s+|\n)', stripped):
-        last_boundary = m.end()
+        boundaries.append(m.end())
 
-    if last_boundary > 0:
-        last_sentence = stripped[last_boundary:]
-    else:
-        last_sentence = stripped
-
-    # Menu patterns to detect
+    # Menu patterns to detect (broadened to catch more variants)
     menu_patterns = [
-        # trigger word + "or" + question mark
+        # Any sentence starting with "Want" that ends with a question mark
+        re.compile(r'\bWant\b.*?\?', re.IGNORECASE),
+        # Any sentence starting with "Should I" that ends with a question mark
+        re.compile(r'\bShould I\b.*?\?', re.IGNORECASE),
+        # trigger word + "or" + question mark (broad)
         re.compile(
-            r'(?:Want|Would you like|Shall I|Interested in|Curious about)'
+            r'(?:Would you like|Shall I|Interested in|Curious about|Wanna)'
             r'.*?\bor\b.*?\?',
             re.IGNORECASE,
         ),
-        # "Want" + question mark (no "or" needed)
-        re.compile(r'\bWant\b.*?\?', re.IGNORECASE),
+        # Any sentence with "or" between two options followed by question mark
+        # e.g. "see the code, or go deeper on one of them?"
+        re.compile(r'.*?\bor\b\s+(?:should|shall|would|do you|I)\b.*?\?', re.IGNORECASE),
         # "would you rather"
         re.compile(r'\bwould you rather\b.*?\?', re.IGNORECASE),
-        # "should I" + question mark
-        re.compile(r'\bshould I\b.*?\?', re.IGNORECASE),
+        # "Anything else" / "anything specific"
+        re.compile(r'\b(?:Anything else|anything specific)\b.*?\?', re.IGNORECASE),
+        # "What would you like" / "Which" trailing question
+        re.compile(r'\b(?:What would you like|Which (?:one|topic|area))\b.*?\?', re.IGNORECASE),
+        # "Would you like" + question mark (no "or" needed)
+        re.compile(r'\bWould you like\b.*?\?', re.IGNORECASE),
     ]
 
-    matched = False
-    for pattern in menu_patterns:
-        if pattern.search(last_sentence):
-            matched = True
-            break
+    logger.info(
+        "_strip_menu_endings: text_len=%d, boundaries=%d, last_80='%s'",
+        len(stripped), len(boundaries), stripped[-80:],
+    )
 
-    if matched:
-        logger.info("Menu ending detected: '%s'", last_sentence[:80])
-        if last_boundary > 0:
-            result = stripped[:last_boundary].rstrip()
-            if result:
-                logger.info("Stripped menu ending successfully")
-                return result
-        # Entire text is the menu sentence — return as-is
-        logger.info("Menu ending IS the entire text — keeping as-is")
-    else:
-        logger.debug("No menu ending detected in: '%s'", last_sentence[:80])
+    # Scan backward through the last 3 sentence boundaries.
+    # For each boundary, check text from that boundary to end-of-string.
+    # This handles cases where emoji or a short phrase follows the menu question
+    # (e.g. "Want to see the code? 😄" — the "? " is a boundary, so the
+    #  last sentence is just "😄"; we need to also check the preceding sentence).
+    check_starts = boundaries[-3:] if boundaries else []
+    check_starts.reverse()  # check from latest boundary backward
+    # Also check from the very start (no boundary) as the fallback
+    if not check_starts:
+        check_starts = [0]
 
+    for start_pos in check_starts:
+        candidate = stripped[start_pos:]
+        for pattern in menu_patterns:
+            match = pattern.search(candidate)
+            if match:
+                # Cut at the boundary where the menu sentence begins
+                if start_pos > 0:
+                    result = stripped[:start_pos].rstrip()
+                    if result:
+                        logger.info(
+                            "Menu ending stripped at boundary %d: '%s'",
+                            start_pos, candidate[:80],
+                        )
+                        return result
+                # Entire text is the menu sentence — return as-is
+                logger.info("Menu ending IS the entire text — keeping as-is")
+                return text
+
+    logger.info("_strip_menu_endings: NO match in last sentences: '%s'", stripped[-80:])
     return text
 
 

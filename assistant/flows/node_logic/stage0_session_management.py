@@ -158,6 +158,7 @@ def initialize_conversation_state(state: ConversationState) -> ConversationState
         state["menu_choice"] = None  # Will be set if menu selection detected
         state["is_repeated_menu_selection"] = False  # Reset per turn
         state["edge_case_type"] = None  # Will be set by edge case detection
+        state["edge_case_detected"] = False  # Will be set by edge case detection
         state["pipeline_halt"] = False  # Re-set by nodes that need to halt
         state["skip_rag"] = False  # Re-set by classify_message_intent
         state["message_intent"] = None  # Re-set by classify_message_intent
@@ -178,14 +179,13 @@ def initialize_conversation_state(state: ConversationState) -> ConversationState
 
 _INITIAL_GREETING = dedent(
     """\
-    👋 Hey! I'm Portfolia — Noah's AI Assistant,
+    Hey, I'm Portfolia -- Noah's AI assistant.
 
-    Before we dive in, what best describes you?
-    1️⃣ Hiring Manager (Nontechnical)
-    2️⃣ Hiring Manager (Technical)
-    3️⃣ Software Developer
-    4️⃣ Just Looking Around
-    5️⃣ Looking to Confess Crush 💌
+    What brings you here?
+    1️⃣ Learn more about Noah
+    2️⃣ See what Noah has built
+    3️⃣ Just looking around
+    4️⃣ Confess a crush 💌
     """
 )
 

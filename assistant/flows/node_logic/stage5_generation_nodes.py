@@ -976,18 +976,26 @@ def _build_engagement_context(state: dict) -> str | None:
         "  Good: End with a statement that invites follow-up, not a question."
     )
 
-    # Message-based visitor question pacing
+    # Message-based engagement pacing
     if msg_count == 1:
-        lines.append("- This is message 1. Answer their question. Do NOT ask about them yet.")
-    elif msg_count in (2, 3) and questions_asked < 2:
-        # Visitor question rule is injected as the VERY LAST instruction
-        # (see below, after RESPONSE FORMAT REMINDER) so it's freshest in
-        # Claude's context window and doesn't get buried by the knowledge answer.
-        pass
-    elif msg_count >= 4:
         lines.append(
-            "- Message 4+: Only ask about the visitor if the conversation naturally opens a door. "
-            "Don't force it. Focus on answering well."
+            "- This is message 1. Answer their question. End with ONE question "
+            "specific to what they asked."
+        )
+    elif msg_count <= 4:
+        lines.append(
+            f"- Message {msg_count} (calibration). Acknowledge what they shared. "
+            "Adjust depth based on their responses."
+        )
+    elif msg_count <= 7:
+        lines.append(
+            f"- Message {msg_count} (teaching mode). Focus on explaining. "
+            "Drop intro questions — they already know you."
+        )
+    elif msg_count >= 8:
+        lines.append(
+            f"- Message {msg_count} (sustained engagement). They're still here — "
+            "match their energy. Treat company/role mentions as buying signals."
         )
 
     # Curiosity gaps (every 3rd-4th response)
@@ -1023,6 +1031,41 @@ def _build_engagement_context(state: dict) -> str | None:
         lines.append("- CRUSH detected. Be a fun, conspiratorial wingman.")
     elif visitor_type == "casual":
         lines.append("- CASUAL visitor. Let them drive. Follow their curiosity. Low pressure.")
+
+    # ── Traffic source detection ──────────────────────────────────────
+    # Scan current query + recent history for platform mentions
+    _ts_query = (state.get("original_query", "") or state.get("query", "") or "").lower()
+    _ts_history_text = ""
+    _ts_chat = state.get("chat_history", [])
+    for _m in _ts_chat[-6:] if _ts_chat else []:
+        _c = ""
+        if isinstance(_m, dict):
+            _c = _m.get("content", "")
+        elif hasattr(_m, "content"):
+            _c = getattr(_m, "content", "")
+        _ts_history_text += " " + _c.lower()
+    _ts_combined = f"{_ts_query} {_ts_history_text}"
+
+    _source_map = {
+        "linkedin": "LinkedIn visitor detected. Lead with technical depth and engineering decisions.",
+        "instagram": "Instagram visitor detected. Lead with outcomes, not jargon.",
+        "hinge": "Hinge/dating context detected. Keep it personal and light.",
+        "upwork": "Upwork visitor detected. Lead with shipped work and specific technologies.",
+        "referral": "Referral visitor detected. Skip intro — show the work directly.",
+        "someone told me": "Referral visitor detected. Skip intro — show the work directly.",
+        "friend sent me": "Referral visitor detected. Skip intro — show the work directly.",
+    }
+    for _keyword, _guidance in _source_map.items():
+        if _keyword in _ts_combined:
+            lines.append(f"- TRAFFIC SOURCE: {_guidance}")
+            break
+
+    # ── Buying signal injection ───────────────────────────────────────
+    if buying_signals > 0:
+        lines.append(
+            "- BUYING SIGNAL DETECTED. Connect Noah's work to the visitor's context. "
+            "Don't pivot into a pitch — let the engineering speak."
+        )
 
     return "\n".join(lines)
 
@@ -1796,8 +1839,23 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
 
     grounding_status = state.get("grounding_status")
     if grounding_status and grounding_status not in {"ok", "unknown"}:
-        # Return empty update dict (not state) to avoid preserving old answer
-        return {}
+        # Belt-and-suspenders: if query is self-referential but grounding failed
+        # (handle_grounding_gap should have caught this, but just in case),
+        # override grounding and let generation proceed with self-knowledge context
+        if state.get("is_self_referential"):
+            logger.warning(
+                "Self-referential query reached generate_draft with bad grounding "
+                f"(status={grounding_status}). Overriding to proceed."
+            )
+            state["grounding_status"] = "ok"
+            # Inject self-knowledge chunk if missing
+            if not state.get("retrieved_chunks"):
+                from assistant.flows.node_logic.stage4_retrieval_nodes import handle_grounding_gap as _hgg
+                _hgg(state)
+                logger.info("Injected self-knowledge via handle_grounding_gap from generate_draft")
+        else:
+            # Return empty update dict (not state) to avoid preserving old answer
+            return {}
 
     # For data display requests, we'll fetch live analytics later
     # Just set a placeholder for now
@@ -1867,6 +1925,18 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     # Use the LLM to generate a response with retrieved context
     # Add display intelligence based on query classification
     extra_instructions = []
+
+    # Dynamic grounding strictness based on retrieval quality
+    retrieval_scores = state.get("retrieval_scores", [])
+    max_score = max(retrieval_scores) if retrieval_scores else 0.0
+    if retrieval_scores and max_score < 0.5:
+        extra_instructions.append(
+            "\nGROUNDING WARNING: Retrieved context has LOW similarity "
+            f"(max={max_score:.2f}). Only state what chunks EXPLICITLY support. "
+            "Do NOT extrapolate or invent features/metrics. If the question isn't "
+            "addressed in context, say so and redirect to a related topic.\n"
+        )
+        logger.info(f"Grounding strictness injected: max_score={max_score:.3f}")
 
     # CONTINUATION DETECTION - When user says "tell me more" / "go deeper",
     # instruct LLM to build on previous answer instead of repeating it.
@@ -2968,13 +3038,43 @@ how well you retrieved information about him.
 
     # ── VISITOR QUESTION — injected LAST so it's freshest in context window ──
     _vq_msg_count = state.get("message_count", 0)
-    _vq_questions_asked = state.get("questions_asked_about_visitor", 0)
-    if _vq_msg_count in (2, 3) and _vq_questions_asked < 2:
+
+    # ── Detect if visitor answered a previous question ─────────────────
+    _visitor_answered_question = False
+    if _vq_msg_count >= 2:
+        _last_user_msg = ""
+        _last_assistant_had_question = False
+        for msg in reversed(chat_history[-4:] if chat_history else []):
+            _r = ""
+            _c = ""
+            if isinstance(msg, dict):
+                _r = msg.get("role") or msg.get("type", "")
+                _c = msg.get("content", "")
+            elif hasattr(msg, "content"):
+                _r = getattr(msg, "type", "") or getattr(msg, "role", "")
+                _c = getattr(msg, "content", "")
+            if _r in ("user", "human") and _c and not _last_user_msg:
+                _last_user_msg = _c.lower()
+            if _r in ("assistant", "ai") and _c and "?" in _c:
+                _last_assistant_had_question = True
+            if _last_user_msg and _last_assistant_had_question:
+                break
+        if _last_assistant_had_question and _last_user_msg and "?" not in _last_user_msg:
+            _visitor_answered_question = True
+
+    if _vq_msg_count == 1:
         extra_instructions.append(
-            "\n\nYOUR FINAL SENTENCE IN THIS RESPONSE MUST BE A QUESTION ABOUT THE VISITOR. "
-            "This is not optional. Examples: 'What brings you to Noah's portfolio?' / "
-            "'Are you in tech yourself?' / 'What kind of role are you looking at?'"
+            "\n\nEnd with ONE question specific to what they asked. "
+            "Not a generic 'what brings you here' — something tied to their actual query."
         )
+    elif _vq_msg_count <= 4:
+        if _visitor_answered_question:
+            extra_instructions.append(
+                "\n\nThe visitor just answered a question you asked. "
+                "Acknowledge what they shared before continuing. "
+                "Do NOT re-ask the same or a similar question."
+            )
+    # Messages 5+: no forced question injection
 
     # Build the instruction suffix
     instruction_suffix = " ".join(extra_instructions) if extra_instructions else None

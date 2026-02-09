@@ -93,27 +93,29 @@ _ROLE_ALIASES = {
     "software developer": "software_developer",
     "just looking around": "explorer",
     "looking to confess crush": "confession",
+    # New 4-option menu aliases
+    "learn more about noah": "explorer",
+    "see what noah has built": "software_developer",
+    "confess a crush": "confession",
 }
 
 _ROLE_DISPLAY = {
     "hiring_manager_technical": "Hiring Manager (technical)",
     "hiring_manager_nontechnical": "Hiring Manager (nontechnical)",
-    "software_developer": "Software Developer",
-    "explorer": "Just looking around",
-    "confession": "Looking to confess crush",
+    "software_developer": "See what Noah has built",
+    "explorer": "Learn more about Noah",
+    "confession": "Confess a crush",
 }
 
 _ROLE_SELECTION_MAP = {
-    "1": "hiring_manager_nontechnical",
-    "1️⃣": "hiring_manager_nontechnical",
-    "2": "hiring_manager_technical",
-    "2️⃣": "hiring_manager_technical",
-    "3": "software_developer",
-    "3️⃣": "software_developer",
-    "4": "explorer",
-    "4️⃣": "explorer",
-    "5": "confession",
-    "5️⃣": "confession",
+    "1": "explorer",
+    "1️⃣": "explorer",
+    "2": "software_developer",
+    "2️⃣": "software_developer",
+    "3": "explorer",
+    "3️⃣": "explorer",
+    "4": "confession",
+    "4️⃣": "confession",
 }
 
 

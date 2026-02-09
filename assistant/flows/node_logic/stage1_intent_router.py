@@ -48,6 +48,7 @@ INTENT_CLASSIFICATION_PROMPT = """Classify the user's message into TWO values se
 
 IMPORTANT: Personal/private questions are off_topic (salary, address, dating status, etc.)
 IMPORTANT: Questions about "you" referring to Portfolia ARE knowledge_query.
+IMPORTANT: Mentioning a dating app as a traffic source (e.g., "I came from hinge") is NOT a crush confession. It's small_talk.
 
 Examples:
 - "Tell me about Noah's projects" → knowledge_query|neutral
@@ -60,6 +61,10 @@ Examples:
 - "Is he actively looking for new roles?" → knowledge_query|hiring
 - "cool" → small_talk|casual
 - "What's the weather like?" → off_topic|neutral
+- "I came here from hinge" → small_talk|casual
+- "found this on tinder" → small_talk|casual
+- "I came here from ig" → small_talk|casual
+- "I work for a company and am impressed" → knowledge_query|hiring
 
 Respond with ONLY the two values separated by |, nothing else."""
 
@@ -570,12 +575,18 @@ def classify_intent(state: ConversationState) -> ConversationState:
     # Include current query in history for counter computation (it hasn't been appended yet)
     chat_with_current = chat_history + [{"role": "user", "content": current_query}] if current_query else chat_history
     counted_from_history = _compute_message_count(chat_with_current)
-    # Use persistent counter to survive chat_history truncation (bounded memory)
+    # Use persistent counter to survive chat_history truncation (bounded memory).
+    # Always increment stored_count — never let it decrease even if chat_history shrinks.
     session_memory = state.get("session_memory") or {}
     stored_count = session_memory.get("lifetime_message_count", 0)
+    # Primary: increment stored counter each turn. Floor: counted_from_history.
     real_count = max(counted_from_history, stored_count + 1)
     state["message_count"] = real_count
     state.setdefault("session_memory", {})["lifetime_message_count"] = real_count
+    logger.debug(
+        f"msg_count: counted_from_history={counted_from_history}, "
+        f"stored_count={stored_count}, real_count={real_count}"
+    )
     state["questions_asked_about_visitor"] = _compute_questions_asked_about_visitor(chat_history)
     state["buying_signals_count"] = _compute_buying_signals(chat_with_current)
 
@@ -619,9 +630,22 @@ def classify_intent(state: ConversationState) -> ConversationState:
     if not query or state.get("message_intent"):
         return state
 
+    # Dating app traffic source detection — BEFORE crush keyword check.
+    # "I came here from hinge" is NOT a crush confession.
+    query_lower = query.lower()
+    _dating_app_traffic = [
+        "came from hinge", "came from tinder", "came from bumble",
+        "from hinge", "from tinder", "from bumble", "from a dating app",
+        "on hinge", "on tinder", "on bumble",
+    ]
+    if any(phrase in query_lower for phrase in _dating_app_traffic):
+        logger.info(f"Dating app traffic source detected (not crush): {query[:50]}")
+        state["message_intent"] = "small_talk"
+        state["skip_rag"] = True
+        return state
+
     # CRITICAL FIX: Keyword-based crush confession detection (before LLM call)
     # This catches cases where the LLM might misclassify obvious crush confessions
-    query_lower = query.lower()
     crush_keywords = [
         "confess a crush",
         "confess my crush",
@@ -694,16 +718,29 @@ def classify_intent(state: ConversationState) -> ConversationState:
         "your pipeline", "your design", "into your work",
         "into you", "deeper into you", "about you",
     }
+    # Filler suffixes that indicate the user is asking about Portfolia itself
+    _self_referential_fillers = {
+        "you", "your work", "yourself", "your architecture",
+        "your pipeline", "your design", "into your work",
+        "into you", "deeper into you", "about you",
+    }
     prefix_match = False
+    matched_filler = ""
     for prefix in continuation_prefixes:
         if query_lower.startswith(prefix):
             remainder = query_lower[len(prefix):].strip()
             if remainder in _filler_suffixes:
                 prefix_match = True
+                matched_filler = remainder
                 break
     is_continuation = (
         query_lower in continuation_phrases
         or prefix_match
+    )
+    # Check if continuation is self-referential (about Portfolia itself)
+    _continuation_is_self_ref = (
+        matched_filler in _self_referential_fillers
+        or query_lower in ("and you?", "and you", "what about you")
     )
     if is_continuation:
         chat_history = state.get("chat_history", [])
@@ -733,6 +770,10 @@ def classify_intent(state: ConversationState) -> ConversationState:
                     state["is_continuation"] = True
                     state["message_intent"] = "knowledge_query"
                     state["skip_rag"] = False
+                    # Mark self-referential if the continuation targets Portfolia
+                    if _continuation_is_self_ref:
+                        state["is_self_referential"] = True
+                        logger.info(f"Continuation is self-referential (filler='{matched_filler}')")
                     return state
 
             # Fallback: no previous non-continuation user message found.
@@ -756,8 +797,24 @@ def classify_intent(state: ConversationState) -> ConversationState:
                         state["message_intent"] = "knowledge_query"
                         state["skip_rag"] = False
                         state["is_continuation"] = True
+                        if _continuation_is_self_ref:
+                            state["is_self_referential"] = True
                         return state
                     break
+
+        # Fallback: self-referential continuation without expandable history.
+        # "go deeper into you" is a continuation about Portfolia itself —
+        # route to knowledge_query with self-referential flag even without
+        # a previous user message to expand from.
+        if _continuation_is_self_ref:
+            logger.info(
+                f"Self-referential continuation '{query}' without expansion history — routing to knowledge_query"
+            )
+            state["message_intent"] = "knowledge_query"
+            state["skip_rag"] = False
+            state["is_continuation"] = True
+            state["is_self_referential"] = True
+            return state
 
     # ── Quick self-knowledge answers ────────────────────────────────
     # Short queries about Portfolia's model/tech that fail pgvector retrieval
@@ -852,6 +909,13 @@ def classify_intent(state: ConversationState) -> ConversationState:
         "your personality", "your voice", "your tone", "designed after",
         "who designed", "your behavior", "why don't you", "why aren't you",
         "your style", "how do you decide", "your purpose", "what are you for",
+        # Data handling / privacy questions
+        "collect my data", "collect my information", "collect data",
+        "what data", "my data", "my information",
+        "do you collect", "do you track", "do you store",
+        "privacy", "cookies", "tracking",
+        "what do you store", "what do you collect",
+        "are you going to collect", "store my data",
     ]
     _self_referential_exact = {"you", "yourself", "portfolia"}
     query_stripped = query_lower.rstrip("?!., ")
@@ -862,6 +926,86 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["message_intent"] = "knowledge_query"
         state["skip_rag"] = False
         state["is_self_referential"] = True
+        return state
+
+    # ── Contact info submission pre-classifier ────────────────────────
+    # Detect messages with email, phone, or explicit contact submission
+    # BEFORE the LLM classifier to prevent misclassification as small_talk.
+    _contact_submission_phrases = [
+        "here is my info", "here's my info", "my info is",
+        "my name is", "my email is", "my number is", "my phone is",
+        "here is my email", "here's my email", "here is my number",
+        "here's my number", "here are my details", "here's my details",
+        "reach me at", "contact me at", "you can reach me",
+    ]
+    _has_email = bool(re.search(r'[\w.+-]+@[\w-]+\.[\w.-]+', query))
+    _has_phone = bool(re.search(r'(?:\d[\d\s\-\(\)]{6,}\d)', query))
+    _has_contact_phrase = any(phrase in query_lower for phrase in _contact_submission_phrases)
+
+    # ── Contact intent detection (offer to collect info) ──────────────
+    # "I want to contact Noah" → offer to collect their details,
+    # rather than just handing over LinkedIn.
+    _contact_intent_phrases = [
+        "contact noah", "reach out to noah", "reach out to him",
+        "have him contact", "have him reach out", "get in touch",
+        "pass along my info", "give him my info", "connect me with noah",
+        "i want to contact", "can i talk to", "talk to noah",
+        "how do i reach", "how can i reach", "put me in touch",
+    ]
+    if (any(p in query_lower for p in _contact_intent_phrases)
+            and not state.get("hm_capture_step")
+            and not _has_email and not _has_phone):
+        logger.info(f"Contact intent detected (offering to collect info): {query[:60]}")
+        state["answer"] = (
+            "Drop your name, email, and whatever context you want Noah to have. "
+            "I'll make sure he sees it."
+        )
+        state["hm_capture_step"] = "awaiting_hm_details"
+        state["message_intent"] = "knowledge_query"
+        state["skip_rag"] = True
+        state["pipeline_halt"] = True
+        return state
+
+    if _has_email or _has_phone or _has_contact_phrase:
+        logger.info(f"Contact info submission detected: email={_has_email}, phone={_has_phone}, phrase={_has_contact_phrase}")
+        session_id = state.get("session_id", "unknown")
+
+        # Parse contact info from the message
+        info = _parse_hm_contact_info(query)
+
+        # Save to Supabase recruiter_leads table
+        _save_recruiter_lead(session_id, info, state)
+
+        # Send SMS to Noah
+        _send_hm_lead_sms(info)
+
+        # Build confirmation response
+        display = info.get("name") or info.get("email") or info.get("phone") or "your info"
+        state["answer"] = (
+            f"Got it — {display}'s details have been forwarded to Noah. "
+            f"He'll follow up directly. Thanks for reaching out."
+        )
+
+        # Resume conversation naturally
+        chat_history = state.get("chat_history", [])
+        if chat_history:
+            # Find last assistant message topic to bridge back
+            for msg in reversed(chat_history):
+                content = ""
+                role = ""
+                if isinstance(msg, dict):
+                    role = msg.get("role") or msg.get("type", "")
+                    content = msg.get("content", "")
+                elif hasattr(msg, "content"):
+                    role = getattr(msg, "type", "") or getattr(msg, "role", "")
+                    content = getattr(msg, "content", "")
+                if role in ("assistant", "ai") and content and "?" in content:
+                    state["answer"] += " Anything else you want to know about Noah's work?"
+                    break
+
+        state["message_intent"] = "contact_info_submission"
+        state["skip_rag"] = True
+        state["pipeline_halt"] = True
         return state
 
     # For all other messages, use the LLM classifier to determine intent + visitor signal
@@ -1028,6 +1172,12 @@ def handle_non_knowledge_intent(state: ConversationState, rag_engine: Any) -> Co
             return state
         return state
 
+    if intent == "contact_info_submission":
+        # Already handled in classify_intent with answer set
+        if state.get("answer"):
+            return state
+        return state
+
     if intent == "crush_confession":
         # If crush flow continuation already handled this (answer set by
         # handle_crush_flow_continuation inside classify_intent), don't overwrite
@@ -1037,22 +1187,116 @@ def handle_non_knowledge_intent(state: ConversationState, rag_engine: Any) -> Co
         return handle_crush_confession(state)
 
     if intent == "small_talk":
-        # Handle with personality, gently redirect to portfolio — no bullets or bold
-        state["answer"] = (
-            "Ha, I appreciate the energy 😄 I'm built to be conversational, but my real specialty "
-            "is talking about Noah's work. I can walk you through his projects, his career path, "
-            "how my own pipeline works, or his technical skills. What sounds interesting?"
-        )
+        # Context-aware small talk handling
+        query_lower = (state.get("original_query", "") or state.get("query", "") or "").lower()
+        chat_history = state.get("chat_history", [])
+        msg_count = state.get("message_count", 0)
+
+        # Check if user is answering a question Portfolia asked
+        _last_assistant_had_question = False
+        for _m in reversed(chat_history[-4:] if chat_history else []):
+            _r = ""
+            _c = ""
+            if isinstance(_m, dict):
+                _r = _m.get("role") or _m.get("type", "")
+                _c = _m.get("content", "")
+            elif hasattr(_m, "content"):
+                _r = getattr(_m, "type", "") or getattr(_m, "role", "")
+                _c = getattr(_m, "content", "")
+            if _r in ("assistant", "ai") and _c and "?" in _c:
+                _last_assistant_had_question = True
+                break
+
+        if _last_assistant_had_question and "?" not in query_lower:
+            # User is answering a question — reroute to generation
+            state["message_intent"] = "knowledge_query"
+            state["skip_rag"] = False
+            return state
+
+        # Traffic source detection — welcome visitors who mention where they came from
+        _traffic_sources = [
+            "linkedin", " ig", "instagram", "hinge", "tinder", "bumble",
+            "upwork", "twitter", "referral", "reddit", "github", "youtube",
+            "friend told", "someone told", "sent me", "showed me",
+            "saw your", "saw his", "saw it on", "came from",
+            "found on", "found this on", "came here from",
+        ]
+        if any(s in query_lower for s in _traffic_sources):
+            state["answer"] = (
+                "What caught your eye? I can go deep on Noah's projects, "
+                "his background, or how I work under the hood."
+            )
+            state["pipeline_halt"] = True
+            return state
+
+        # Buying signal reroute — "I work for X" should not be small talk
+        _buying_reroute = [
+            "work for", "work at", "our company", "my company",
+            "we're looking", "we are looking", "i'm with",
+        ]
+        if any(w in query_lower for w in _buying_reroute):
+            state["message_intent"] = "knowledge_query"
+            state["skip_rag"] = False
+            return state
+
+        # Compliment patterns — acknowledge briefly, bridge to uncovered content
+        _compliment_words = ["cool", "impressive", "amazing", "awesome", "love this",
+                             "great", "nice", "wow", "incredible", "sick", "dope",
+                             "impressed", "really good", "this is cool", "i'm impressed"]
+        if any(w in query_lower for w in _compliment_words):
+            state["answer"] = (
+                "Noted. There's more under the hood than what you've seen so far -- "
+                "the retrieval system and grounding validation are worth a look "
+                "if you want to see how the engineering holds up."
+            )
+            state["pipeline_halt"] = True
+            return state
+
+        # Confusion detection — user doesn't know what this is
+        _q_stripped = query_lower.strip().rstrip("?!. ")
+        _confusion = {"what is this", "what is this thing", "huh",
+                      "what am i looking at", "what does this do", "who is this"}
+        if _q_stripped in _confusion or _q_stripped == "what":
+            state["answer"] = (
+                "I'm Portfolia -- an AI assistant Noah built from scratch "
+                "to demo his engineering. Ask me about his projects, "
+                "his background, or how I work."
+            )
+            state["pipeline_halt"] = True
+            return state
+
+        # Early conversation — clean intro
+        if msg_count <= 2:
+            state["answer"] = (
+                "I'm Noah's portfolio assistant. I know his projects, his background, "
+                "and how I work under the hood. What are you curious about?"
+            )
+        else:
+            # Mid-conversation — short redirect
+            state["answer"] = (
+                "My range is Noah's work and my own architecture. "
+                "Pick a thread and I'll go as deep as you want."
+            )
         state["pipeline_halt"] = True
         return state
 
     if intent == "off_topic":
-        # Graceful redirect — conversational prose, no bullets or bold
+        # Check if off_topic message actually contains buying signals — reroute
+        query_lower_ot = (state.get("original_query", "") or state.get("query", "") or "").lower()
+        _ot_buying = [
+            "work for", "work at", "our company", "my company", "i'm with",
+            "we're looking", "we are looking", "impressed", "really good",
+            "this is cool", "i'm impressed",
+        ]
+        if any(w in query_lower_ot for w in _ot_buying):
+            state["message_intent"] = "knowledge_query"
+            state["skip_rag"] = False
+            return state
+
+        # Single specific suggestion, no menu
         state["answer"] = (
-            "That's a bit outside my wheelhouse, but I've got plenty to talk about. "
-            "I can walk you through Noah's background and career path, his technical projects "
-            "like the attrition prediction model or this very assistant you're talking to, "
-            "or the data architecture powering all of this. What sounds interesting?"
+            "That's outside what I cover, but the retrieval architecture behind this "
+            "conversation is worth a look if you're curious about how I work."
         )
         state["pipeline_halt"] = True
         return state
@@ -1094,15 +1338,17 @@ def _is_cancel_choice(query: str) -> bool:
     """Check if the user wants to cancel the crush flow."""
     q = query.lower().strip()
     # Short words — exact match only to avoid false positives ("no" in "anonymous")
-    exact_only = {"no", "nah", "nope", "jk", "nvm", "back"}
+    exact_only = {"no", "nah", "nope", "jk", "back", "stop", "exit", "wrong"}
     # Longer phrases — safe for substring matching
     substring_ok = [
-        "nevermind", "never mind", "cancel", "just kidding",
-        "forget it", "changed my mind", "go back",
+        "nevermind", "never mind", "nvm", "cancel", "just kidding",
+        "forget it", "changed my mind", "go back", "not that",
+        "professionally", "not a crush", "not what i meant",
+        "not romantic", "not interested", "wrong option",
     ]
     if q in exact_only:
         return True
-    return any(signal == q or signal in q for signal in substring_ok)
+    return any(signal in q for signal in substring_ok)
 
 
 def _is_anonymous_choice(query: str) -> bool:
@@ -1291,13 +1537,42 @@ def handle_crush_flow_continuation(state: ConversationState) -> ConversationStat
     state["skip_rag"] = True
     state["message_intent"] = "crush_confession"
 
-    # ── Cancel detection (any step) ─────────────────────────────────────
+    # ── Cancel / escape detection (any step) ────────────────────────────
     if _is_cancel_choice(query):
-        state["answer"] = "No worries 😄 So what else can I tell you about Noah?"
+        state["answer"] = "No worries — back to the regular conversation. What can I help you with?"
         state["crush_flow_step"] = None
         state["awaiting_crush_choice"] = False
         state["pipeline_halt"] = True
         logger.info("Crush flow cancelled by user")
+        return state
+
+    # ── Escape detection: confusion or Noah-related queries ────────────
+    # If the user asks about Noah or seems confused, exit crush flow
+    # silently and let the pipeline re-classify their message normally.
+    _escape_noah_kw = [
+        "noah", "background", "projects", "technical", "professional",
+        "skills", "experience", "work", "portfolio", "resume", "job",
+        "built", "engineering", "architecture", "pipeline",
+    ]
+    _escape_confusion = {
+        "what", "huh", "pick what", "what do you mean",
+        "what is this", "what are you", "i don't understand",
+    }
+    q_low = query.lower().strip()
+    is_noah_query = any(kw in q_low for kw in _escape_noah_kw)
+    is_confused = (
+        q_low in _escape_confusion
+        or q_low.startswith("show me")
+        or q_low.startswith("tell me about")
+        or (len(q_low.split()) <= 4 and "?" in query
+            and not any(w in q_low for w in ["anonymous", "reveal", "crush", "admirer"]))
+    )
+    if is_noah_query or is_confused:
+        logger.info(f"Crush flow escape: '{query[:60]}' — exiting to normal pipeline")
+        state["crush_flow_step"] = None
+        state["awaiting_crush_choice"] = False
+        state["message_intent"] = None
+        state["skip_rag"] = False
         return state
 
     # ── Step 2: User choosing anonymous (1) or reveal (2) ────────────────

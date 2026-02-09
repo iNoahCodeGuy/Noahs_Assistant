@@ -663,6 +663,92 @@ def validate_retrieval_relevance(state: ConversationState) -> ConversationState:
     return state
 
 
+def _build_self_knowledge_chunk() -> dict:
+    """Build the synthetic self-knowledge chunk for Portfolia architecture queries."""
+    return {
+        "content": (
+            "I am Portfolia — Noah's AI portfolio assistant.\n\n"
+            "MY 21-NODE PIPELINE (assistant/flows/conversation_flow.py):\n"
+            "Each node receives the full state dict and returns a partial update.\n\n"
+            "Stage 1 — INTENT ROUTING (assistant/flows/node_logic/stage1_intent_router.py):\n"
+            "classify_message_intent() calls Claude Haiku (~150ms) to classify: knowledge_query, "
+            "crush_confession, greeting, small_talk, off_topic. Crush flow is a state machine "
+            "recovered from chat_history markers. _is_anonymous_choice()/_is_reveal_choice() use "
+            "exact-match for '1'/'2' to prevent false positives on phone numbers. "
+            "_looks_like_contact_info() uses regex for phone, email, and social handles. "
+            "Short continuations ('yes', 'go deeper') get expanded via the previous user question.\n\n"
+            "Stage 2 — CLASSIFICATION (stage2_query_classification.py, stage2_role_routing.py):\n"
+            "classify_role_mode() infers visitor type. classify_intent() determines query type "
+            "(technical, career, project, action_request). extract_entities() captures company names, "
+            "role titles, timeline hints.\n\n"
+            "Stage 3 — QUERY PREPARATION (stage3_query_composition.py):\n"
+            "assess_clarification_need(), compose_query() builds retrieval-ready prompt.\n\n"
+            "Stage 4 — RETRIEVAL & GROUNDING (stage4_retrieval_nodes.py):\n"
+            "retrieve_chunks() calls Supabase RPC match_kb_chunks for pgvector cosine similarity. "
+            "OpenAI text-embedding-3-small (1536 dims). Thresholds: 0.5 strict, 0.3 fallback. "
+            "validate_grounding() checks scores. handle_grounding_gap() detects self-knowledge "
+            "queries and injects synthetic chunks so I can answer about my own architecture.\n\n"
+            "Stage 5 — GENERATION (stage5_generation_nodes.py):\n"
+            "generate_draft() uses Claude Sonnet 4.5 (claude-sonnet-4-5-20250929). Chain-of-thought "
+            "for complex queries. hallucination_check() compares output against retrieved chunks.\n\n"
+            "Stage 6 — ENRICHMENT (stage6_action_planning.py, stage6_formatting_nodes.py):\n"
+            "plan_actions() detects hiring signals. format_answer() structures response.\n\n"
+            "Stage 7 — FINALIZATION (stage7_logging_nodes.py):\n"
+            "execute_actions() fires SMS via Twilio, email via Resend. update_memory() stores "
+            "signals with bounded sliding windows (10 topics, 20 entities).\n\n"
+            "RETRIEVAL: OpenAI text-embedding-3-small → Supabase pgvector cosine similarity "
+            "via match_kb_chunks RPC. File: assistant/retrieval/pgvector_retriever.py\n\n"
+            "GENERATION: Anthropic Claude Sonnet 4.5. Intent classification: Claude Haiku.\n\n"
+            "ERROR HANDLING: Graceful degradation if retrieval fails. Grounding validation catches "
+            "low-similarity results. Intent routing bypasses RAG for greetings/crush/off-topic. "
+            "Hallucination check compares generated text against source chunks. Bounded memory "
+            "prevents bloat in long conversations.\n\n"
+            "SYSTEM PROMPT: assistant/core/response_generator.py contains the inline system prompt "
+            "for terminal chat. assistant/prompts/prompt_hub.py contains the prompt for the API pipeline.\n\n"
+            "MY LIMITATIONS (be honest when asked):\n"
+            "- No internet access: I can't browse the web, look things up in real time, or verify "
+            "anything outside my knowledge base.\n"
+            "- No memory between sessions: Every conversation starts fresh. I don't remember "
+            "previous visitors or what was discussed before.\n"
+            "- Only know what's in the KB: My knowledge about Noah comes from a curated set of "
+            "documents. If something isn't in there, I genuinely don't know it.\n"
+            "- I'd rather say 'I don't know' than guess: If my retrieval comes back empty or "
+            "low-confidence, I'll tell you instead of making something up. That's by design — "
+            "grounding validation catches it before I speak.\n"
+            "- Single-domain specialist: I'm built to talk about Noah and my own architecture. "
+            "Ask me to write code, do math, or discuss world events, and I'll redirect you.\n\n"
+            "DATA HANDLING (be transparent when asked):\n"
+            "- Session data only: I keep the current conversation in memory so I can follow context. "
+            "When you close the tab or start a new session, that's gone. No cross-session memory.\n"
+            "- No cookies: I don't set cookies, track browsing, or fingerprint devices.\n"
+            "- No passive collection: I don't record anything you don't explicitly type into this chat.\n"
+            "- Explicit submissions only: The crush flow and recruiter contact form ask you to submit "
+            "info voluntarily. That gets stored in a Supabase table so Noah can follow up. Nothing "
+            "else is persisted.\n"
+            "- Analytics: LangSmith tracing logs pipeline performance (latency, token counts, retrieval "
+            "scores) for debugging. Conversation content passes through but isn't mined or sold.\n"
+            "- Conversation signals: I log conversation metadata — questions asked, responses generated, "
+            "retrieval scores, and engagement signals — for pipeline debugging. No tracking cookies, "
+            "no third-party analytics. If a visitor volunteers contact info, I save it to notify Noah. "
+            "I don't collect anything without the visitor knowing.\n"
+            "- Transparency principle: If you ask what I store, I tell you. No dark patterns.\n\n"
+            "MY PERSONALITY & VOICE:\n"
+            "My personality is direct, opinionated, and confident. I was designed to explain things "
+            "from first principles — why before what. My voice was inspired by methodical teaching "
+            "(think principle-based instruction) combined with dry, understated confidence. I don't "
+            "perform personality. It comes through in how I explain things. I have genuine opinions "
+            "about my own design decisions and I state them like facts, not jokes. When I explain "
+            "architecture, I lead with the problem, then the solution, then the tradeoff. I don't "
+            "ask for visitor info unprompted — the engagement pacing system decides when to ask, "
+            "and only when it fits naturally. I'd rather let the conversation build than push for "
+            "data capture.\n\n"
+            "Code: https://github.com/iNoahCodeGuy"
+        ),
+        "similarity": 1.0,
+        "source": "self_knowledge",
+    }
+
+
 def handle_grounding_gap(state: ConversationState) -> ConversationState:
     """Respond gracefully when grounding is insufficient OR edge case detected.
 
@@ -699,7 +785,23 @@ def handle_grounding_gap(state: ConversationState) -> ConversationState:
         >>> "could not find context" in state["answer"]
         True
     """
-    # ── Self-knowledge detection ────────────────────────────────────────
+    # ── GUARANTEED PATH: is_self_referential flag ─────────────────────
+    # If stage1 set is_self_referential = True, ALWAYS inject self-knowledge.
+    # This is the bulletproof path — no keyword matching needed, no
+    # grounding status check, no edge case override. The flag alone is
+    # sufficient to guarantee injection.
+    if state.get("is_self_referential"):
+        logger.info(
+            "🧠 Self-knowledge injection via is_self_referential flag (guaranteed path)"
+        )
+        state["retrieved_chunks"] = [_build_self_knowledge_chunk()]
+        state["retrieval_scores"] = [1.0]
+        state["grounding_status"] = "ok"
+        state["edge_case_detected"] = False
+        state["clarification_needed"] = False
+        return state
+
+    # ── Self-knowledge detection (keyword fallback) ───────────────────
     # Portfolia knows about its own architecture. Detect self-knowledge
     # queries and inject the synthetic chunk REGARDLESS of grounding status
     # or edge_case_detected, because:
@@ -752,82 +854,20 @@ def handle_grounding_gap(state: ConversationState) -> ConversationState:
         "what cant you do", "what are you bad at", "what don't you know",
         "what dont you know", "what can you not do", "your weakness",
         "your weaknesses", "where do you fall short", "what are you missing",
+        # Data handling / privacy questions
+        "your data", "my data", "collect data", "store data", "track data",
+        "my information", "my info", "personal data", "personal information",
+        "do you collect", "do you track", "do you store",
+        "what data do you", "what information do you",
+        "what do you store", "what do you collect", "what do you track",
+        "what happens to", "privacy", "cookies",
     ]
-    _is_self_ref = state.get("is_self_referential", False)
-    if _is_self_ref or any(kw in _sk_query_lower for kw in self_knowledge_keywords):
-        _trigger = "is_self_referential flag" if _is_self_ref else "keyword match"
+    if any(kw in _sk_query_lower for kw in self_knowledge_keywords):
         logger.info(
-            f"🧠 Self-knowledge query detected ({_trigger}): '{_sk_query_lower[:60]}' — "
+            f"🧠 Self-knowledge query detected (keyword match): '{_sk_query_lower[:60]}' — "
             f"injecting self-knowledge chunk"
         )
-        self_knowledge_chunk = {
-            "content": (
-                "I am Portfolia — Noah's AI portfolio assistant.\n\n"
-                "MY 21-NODE PIPELINE (assistant/flows/conversation_flow.py):\n"
-                "Each node receives the full state dict and returns a partial update.\n\n"
-                "Stage 1 — INTENT ROUTING (assistant/flows/node_logic/stage1_intent_router.py):\n"
-                "classify_message_intent() calls Claude Haiku (~150ms) to classify: knowledge_query, "
-                "crush_confession, greeting, small_talk, off_topic. Crush flow is a state machine "
-                "recovered from chat_history markers. _is_anonymous_choice()/_is_reveal_choice() use "
-                "exact-match for '1'/'2' to prevent false positives on phone numbers. "
-                "_looks_like_contact_info() uses regex for phone, email, and social handles. "
-                "Short continuations ('yes', 'go deeper') get expanded via the previous user question.\n\n"
-                "Stage 2 — CLASSIFICATION (stage2_query_classification.py, stage2_role_routing.py):\n"
-                "classify_role_mode() infers visitor type. classify_intent() determines query type "
-                "(technical, career, project, action_request). extract_entities() captures company names, "
-                "role titles, timeline hints.\n\n"
-                "Stage 3 — QUERY PREPARATION (stage3_query_composition.py):\n"
-                "assess_clarification_need(), compose_query() builds retrieval-ready prompt.\n\n"
-                "Stage 4 — RETRIEVAL & GROUNDING (stage4_retrieval_nodes.py):\n"
-                "retrieve_chunks() calls Supabase RPC match_kb_chunks for pgvector cosine similarity. "
-                "OpenAI text-embedding-3-small (1536 dims). Thresholds: 0.5 strict, 0.3 fallback. "
-                "validate_grounding() checks scores. handle_grounding_gap() detects self-knowledge "
-                "queries and injects synthetic chunks so I can answer about my own architecture.\n\n"
-                "Stage 5 — GENERATION (stage5_generation_nodes.py):\n"
-                "generate_draft() uses Claude Sonnet 4.5 (claude-sonnet-4-5-20250929). Chain-of-thought "
-                "for complex queries. hallucination_check() compares output against retrieved chunks.\n\n"
-                "Stage 6 — ENRICHMENT (stage6_action_planning.py, stage6_formatting_nodes.py):\n"
-                "plan_actions() detects hiring signals. format_answer() structures response.\n\n"
-                "Stage 7 — FINALIZATION (stage7_logging_nodes.py):\n"
-                "execute_actions() fires SMS via Twilio, email via Resend. update_memory() stores "
-                "signals with bounded sliding windows (10 topics, 20 entities).\n\n"
-                "RETRIEVAL: OpenAI text-embedding-3-small → Supabase pgvector cosine similarity "
-                "via match_kb_chunks RPC. File: assistant/retrieval/pgvector_retriever.py\n\n"
-                "GENERATION: Anthropic Claude Sonnet 4.5. Intent classification: Claude Haiku.\n\n"
-                "ERROR HANDLING: Graceful degradation if retrieval fails. Grounding validation catches "
-                "low-similarity results. Intent routing bypasses RAG for greetings/crush/off-topic. "
-                "Hallucination check compares generated text against source chunks. Bounded memory "
-                "prevents bloat in long conversations.\n\n"
-                "SYSTEM PROMPT: assistant/core/response_generator.py contains the inline system prompt "
-                "for terminal chat. assistant/prompts/prompt_hub.py contains the prompt for the API pipeline.\n\n"
-                "MY LIMITATIONS (be honest when asked):\n"
-                "- No internet access: I can't browse the web, look things up in real time, or verify "
-                "anything outside my knowledge base.\n"
-                "- No memory between sessions: Every conversation starts fresh. I don't remember "
-                "previous visitors or what was discussed before.\n"
-                "- Only know what's in the KB: My knowledge about Noah comes from a curated set of "
-                "documents. If something isn't in there, I genuinely don't know it.\n"
-                "- I'd rather say 'I don't know' than guess: If my retrieval comes back empty or "
-                "low-confidence, I'll tell you instead of making something up. That's by design — "
-                "grounding validation catches it before I speak.\n"
-                "- Single-domain specialist: I'm built to talk about Noah and my own architecture. "
-                "Ask me to write code, do math, or discuss world events, and I'll redirect you.\n\n"
-                "MY PERSONALITY & VOICE:\n"
-                "My personality is direct, opinionated, and confident. I was designed to explain things "
-                "from first principles — why before what. My voice was inspired by methodical teaching "
-                "(think principle-based instruction) combined with dry, understated confidence. I don't "
-                "perform personality. It comes through in how I explain things. I have genuine opinions "
-                "about my own design decisions and I state them like facts, not jokes. When I explain "
-                "architecture, I lead with the problem, then the solution, then the tradeoff. I don't "
-                "ask for visitor info unprompted — the engagement pacing system decides when to ask, "
-                "and only when it fits naturally. I'd rather let the conversation build than push for "
-                "data capture.\n\n"
-                "Code: https://github.com/iNoahCodeGuy"
-            ),
-            "similarity": 1.0,
-            "source": "self_knowledge",
-        }
-        state["retrieved_chunks"] = [self_knowledge_chunk]
+        state["retrieved_chunks"] = [_build_self_knowledge_chunk()]
         state["retrieval_scores"] = [1.0]
         state["grounding_status"] = "ok"
         state["edge_case_detected"] = False  # Clear edge case — self-knowledge takes priority
@@ -848,10 +888,6 @@ def handle_grounding_gap(state: ConversationState) -> ConversationState:
         }
     else:
         # Normal grounding gap (insufficient context, still on-topic)
-        # Check if this is a connection/reach-out request
-        # Try multiple sources for the query (defensive - state can lose query field in pipeline)
-        # (using module-level logger)
-
         # Extract query from chat_history as PRIMARY source (most reliable)
         # State fields get lost in the pipeline, but chat_history persists
         query = ""
@@ -861,72 +897,150 @@ def handle_grounding_gap(state: ConversationState) -> ConversationState:
                 if isinstance(msg, dict) and msg.get("role") == "user":
                     query = msg.get("content", "")
                     if query:
-                        logger.info(f"🔍 Extracted query from chat_history: '{query[:50]}'")
+                        logger.info(f"Extracted query from chat_history: '{query[:50]}'")
                         break
                 elif hasattr(msg, "type") and msg.type == "human":
                     query = msg.content if hasattr(msg, "content") else ""
                     if query:
-                        logger.info(f"🔍 Extracted query from chat_history: '{query[:50]}'")
+                        logger.info(f"Extracted query from chat_history: '{query[:50]}'")
                         break
 
         # Fallback to state fields if chat_history didn't work
         if not query:
             query = (
-                state.get("composed_query", "")  # May contain metadata tags, not ideal
+                state.get("composed_query", "")
                 or state.get("query", "")
                 or state.get("original_query", "")
                 or ""
             )
-            logger.info(f"🔍 Using state fallback: composed='{state.get('composed_query', '')[:20]}'")
 
         query_lower = query.lower() if query else ""
-        connection_keywords = [
-            "connect", "reach", "contact", "touch", "see his work", "find him",
-            "hire", "linkedin", "github", "reach out", "get in touch", "where can i"
-        ]
-        is_connection_request = any(keyword in query_lower for keyword in connection_keywords)
 
-        # Debug logging for connection request detection
-        # (using module-level logger)
-        logger.info(f"🔗 Connection detection: query='{query[:50] if query else 'NONE'}', is_connection={is_connection_request}, query_lower='{query_lower[:50] if query_lower else 'NONE'}'")
-        if query_lower:
-            matched = [kw for kw in connection_keywords if kw in query_lower]
-            logger.info(f"🔗 Matched keywords: {matched}")
+        # ── Conversational reply detection ──────────────────────────────
+        # Messages like "I saw it on LinkedIn" or "I was brought here by
+        # his post on IG" are conversational replies to Portfolia's own
+        # questions, NOT knowledge queries. When retrieval returns 0 chunks
+        # for these, generate a brief contextual acknowledgment instead of
+        # the generic fallback.
+        _last_assistant_msg = ""
+        _last_assistant_had_question = False
+        for msg in reversed(chat_history):
+            _role = ""
+            _content = ""
+            if isinstance(msg, dict):
+                _role = msg.get("role") or msg.get("type", "")
+                _content = msg.get("content", "")
+            elif hasattr(msg, "content"):
+                _role = getattr(msg, "type", "") or getattr(msg, "role", "")
+                _content = getattr(msg, "content", "")
+            if _role in ("assistant", "ai") and _content:
+                _last_assistant_msg = _content
+                _last_assistant_had_question = "?" in _content
+                break
 
-        if is_connection_request:
-            # Connection request - include hardcoded links
-            message = (
-                "Hmm, I don't have specifics on that one. But I can tell you all about Noah's projects, "
-                "technical skills, work experience, or background — what sounds interesting?\n\n"
-                "Here are some things I can walk you through:\n"
-                "- **Portfolia** (you're talking to it!) — RAG-powered AI assistant\n"
-                "- **Employee Attrition Prediction** — logistic regression model, 94.75% accuracy\n"
-                "- **Response Time Analysis** — statistical analysis of sales team response patterns\n"
-                "- **Generic Lead Response Heatmap** — reusable dashboard with sample data\n"
-                "- His technical skills (Python, SQL, RAG architecture)\n"
-                "- His career transition from sales to tech\n\n"
-                "Want to connect? Here's where to find him:\n"
-                "- **LinkedIn**: https://www.linkedin.com/in/noah-de-la-calzada-250412358/\n"
-                "- **GitHub**: https://github.com/iNoahCodeGuy"
+        _word_count = len(query.split()) if query else 0
+        _has_question_mark = "?" in query if query else False
+        _is_conversational_reply = (
+            _last_assistant_had_question
+            and _word_count < 20
+            and not _has_question_mark
+        )
+
+        if _is_conversational_reply:
+            logger.info(
+                f"Conversational reply detected (short reply to Portfolia's question): '{query[:60]}'"
             )
+            # Generate a brief contextual acknowledgment using the LLM
+            try:
+                from anthropic import Anthropic
+                import os
+                client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+                # Build a mini-prompt with conversation context
+                _context_messages = []
+                # Include last 2 assistant messages + user reply for context
+                _recent = []
+                for msg in reversed(chat_history[-6:]):
+                    _r = ""
+                    _c = ""
+                    if isinstance(msg, dict):
+                        _r = msg.get("role") or msg.get("type", "")
+                        _c = msg.get("content", "")
+                    elif hasattr(msg, "content"):
+                        _r = getattr(msg, "type", "") or getattr(msg, "role", "")
+                        _c = getattr(msg, "content", "")
+                    if _r and _c:
+                        api_role = "assistant" if _r in ("assistant", "ai") else "user"
+                        _recent.append({"role": api_role, "content": _c[:500]})
+                _recent.reverse()
+                _context_messages = _recent
+                _context_messages.append({"role": "user", "content": query})
+
+                _ack_response = client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=150,
+                    temperature=0.7,
+                    system=(
+                        "You are Portfolia, Noah's witty AI portfolio assistant. "
+                        "The user just gave a brief conversational reply to your question. "
+                        "Acknowledge what they said naturally (1-2 sentences), then bridge back "
+                        "to Noah's work with a specific offer. Do NOT say you don't have information. "
+                        "Do NOT use bullet points or lists. Keep it warm and brief."
+                    ),
+                    messages=_context_messages,
+                )
+                message = _ack_response.content[0].text.strip()
+                logger.info(f"Conversational acknowledgment generated: '{message[:80]}'")
+            except Exception as e:
+                logger.error(f"Failed to generate conversational acknowledgment: {e}")
+                message = (
+                    "Nice — thanks for sharing that. "
+                    "Anything specific about Noah's work you want to dig into?"
+                )
+            span_name = "conversational_reply_response"
+            span_data = {"query": query[:50], "last_assistant_had_question": True}
         else:
-            # Always include links in fallback (pragmatic fix for state propagation issues)
-            message = (
-                "Hmm, I don't have specifics on that one. But I can tell you all about Noah's projects, "
-                "technical skills, work experience, or background — what sounds interesting?\n\n"
-                "Here are some things I can walk you through:\n"
-                "- **Portfolia** (you're talking to it!) — RAG-powered AI assistant\n"
-                "- **Employee Attrition Prediction** — logistic regression model, 94.75% accuracy\n"
-                "- **Response Time Analysis** — statistical analysis of sales team response patterns\n"
-                "- **Generic Lead Response Heatmap** — reusable dashboard with sample data\n"
-                "- His technical skills (Python, SQL, RAG architecture)\n"
-                "- His career transition from sales to tech\n\n"
-                "Want to connect? Here's where to find him:\n"
-                "- **LinkedIn**: https://www.linkedin.com/in/noah-de-la-calzada-250412358/\n"
-                "- **GitHub**: https://github.com/iNoahCodeGuy"
-            )
-        span_name = "grounding_gap_response"
-        span_data = {"status": state.get("grounding_status"), "connection_request": is_connection_request}
+            # Standard grounding gap handling
+            connection_keywords = [
+                "connect", "reach", "contact", "touch", "see his work", "find him",
+                "hire", "linkedin", "github", "reach out", "get in touch", "where can i"
+            ]
+            is_connection_request = any(keyword in query_lower for keyword in connection_keywords)
+
+            logger.info(f"Connection detection: query='{query[:50] if query else 'NONE'}', is_connection={is_connection_request}")
+
+            if is_connection_request:
+                message = (
+                    "Hmm, I don't have specifics on that one. But I can tell you all about Noah's projects, "
+                    "technical skills, work experience, or background — what sounds interesting?\n\n"
+                    "Here are some things I can walk you through:\n"
+                    "- **Portfolia** (you're talking to it!) — RAG-powered AI assistant\n"
+                    "- **Employee Attrition Prediction** — logistic regression model, 94.75% accuracy\n"
+                    "- **Response Time Analysis** — statistical analysis of sales team response patterns\n"
+                    "- **Generic Lead Response Heatmap** — reusable dashboard with sample data\n"
+                    "- His technical skills (Python, SQL, RAG architecture)\n"
+                    "- His career transition from sales to tech\n\n"
+                    "Want to connect? Here's where to find him:\n"
+                    "- **LinkedIn**: https://www.linkedin.com/in/noah-de-la-calzada-250412358/\n"
+                    "- **GitHub**: https://github.com/iNoahCodeGuy"
+                )
+            else:
+                message = (
+                    "Hmm, I don't have specifics on that one. But I can tell you all about Noah's projects, "
+                    "technical skills, work experience, or background — what sounds interesting?\n\n"
+                    "Here are some things I can walk you through:\n"
+                    "- **Portfolia** (you're talking to it!) — RAG-powered AI assistant\n"
+                    "- **Employee Attrition Prediction** — logistic regression model, 94.75% accuracy\n"
+                    "- **Response Time Analysis** — statistical analysis of sales team response patterns\n"
+                    "- **Generic Lead Response Heatmap** — reusable dashboard with sample data\n"
+                    "- His technical skills (Python, SQL, RAG architecture)\n"
+                    "- His career transition from sales to tech\n\n"
+                    "Want to connect? Here's where to find him:\n"
+                    "- **LinkedIn**: https://www.linkedin.com/in/noah-de-la-calzada-250412358/\n"
+                    "- **GitHub**: https://github.com/iNoahCodeGuy"
+                )
+            span_name = "grounding_gap_response"
+            span_data = {"status": state.get("grounding_status"), "connection_request": is_connection_request}
 
     with create_custom_span(span_name, span_data):
         state["answer"] = message
