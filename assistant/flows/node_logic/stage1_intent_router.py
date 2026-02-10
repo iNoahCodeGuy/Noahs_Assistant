@@ -816,6 +816,36 @@ def classify_intent(state: ConversationState) -> ConversationState:
             state["is_self_referential"] = True
             return state
 
+    # ── Short conversational reply detection ──────────────────────────
+    # When the user sends a brief reply (under 5 words) and the last
+    # assistant message ended with a question, the user is answering
+    # Portfolia — NOT going off-topic.  Route to generation with
+    # skip_rag=True so Sonnet can use conversation history naturally.
+    if len(query.split()) < 5:
+        _last_asst_content = None
+        for _msg in reversed(chat_history[-6:] if chat_history else []):
+            _r = ""
+            _c = ""
+            if isinstance(_msg, dict):
+                _r = _msg.get("role") or _msg.get("type", "")
+                _c = _msg.get("content", "")
+            elif hasattr(_msg, "content"):
+                _r = getattr(_msg, "type", "") or getattr(_msg, "role", "")
+                _c = getattr(_msg, "content", "")
+            if _r in ("assistant", "ai") and _c:
+                _last_asst_content = _c
+                break
+        if _last_asst_content and _last_asst_content.rstrip().endswith("?"):
+            # Skip greeting/menu messages — their "?" is a menu prompt
+            _MENU_INDICATORS = ("1️⃣", "2️⃣", "3️⃣", "4️⃣", "what brings you here")
+            if not any(ind in _last_asst_content.lower() for ind in _MENU_INDICATORS):
+                logger.info(
+                    f"Short reply '{query}' after assistant question — routing to generation (skip_rag)"
+                )
+                state["message_intent"] = "knowledge_query"
+                state["skip_rag"] = True
+                return state
+
     # ── Quick self-knowledge answers ────────────────────────────────
     # Short queries about Portfolia's model/tech that fail pgvector retrieval
     # (too short, get 0 chunks). These deserve a direct answer.
@@ -909,6 +939,11 @@ def classify_intent(state: ConversationState) -> ConversationState:
         "your personality", "your voice", "your tone", "designed after",
         "who designed", "your behavior", "why don't you", "why aren't you",
         "your style", "how do you decide", "your purpose", "what are you for",
+        # Meta questions about Portfolia's conversational behavior
+        "shouldn't you", "shouldnt you", "why don't you ask",
+        "why aren't you asking", "ask me", "ask about me",
+        "do you care", "do you even care", "you should ask",
+        "aren't you going to ask", "aren't you curious",
         # Data handling / privacy questions
         "collect my data", "collect my information", "collect data",
         "what data", "my data", "my information",
@@ -1193,6 +1228,11 @@ def handle_non_knowledge_intent(state: ConversationState, rag_engine: Any) -> Co
         msg_count = state.get("message_count", 0)
 
         # Check if user is answering a question Portfolia asked
+        # BUT: skip greeting/menu messages — their "?" is a menu prompt,
+        # not a genuine follow-up question. Without this exclusion,
+        # every small_talk query on turn 2+ gets rerouted to knowledge_query
+        # because the greeting ("What brings you here?") always contains "?".
+        _GREETING_MENU_INDICATORS = ("1️⃣", "2️⃣", "3️⃣", "4️⃣", "what brings you here")
         _last_assistant_had_question = False
         for _m in reversed(chat_history[-4:] if chat_history else []):
             _r = ""
@@ -1204,6 +1244,10 @@ def handle_non_knowledge_intent(state: ConversationState, rag_engine: Any) -> Co
                 _r = getattr(_m, "type", "") or getattr(_m, "role", "")
                 _c = getattr(_m, "content", "")
             if _r in ("assistant", "ai") and _c and "?" in _c:
+                # Skip greeting/menu messages — they always have "?" but
+                # the user's reply is not a knowledge answer
+                if any(ind in _c.lower() for ind in _GREETING_MENU_INDICATORS):
+                    break
                 _last_assistant_had_question = True
                 break
 
