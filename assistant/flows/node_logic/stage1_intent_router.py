@@ -816,36 +816,6 @@ def classify_intent(state: ConversationState) -> ConversationState:
             state["is_self_referential"] = True
             return state
 
-    # ── Short conversational reply detection ──────────────────────────
-    # When the user sends a brief reply (under 5 words) and the last
-    # assistant message ended with a question, the user is answering
-    # Portfolia — NOT going off-topic.  Route to generation with
-    # skip_rag=True so Sonnet can use conversation history naturally.
-    if len(query.split()) < 5:
-        _last_asst_content = None
-        for _msg in reversed(chat_history[-6:] if chat_history else []):
-            _r = ""
-            _c = ""
-            if isinstance(_msg, dict):
-                _r = _msg.get("role") or _msg.get("type", "")
-                _c = _msg.get("content", "")
-            elif hasattr(_msg, "content"):
-                _r = getattr(_msg, "type", "") or getattr(_msg, "role", "")
-                _c = getattr(_msg, "content", "")
-            if _r in ("assistant", "ai") and _c:
-                _last_asst_content = _c
-                break
-        if _last_asst_content and _last_asst_content.rstrip().endswith("?"):
-            # Skip greeting/menu messages — their "?" is a menu prompt
-            _MENU_INDICATORS = ("1️⃣", "2️⃣", "3️⃣", "4️⃣", "what brings you here")
-            if not any(ind in _last_asst_content.lower() for ind in _MENU_INDICATORS):
-                logger.info(
-                    f"Short reply '{query}' after assistant question — routing to generation (skip_rag)"
-                )
-                state["message_intent"] = "knowledge_query"
-                state["skip_rag"] = True
-                return state
-
     # ── Quick self-knowledge answers ────────────────────────────────
     # Short queries about Portfolia's model/tech that fail pgvector retrieval
     # (too short, get 0 chunks). These deserve a direct answer.
@@ -962,6 +932,36 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["skip_rag"] = False
         state["is_self_referential"] = True
         return state
+
+    # ── Short conversational reply detection ──────────────────────────
+    # When the user sends a brief reply (under 3 words) and the last
+    # assistant message ended with a question, the user is answering
+    # Portfolia — NOT going off-topic.  Route to generation with
+    # skip_rag=True so Sonnet can use conversation history naturally.
+    if len(query.split()) < 3:
+        _last_asst_content = None
+        for _msg in reversed(chat_history[-6:] if chat_history else []):
+            _r = ""
+            _c = ""
+            if isinstance(_msg, dict):
+                _r = _msg.get("role") or _msg.get("type", "")
+                _c = _msg.get("content", "")
+            elif hasattr(_msg, "content"):
+                _r = getattr(_msg, "type", "") or getattr(_msg, "role", "")
+                _c = getattr(_msg, "content", "")
+            if _r in ("assistant", "ai") and _c:
+                _last_asst_content = _c
+                break
+        if _last_asst_content and _last_asst_content.rstrip().endswith("?"):
+            # Skip greeting/menu messages — their "?" is a menu prompt
+            _MENU_INDICATORS = ("1️⃣", "2️⃣", "3️⃣", "4️⃣", "what brings you here")
+            if not any(ind in _last_asst_content.lower() for ind in _MENU_INDICATORS):
+                logger.info(
+                    f"Short reply '{query}' after assistant question — routing to generation (skip_rag)"
+                )
+                state["message_intent"] = "knowledge_query"
+                state["skip_rag"] = True
+                return state
 
     # ── Contact info submission pre-classifier ────────────────────────
     # Detect messages with email, phone, or explicit contact submission
