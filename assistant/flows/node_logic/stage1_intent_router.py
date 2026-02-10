@@ -914,6 +914,7 @@ def classify_intent(state: ConversationState) -> ConversationState:
         "why aren't you asking", "ask me", "ask about me",
         "do you care", "do you even care", "you should ask",
         "aren't you going to ask", "aren't you curious",
+        "why haven't you", "why havent you",
         # Data handling / privacy questions
         "collect my data", "collect my information", "collect data",
         "what data", "my data", "my information",
