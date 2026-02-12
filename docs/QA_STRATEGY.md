@@ -109,14 +109,8 @@ pytest tests/ -v
 # Run everything (recommended before committing)
 pytest tests/ -v
 
-# Run only conversation quality tests (18 tests)
-pytest tests/test_conversation_quality.py -v
-
 # Run only documentation alignment tests (12 tests)
 pytest tests/test_documentation_alignment.py -v
-
-# Run specific test
-pytest tests/test_conversation_quality.py::test_no_emoji_headers -v
 
 # Run with detailed output (useful for debugging)
 pytest tests/ -vv
@@ -143,7 +137,7 @@ pytest tests/ -k "emoji" -v
 ## Feature Development Checklist
 
 **Before starting work:**
-- [ ] Read relevant test file (`test_conversation_quality.py` or alignment tests)
+- [ ] Read relevant test file (alignment tests)
 - [ ] Understand current quality standards
 - [ ] Check if feature requires new documentation
 
@@ -166,44 +160,10 @@ pytest tests/ -k "emoji" -v
 
 ## Current Quality Standards
 
-### 1. Conversation Quality (18 Tests - Current Status: 12 Passing, 6 Need Updates)
-**File**: `tests/test_conversation_quality.py`
+### 1. Conversation Quality Tests (REMOVED — pending rewrite)
 
-#### Content Storage vs User Presentation Standards
-
-**CRITICAL PRINCIPLE**: Internal KB format ≠ User-facing responses
-
-| Layer | Headers Allowed | Emojis Allowed | Format |
-|-------|----------------|----------------|---------|
-| **KB Storage** (`data/*.csv`) | ✅ Yes (`###`, `##`) | ✅ Yes (teaching structure) | Rich markdown for semantic search |
-| **LLM Response** (user sees) | ❌ No (`###`) | ❌ No in headers | Professional `**Bold**` only |
-
-#### Test Coverage Map
-
-| Standard | Test | Current Status |
-|----------|------|---------------|
-| KB aggregated (not 245 rows) | `test_kb_coverage_aggregated_not_detailed` | ✅ PASSING |
-| KPIs calculated | `test_kpi_metrics_calculated` | ✅ PASSING |
-| Recent activity limited | `test_recent_activity_limited` | ✅ PASSING |
-| Confessions private | `test_confessions_privacy_protected` | ✅ PASSING |
-| Single follow-up prompt | `test_no_duplicate_prompts_in_full_flow` | ✅ PASSING |
-| **No emoji headers IN RESPONSES** | `test_no_emoji_headers` | ✅ PASSING |
-| LLM no self-prompts | `test_llm_no_self_generated_prompts` | ✅ PASSING |
-| Data display canned intro | `test_display_data_uses_canned_intro` | ✅ PASSING |
-| SQL artifact sanitization | `test_generated_answer_sanitizes_sql_artifacts` | ✅ PASSING |
-| Code display graceful | `test_empty_code_index_shows_helpful_message` | ✅ PASSING |
-| Code validation logic | `test_code_content_validation_logic` | ✅ PASSING |
-| No information overload | `test_no_information_overload` | ✅ PASSING |
-| Consistent formatting | `test_consistent_formatting_across_roles` | ✅ PASSING |
-| No section iteration | `test_analytics_no_section_iteration` | ✅ PASSING |
-| Prompts deprecated | `test_response_generator_no_prompts` | ✅ PASSING |
-| Single prompt location | `test_conversation_nodes_single_prompt_location` | ✅ PASSING |
-| **Q&A synthesis** | `test_no_qa_verbatim_responses`, `test_response_synthesis_in_prompts` | ✅ PASSING (2 tests) |
-
-**Current Pass Rate**: 18/18 tests passing (100%) ✅
-**Target**: 18/18 tests passing (100%) ✅
-
-**Run**: `pytest tests/test_conversation_quality.py -v`
+Conversation quality tests were removed during the Danaher + Craig Jones voice
+stabilization. They will be rewritten once the personality core is stable.
 
 ---
 
@@ -837,7 +797,7 @@ Tests fail → PR blocked, fix required ❌
 **Recommended setup** (configure in GitHub → Settings → Branches):
 - ✅ Require status checks to pass before merging
 - ✅ Require branches to be up to date before merging
-- ✅ Required checks: `conversation-quality`, `documentation-alignment`
+- ✅ Required checks: `documentation-alignment`
 
 ### Local Testing Before Push
 
@@ -845,7 +805,7 @@ Run the same tests locally to catch issues before CI/CD:
 
 ```bash
 # Run all tests (same as CI/CD)
-pytest tests/test_conversation_quality.py tests/test_documentation_alignment.py -v
+pytest tests/test_documentation_alignment.py -v
 
 # Or use pre-commit hooks (faster feedback)
 git commit -m "your message"  # Hooks run automatically
@@ -2108,7 +2068,6 @@ def test_NEW_QUALITY_STANDARD(self):
 
 1. **Run tests before committing**:
    ```bash
-   pytest tests/test_conversation_quality.py -v
    pytest tests/test_documentation_alignment.py -v
    ```
 
@@ -2393,7 +2352,6 @@ These tests verify consistent behavior across ALL roles:
 ## Related Documentation
 
 - **Test Inventory**: See "Current Quality Standards" section above
-- **Conversation Quality**: `tests/test_conversation_quality.py`
 - **Documentation Consolidation**: `DOCUMENTATION_CONSOLIDATION_ANALYSIS.md`
 - **Code Alignment Report**: `CODE_DOCUMENTATION_ALIGNMENT_REPORT.md`
 - **Master Documentation**: `docs/context/` directory

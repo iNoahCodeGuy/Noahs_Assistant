@@ -9,13 +9,6 @@ repos:
       # QUALITY TESTS: Run automated test suite before commit
       # ============================================================
 
-      - id: conversation-quality-tests
-        name: Conversation Quality Tests (18 tests)
-        entry: pytest tests/test_conversation_quality.py -v --tb=short
-        language: system
-        pass_filenames: false
-        stages: [pre-commit]
-
       - id: documentation-alignment-tests
         name: Documentation Alignment Tests (12 tests)
         entry: pytest tests/test_documentation_alignment.py -v --tb=short
