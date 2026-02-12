@@ -87,15 +87,13 @@ def main():
     conversation_state = {}  # Track intent router state (crush flow, etc.)
 
     # Portfolia greets first (as per conversation examples)
-    greeting = """Hi I'm Portfolia, Noah's AI Assistant.
+    greeting = """Hey, I'm Portfolia -- Noah's AI assistant.
 
-Before we dive in, what best describes you?
-1️⃣ Looking to learn about Noah's professional background
-2️⃣ Looking to learn about his technical background
+What brings you here?
+1️⃣ Learn more about Noah
+2️⃣ See what Noah has built
 3️⃣ Just looking around
-4️⃣ Looking to confess crush 💌
-
-(Or just tell me what you're curious about!)"""
+4️⃣ Confess a crush 💌"""
 
     print_portfolia(greeting)
 

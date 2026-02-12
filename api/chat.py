@@ -43,6 +43,7 @@ class handler(BaseHTTPRequestHandler):
             role = data.get('role', 'Just looking around')
             session_id = data.get('session_id', 'default')
             chat_history = data.get('chat_history', [])
+            session_memory = data.get('session_memory', {})
             user_email = data.get('user_email')
             user_name = data.get('user_name')
             user_phone = data.get('user_phone')
@@ -50,36 +51,36 @@ class handler(BaseHTTPRequestHandler):
             # Initialize RAG engine
             rag_engine = RagEngine()
 
-            # Create conversation state
-            state = ConversationState(
-                role=role,
-                query=query,
-                chat_history=chat_history
-            )
-
-            # Add session_id and user context to extras
-            state.stash('session_id', session_id)
+            # Create conversation state (ConversationState is a TypedDict / dict)
+            state = {
+                'role': role,
+                'query': query,
+                'chat_history': chat_history,
+                'session_id': session_id,
+                'session_memory': session_memory if isinstance(session_memory, dict) else {},
+            }
             if user_email:
-                state.stash('user_email', user_email)
+                state['user_email'] = user_email
             if user_name:
-                state.stash('user_name', user_name)
+                state['user_name'] = user_name
             if user_phone:
-                state.stash('user_phone', user_phone)
+                state['user_phone'] = user_phone
 
             # Run conversation flow
             result_state = run_conversation_flow(state, rag_engine, session_id=session_id)
 
-            # Build response
+            # Build response — include session_memory so the frontend can send it back
             response = {
                 'success': True,
-                'answer': result_state.answer,
-                'role': result_state.role,
-                'session_id': result_state.fetch('session_id', session_id),
-                'analytics': result_state.analytics_metadata,
+                'answer': result_state.get('answer', ''),
+                'role': result_state.get('role', role),
+                'session_id': result_state.get('session_id', session_id),
+                'session_memory': result_state.get('session_memory', {}),
+                'analytics': result_state.get('analytics_metadata', {}),
                 'actions_taken': [
-                    action.get('type') for action in result_state.pending_actions
+                    action.get('type') for action in result_state.get('pending_actions', [])
                 ],
-                'retrieved_chunks': len(result_state.retrieved_chunks)
+                'retrieved_chunks': len(result_state.get('retrieved_chunks', []))
             }
 
             # Send success response

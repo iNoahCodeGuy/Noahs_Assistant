@@ -3451,7 +3451,7 @@ how well you retrieved information about him.
     # Skip for welcome/menu messages (they're intentionally formatted)
     is_welcome_message = any(indicator in answer.lower() for indicator in [
         "since you selected", "you can choose where to start",
-        "before we dive in", "what best describes you",
+        "what brings you here",
         "i can focus on the areas"
     ])
 

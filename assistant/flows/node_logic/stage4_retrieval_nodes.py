@@ -922,6 +922,7 @@ def handle_grounding_gap(state: ConversationState) -> ConversationState:
         # questions, NOT knowledge queries. When retrieval returns 0 chunks
         # for these, generate a brief contextual acknowledgment instead of
         # the generic fallback.
+        _GREETING_MENU_INDICATORS = ("1️⃣", "2️⃣", "3️⃣", "4️⃣", "what brings you here")
         _last_assistant_msg = ""
         _last_assistant_had_question = False
         for msg in reversed(chat_history):
@@ -935,7 +936,12 @@ def handle_grounding_gap(state: ConversationState) -> ConversationState:
                 _content = getattr(msg, "content", "")
             if _role in ("assistant", "ai") and _content:
                 _last_assistant_msg = _content
-                _last_assistant_had_question = "?" in _content
+                # Greeting/menu messages always contain "?" but are not
+                # genuine follow-up questions — exclude them
+                if any(ind in _content.lower() for ind in _GREETING_MENU_INDICATORS):
+                    _last_assistant_had_question = False
+                else:
+                    _last_assistant_had_question = "?" in _content
                 break
 
         _word_count = len(query.split()) if query else 0

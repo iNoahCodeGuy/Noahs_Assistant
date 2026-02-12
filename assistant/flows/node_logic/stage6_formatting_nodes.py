@@ -1850,7 +1850,7 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
     welcome_indicators = [
         "Since you selected",
         "You can choose where to start:",
-        "Before we dive in, what best describes you?",
+        "What brings you here?",
         "I can focus on the areas most relevant to you"
     ]
     # Only skip formatting if draft_answer exists (meaning this is a new welcome message)
