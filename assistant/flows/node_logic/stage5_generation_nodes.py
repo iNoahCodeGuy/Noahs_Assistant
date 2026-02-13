@@ -19,10 +19,6 @@ See: docs/context/CONVERSATION_PERSONALITY.md for generation personality
 
 import logging
 import re
-import time
-import os
-import sys
-from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from assistant.state.conversation_state import ConversationState
@@ -34,27 +30,6 @@ from assistant.flows.node_logic.chain_of_thought import (
     chain_of_thought_generate,
     detect_confusion_signals,
 )
-
-# Module-level verification - this will print when module is imported
-print(">>> stage5_generation_nodes.py MODULE LOADED <<<", file=sys.stderr, flush=True)
-
-# Get debug log path - try multiple locations
-def _get_debug_log_path():
-    """Get the debug log file path, trying multiple locations."""
-    # Try absolute path first
-    abs_path = Path('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log')
-    if abs_path.parent.exists():
-        return str(abs_path)
-
-    # Try relative to current working directory
-    cwd_path = Path(os.getcwd()) / '.cursor' / 'debug.log'
-    if cwd_path.parent.exists() or Path(os.getcwd()).exists():
-        cwd_path.parent.mkdir(parents=True, exist_ok=True)
-        return str(cwd_path)
-
-    # Fallback: use absolute path anyway (will create directory if needed)
-    abs_path.parent.mkdir(parents=True, exist_ok=True)
-    return str(abs_path)
 
 logger = logging.getLogger(__name__)
 
@@ -1385,32 +1360,11 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         >>> len(state["draft_answer"])  # Should have LLM-generated answer
         342
     """
-    # CRITICAL: Entry point verification - this should ALWAYS print
-    import sys
-    print(f"\n>>> generate_draft() CALLED - Query: {state.get('query', 'NO QUERY')[:50]} <<<\n", file=sys.stderr, flush=True)
-
-    # #region agent log - Entry point
-    try:
-        log_path = _get_debug_log_path()
-        with open(log_path, 'a') as f:
-            import json
-            f.write(json.dumps({
-                "location": "stage5_generation_nodes.py:1029",
-                "message": "generate_draft ENTRY",
-                "data": {
-                    "query": state.get('query', 'NO QUERY')[:50],
-                    "has_retrieved_chunks": bool(state.get('retrieved_chunks')),
-                    "retrieved_chunks_count": len(state.get('retrieved_chunks', [])),
-                    "role_mode": state.get('role_mode')
-                },
-                "timestamp": int(time.time() * 1000),
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "ALL"
-            }) + "\n")
-    except Exception as log_err:
-        print(f"DEBUG LOG FAILED in generate_draft: {log_err}", file=sys.stderr, flush=True)
-    # #endregion
+    logger.info(
+        f"generate_draft: query={state.get('query', '')[:80]!r} "
+        f"chunks={len(state.get('retrieved_chunks', []))} "
+        f"role_mode={state.get('role_mode')}"
+    )
 
     # Fail-fast: Validate required fields (Defensibility)
     query = state.get("query", "")
@@ -1465,22 +1419,13 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         requested_resources = state.get("requested_resources", [])
         is_repeated = state.get("is_repeated_action_request", False)
 
-        # #region agent log
-        debug_trace = state.get("_debug_trace", [])
-        debug_trace.append({"loc": "generate_draft:action_request", "resources": requested_resources, "is_repeated": is_repeated})
-        # #endregion
-
         # Handle REPEATED action requests specially
         if is_repeated:
-            # #region agent log
-            debug_trace.append({"loc": "generate_draft:repeated_handler", "msg": "Returning acknowledgment for repeated action"})
-            # #endregion
             logger.info("Repeated action request detected - returning acknowledgment")
             draft = "I already provided those resources above. Is there something specific you're looking for, or would you like Noah to reach out directly?"
             return {
                 "draft_answer": draft,
                 "is_repeated_action_request": True,
-                "_debug_trace": debug_trace
             }
 
         logger.info(f"Action request detected - short-circuiting generation for: {requested_resources}")
@@ -1498,33 +1443,6 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
             "action_request_handled": True,
             "requested_resources": requested_resources
         }
-
-    # #region agent log
-    try:
-        log_path = _get_debug_log_path()
-        with open(log_path, 'a') as f:
-            import json
-            f.write(json.dumps({
-                "location": "stage5_generation_nodes.py:1045",
-                "message": "generate_draft() entry",
-                "data": {
-                    "query": query,
-                    "query_type": state.get("query_type"),
-                    "menu_choice": state.get("menu_choice"),
-                    "role_mode": state.get("role_mode"),
-                    "has_answer": bool(state.get("answer")),
-                    "answer_preview": (state.get("answer", "")[:100] + "...") if state.get("answer") else None,
-                    "retrieved_chunks_count": len(state.get("retrieved_chunks", []))
-                },
-                "timestamp": int(time.time() * 1000),
-                "sessionId": "debug-session",
-                "runId": "run2",
-                "hypothesisId": "E"
-            }) + "\n")
-    except Exception as log_err:
-        # Don't fail on logging errors
-        pass
-    # #endregion
 
     # Check if user is asking about conversation logic (self-explanation)
     # This allows Portfolia to explain her own conversation progression
@@ -1621,66 +1539,8 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     update: Dict[str, Any] = {}
     state.setdefault("analytics_metadata", {})
 
-    # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-        import json
-        f.write(json.dumps({
-            "location": "stage5_generation_nodes.py:1021",
-            "message": "Before pipeline_halt check",
-            "data": {
-                "pipeline_halt": state.get("pipeline_halt"),
-                "query": query,
-                "query_type": state.get("query_type"),
-                "menu_choice": state.get("menu_choice"),
-                "has_answer": bool(state.get("answer")),
-                "answer_preview": (state.get("answer", "")[:100] + "...") if state.get("answer") else None
-            },
-            "timestamp": int(time.time() * 1000),
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "A"
-        }) + "\n")
-    # #endregion
-
     if state.get("pipeline_halt"):
-        # #region agent log
-        log_path = _get_debug_log_path()
-        with open(log_path, 'a') as f:
-            import json
-            f.write(json.dumps({
-                "location": "stage5_generation_nodes.py:1022",
-                "message": "Early return due to pipeline_halt",
-                "data": {
-                    "pipeline_halt": state.get("pipeline_halt"),
-                    "query": query
-                },
-                "timestamp": int(time.time() * 1000),
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "A"
-            }) + "\n")
-        # #endregion
-        # Return empty update dict (not state) to avoid preserving old answer
-        # In LangGraph StateGraph, nodes should return partial updates, not full state
-        # Explicitly clear answer when pipeline is halted to prevent preserving old answers
         return {"answer": None, "draft_answer": None}
-
-    # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-        import json
-        f.write(json.dumps({
-            "location": "stage5_generation_nodes.py:1024",
-            "message": "Pipeline_halt check passed, continuing",
-            "data": {
-                "pipeline_halt": state.get("pipeline_halt"),
-                "grounding_status": state.get("grounding_status")
-            },
-            "timestamp": int(time.time() * 1000),
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "A"
-        }) + "\n")
-    # #endregion
 
     grounding_status = state.get("grounding_status")
     if grounding_status and grounding_status not in {"ok", "unknown"}:
@@ -1917,28 +1777,6 @@ AVOID:
 
     layer_outline: Optional[Dict[str, str]] = None
 
-    # Special handling for menu option 2 (orchestration layer walkthrough) - comprehensive 7-stage pipeline explanation
-    # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-        import json
-        f.write(json.dumps({
-            "location": "stage5_generation_nodes.py:1269",
-            "message": "Before menu option 2 check",
-            "data": {
-                "query_type": state.get("query_type"),
-                "menu_choice": state.get("menu_choice"),
-                "role_mode": state.get("role_mode"),
-                "query_type_match": state.get("query_type") == "menu_selection",
-                "menu_choice_match": state.get("menu_choice") == "2",
-                "role_mode_match": state.get("role_mode") == "hiring_manager_technical"
-            },
-            "timestamp": int(time.time() * 1000),
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "B"
-        }) + "\n")
-    # #endregion
-
     # Handle repeated menu selection
     if state.get("is_repeated_menu_selection"):
         menu_choice = state.get("menu_choice", "")
@@ -1984,51 +1822,6 @@ AVOID:
         state.get("menu_choice") == "2" and
         state.get("role_mode") == "hiring_manager_technical"
     )
-
-    # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-        import json
-        f.write(json.dumps({
-            "location": "stage5_generation_nodes.py:1355",
-            "message": "Menu option 2 detection result",
-            "data": {
-                "is_menu_option_two": is_menu_option_two,
-                "query_type": state.get("query_type"),
-                "menu_choice": state.get("menu_choice"),
-                "role_mode": state.get("role_mode"),
-                "query_type_match": state.get("query_type") == "menu_selection",
-                "menu_choice_match": state.get("menu_choice") == "2",
-                "role_mode_match": state.get("role_mode") == "hiring_manager_technical"
-            },
-            "timestamp": int(time.time() * 1000),
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "A"
-        }) + "\n")
-    # #endregion
-
-    if not is_menu_option_two:
-        # #region agent log
-        log_path = _get_debug_log_path()
-        with open(log_path, 'a') as f:
-            import json
-            f.write(json.dumps({
-                "location": "stage5_generation_nodes.py:1380",
-                "message": "Menu option 2 check failed - proceeding with normal generation",
-                "data": {
-                    "query_type": state.get("query_type"),
-                    "menu_choice": state.get("menu_choice"),
-                    "role_mode": state.get("role_mode"),
-                    "query_type_match": state.get("query_type") == "menu_selection",
-                    "menu_choice_match": state.get("menu_choice") == "2",
-                    "role_mode_match": state.get("role_mode") == "hiring_manager_technical"
-                },
-                "timestamp": int(time.time() * 1000),
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "B"
-            }) + "\n")
-        # #endregion
 
     # Runtime awareness: Add content block to context if triggered
     if runtime_awareness_triggered and runtime_content_block:
@@ -2152,53 +1945,13 @@ AVOID:
     if is_menu_option_one:
         _log_instruction_preview(f"{attempt_label}-attempt-{attempt_counter}", instruction_suffix)
 
-    # #region agent log
-    try:
-        log_path = _get_debug_log_path()
-        with open(log_path, 'a') as f:
-            import json
-            f.write(json.dumps({
-                "location": "stage5_generation_nodes.py:1599",
-                "message": "Before LLM generation call",
-                "data": {
-                    "is_menu_option_two": is_menu_option_two,
-                    "is_menu_option_one": is_menu_option_one,
-                    "query": query[:100] if query else None,
-                    "retrieved_chunks_count": len(retrieved_chunks),
-                    "chat_history_len": len(chat_history),
-                    "selected_model": selected_model,
-                    "has_extra_instructions": bool(instruction_suffix)
-                },
-                "timestamp": int(time.time() * 1000),
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "A"
-            }) + "\n")
-    except: pass
-    # #endregion
+    logger.info(
+        f"LLM call: model={selected_model or 'default'} "
+        f"chunks={len(retrieved_chunks)} history={len(chat_history)} "
+        f"extra_instructions={bool(instruction_suffix)}"
+    )
 
     try:
-        # #region agent log - Before generate_contextual_response call
-        try:
-            log_path = _get_debug_log_path()
-            with open(log_path, 'a') as f:
-                import json
-                f.write(json.dumps({
-                    "location": "stage5_generation_nodes.py:1914",
-                    "message": "Before generate_contextual_response call",
-                    "data": {
-                        "query": query[:50] if query else None,
-                        "chat_history_len": len(chat_history) if chat_history else 0,
-                        "selected_model": selected_model
-                    },
-                    "timestamp": int(time.time() * 1000),
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "ALL"
-                }) + "\n")
-        except: pass
-        # #endregion
-
         answer = rag_engine.response_generator.generate_contextual_response(
             query=query,
             context=retrieved_chunks,
@@ -2208,81 +1961,10 @@ AVOID:
             model_name=selected_model  # Pass selected model
         )
 
-        # #region agent log - After generate_contextual_response call
-        try:
-            log_path = _get_debug_log_path()
-            with open(log_path, 'a') as f:
-                import json
-                f.write(json.dumps({
-                    "location": "stage5_generation_nodes.py:1945",
-                    "message": "After generate_contextual_response call",
-                    "data": {
-                        "answer_type": type(answer).__name__ if answer else None,
-                        "answer_is_none": answer is None,
-                        "answer_len": len(answer) if answer and isinstance(answer, str) else 0,
-                        "answer_preview": str(answer)[:200] if answer else None,
-                        "is_menu_option_two": is_menu_option_two,
-                        "is_fallback_message": "I'm having trouble" in str(answer) if answer else False
-                    },
-                    "timestamp": int(time.time() * 1000),
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A,B"
-                }) + "\n")
-        except Exception as log_err:
-            import sys
-            print(f"DEBUG LOG FAILED after call: {log_err}", file=sys.stderr, flush=True)
-        # #endregion
+        logger.info(f"LLM response: {len(answer)} chars, {len(answer.split())} words")
 
     except Exception as e:
-        import traceback
-        import sys
-        error_traceback = traceback.format_exc()
-        logger.error(f"LLM generation failed: {e}")
-        # CRITICAL: Print to stderr immediately - this will show in terminal
-        print(f"\n{'='*60}\nCRITICAL ERROR IN GENERATION (stage5):\nType: {type(e).__name__}\nMessage: {str(e)}\nTraceback:\n{error_traceback}\n{'='*60}\n", file=sys.stderr, flush=True)
-
-        # #region agent log - Multiple fallback strategies
-        error_data = {
-            "location": "stage5_generation_nodes.py:1878",
-            "message": "LLM generation failed with exception (outer handler)",
-            "data": {
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "error_traceback": error_traceback,
-                "query": query[:100] if query else None,
-                "selected_model": selected_model,
-                "retrieved_chunks_count": len(retrieved_chunks) if retrieved_chunks else 0,
-                "is_menu_option_two": is_menu_option_two,
-                "is_menu_option_one": is_menu_option_one,
-                "has_instruction_suffix": bool(instruction_suffix),
-                "instruction_suffix_len": len(instruction_suffix) if instruction_suffix else 0
-            },
-            "timestamp": int(time.time() * 1000),
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "A,B,C,D,E,F"
-        }
-
-        # Try file logging first
-        try:
-            log_path = _get_debug_log_path()
-            with open(log_path, 'a') as f:
-                import json
-                f.write(json.dumps(error_data) + "\n")
-        except Exception as log_err:
-            # Fallback 1: Try stderr (always works)
-            try:
-                import json
-                print(f"\n=== DEBUG LOG (stderr fallback) ===\n{json.dumps(error_data, indent=2)}\n=== END DEBUG LOG ===\n", file=sys.stderr, flush=True)
-            except:
-                pass
-            # Fallback 2: Standard logger with full details
-            logger.error(f"Failed to write debug log: {log_err}")
-            logger.error(f"Original error: {e}")
-            logger.error(f"Error type: {type(e).__name__}")
-            logger.error(f"Full traceback:\n{error_traceback}")
-        # #endregion
+        logger.error(f"LLM generation failed: {type(e).__name__}: {e}", exc_info=True)
 
         # Specific handling for menu option 2
         if is_menu_option_two:
@@ -2469,25 +2151,6 @@ AVOID:
         answer = rag_engine.response_generator._enforce_first_person(answer)
         logger.debug("Applied post-generation first-person enforcement for menu option 2")
 
-        # #region agent log
-        log_path = _get_debug_log_path()
-        with open(log_path, 'a') as f:
-            import json
-            f.write(json.dumps({
-                "location": "stage5_generation_nodes.py:1766",
-                "message": "Menu option 2 answer generated",
-                "data": {
-                    "answer_length": len(answer),
-                    "answer_preview": answer[:200] + "..." if len(answer) > 200 else answer,
-                    "word_count": len(answer.split())
-                },
-                "timestamp": int(time.time() * 1000),
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "C"
-            }) + "\n")
-        # #endregion
-
         # Detect and remove verbatim copying (same as menu option 1)
         if retrieved_chunks:
             verbatim_check = _detect_verbatim_copying(answer, retrieved_chunks)
@@ -2579,44 +2242,6 @@ AVOID:
 
     update["draft_answer"] = cleaned_answer
     update["answer"] = cleaned_answer
-
-    # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-        import json
-        f.write(json.dumps({
-            "location": "stage5_generation_nodes.py:1926",
-            "message": "generate_draft: Returning final answer",
-            "data": {
-                "answer_len": len(cleaned_answer) if cleaned_answer else 0,
-                "answer_preview": cleaned_answer[:200] if cleaned_answer else None,
-                "is_menu_option_two": is_menu_option_two,
-                "is_menu_option_one": is_menu_option_one,
-                "update_keys": list(update.keys())
-            },
-            "timestamp": int(time.time() * 1000),
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "A"
-        }) + "\n")
-    # #endregion
-
-    # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-        import json
-        f.write(json.dumps({
-            "location": "stage5_generation_nodes.py:1821",
-            "message": "Answer set in update dict",
-            "data": {
-                "answer_length": len(cleaned_answer),
-                "answer_preview": cleaned_answer[:200] + "..." if len(cleaned_answer) > 200 else cleaned_answer,
-                "is_menu_option_two": is_menu_option_two if 'is_menu_option_two' in locals() else False
-            },
-            "timestamp": int(time.time() * 1000),
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "C"
-        }) + "\n")
-    # #endregion
 
     # Return partial update - LangGraph will merge into state
     return update

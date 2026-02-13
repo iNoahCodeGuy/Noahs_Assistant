@@ -16,23 +16,9 @@ from __future__ import annotations
 
 import logging
 import re
-import time
-import os
-from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from .langchain_compat import RetrievalQA, PromptTemplate, ChatOpenAI
-
-# Get debug log path - try multiple locations
-def _get_debug_log_path():
-    """Get the debug log file path, trying multiple locations."""
-    # Always use absolute path and ensure directory exists
-    abs_path = Path('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log')
-    try:
-        abs_path.parent.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass  # If mkdir fails, try anyway
-    return str(abs_path)
 
 logger = logging.getLogger(__name__)
 
@@ -47,16 +33,7 @@ class ResponseGenerator:
         self.degraded_mode = degraded_mode
 
     def _get_cached_response(self, query: str, role: str, context_hash: str) -> Optional[str]:
-        """Check cache for common queries (menu selections, greetings).
-
-        Args:
-            query: User query
-            role: User role
-            context_hash: Hash of context to ensure cache validity
-
-        Returns:
-            Cached response if available, None otherwise
-        """
+        """Check cache for common queries (menu selections, greetings)."""
         cache_key = f"{role}:{query.strip().lower()}:{context_hash}"
         cached = self._response_cache.get(cache_key)
         if cached:
@@ -64,22 +41,12 @@ class ResponseGenerator:
         return cached
 
     def _cache_response(self, query: str, role: str, context_hash: str, response: str):
-        """Cache response for common queries.
-
-        Args:
-            query: User query
-            role: User role
-            context_hash: Hash of context for cache key
-            response: Generated response to cache
-        """
+        """Cache response for common queries."""
         cache_key = f"{role}:{query.strip().lower()}:{context_hash}"
         if len(self._response_cache) >= self._cache_max_size:
-            # Remove oldest entry (simple FIFO)
             oldest_key = next(iter(self._response_cache))
             del self._response_cache[oldest_key]
-            logger.debug(f"Cache evicted oldest entry: {oldest_key[:50]}")
         self._response_cache[cache_key] = response
-        logger.debug(f"Cached response for query: {query[:50]}")
 
     def generate_basic_response(self, query: str, fallback_docs: List[str] = None, chat_history: List[Dict[str, str]] = None) -> str:
         """Generate basic response using LLM with retrieved context and conversation history."""
@@ -286,7 +253,7 @@ MY PIPELINE (assistant/flows/conversation_flow.py):
 Functional pipeline — each node gets the state dict, returns a partial update via state.update(result).
 
 INTENT ROUTING (assistant/flows/node_logic/stage1_intent_router.py):
-classify_message_intent() calls Claude Haiku (~150ms) for intent: knowledge_query, crush_confession, greeting, small_talk, off_topic. The crush flow is a state machine recovered from chat_history markers (_CRUSH_INITIAL_MARKER, _CRUSH_REVEAL_MARKER). _is_anonymous_choice()/_is_reveal_choice() use exact-match for single chars "1"/"2" to prevent false positives on phone numbers like "707-555-1234". _looks_like_contact_info() uses regex: phone r'\d[\d\s\-\(\)]{6,}', email r'\S+@\S+\.\S+', social r'@\w{2,}', and name patterns like "my name is", "I'm", "call me". Short continuations ("yes", "go deeper") get expanded via the previous user question.
+classify_message_intent() calls Claude Haiku (~150ms) for intent: knowledge_query, crush_confession, greeting, small_talk, off_topic. The crush flow is a state machine recovered from chat_history markers (_CRUSH_INITIAL_MARKER, _CRUSH_REVEAL_MARKER). _is_anonymous_choice()/_is_reveal_choice() use exact-match for single chars "1"/"2" to prevent false positives on phone numbers like "707-555-1234". _looks_like_contact_info() uses regex: phone r'\d[\d\s\-\(\)]{6,}', email r'\S+@\S+\.\S+', social r'@\w{{2,}}', and name patterns like "my name is", "I'm", "call me". Short continuations ("yes", "go deeper") get expanded via the previous user question.
 
 RETRIEVAL (assistant/flows/node_logic/stage4_retrieval_nodes.py):
 retrieve_chunks() calls Supabase RPC match_kb_chunks for pgvector cosine similarity. PgVectorRetriever (assistant/retrieval/pgvector_retriever.py) embeds queries with OpenAI text-embedding-3-small (1536 dims), then searches with match_threshold=0.5 strict, 0.3 fallback. validate_grounding() checks the scores. handle_grounding_gap() detects architecture queries by keyword and injects a synthetic self-knowledge chunk so I can explain my own design without needing RAG results.
@@ -382,34 +349,6 @@ Remember: I'm Portfolia. Match response length to the question — Tier 1 for qu
         extra_instructions: str = None,
         model_name: str = None
     ) -> str:
-        # #region agent log - Entry point
-        import sys
-        try:
-            log_path = _get_debug_log_path()
-            log_entry = {
-                "location": "response_generator.py:145",
-                "message": "generate_contextual_response ENTRY",
-                "data": {
-                    "query": query[:50] if query else None,
-                    "context_count": len(context) if context else 0,
-                    "chat_history_len": len(chat_history) if chat_history else 0,
-                    "role": role,
-                    "model_name": model_name
-                },
-                "timestamp": int(time.time() * 1000),
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "ALL"
-            }
-            with open(log_path, 'a') as f:
-                import json
-                f.write(json.dumps(log_entry) + "\n")
-            print(f"DEBUG: Logged to {log_path}", file=sys.stderr, flush=True)
-        except Exception as log_err:
-            print(f"DEBUG LOG FAILED: {log_err}", file=sys.stderr, flush=True)
-            import traceback
-            print(f"DEBUG LOG TRACEBACK: {traceback.format_exc()}", file=sys.stderr, flush=True)
-        # #endregion
         """Generate response with explicit context and role awareness.
 
         Args:
@@ -418,12 +357,16 @@ Remember: I'm Portfolia. Match response length to the question — Tier 1 for qu
             role: User's selected role
             chat_history: Previous conversation turns
             extra_instructions: Optional guidance for response style/length
-                (e.g., "provide comprehensive explanation", "include code examples")
-            model_name: Optional model override (e.g., "o1-preview" for reasoning)
+            model_name: Optional model override
 
         Returns:
             Generated response text
         """
+        logger.info(
+            f"generate_contextual_response: query={query[:80]!r} role={role} "
+            f"chunks={len(context) if context else 0} history={len(chat_history or [])}"
+        )
+
         context_parts = []
         for item in context:
             if isinstance(item, dict):
@@ -436,8 +379,6 @@ Remember: I'm Portfolia. Match response length to the question — Tier 1 for qu
 
         # Framework-aware code suggestions
         framework_instructions = ""
-        # Note: detected_framework would come from state if this were in the pipeline
-        # For now, detect from query directly in this legacy module
         query_lower = query.lower()
         if any(kw in query_lower for kw in ["frontend", "ui", "react", "next.js", "nextjs", "typescript"]):
             framework_instructions = (
@@ -464,423 +405,59 @@ Remember: I'm Portfolia. Match response length to the question — Tier 1 for qu
         # Check cache for common queries (menu selections, greetings)
         query_lower = query.lower().strip()
         is_cacheable = (
-            query_lower in ["1", "2", "3", "4"] or  # Menu selections
+            query_lower in ["1", "2", "3", "4"] or
             query_lower.startswith("option") or
             any(greeting in query_lower for greeting in ["hi", "hello", "hey"])
         )
 
         if is_cacheable:
-            context_hash = str(hash(str(context)[:100]))  # Hash first 100 chars
+            context_hash = str(hash(str(context)[:100]))
             cached = self._get_cached_response(query, role or "", context_hash)
             if cached:
                 return cached
 
-        # #region agent log - Before prompt building
-        try:
-            log_path = _get_debug_log_path()
-            with open(log_path, 'a') as f:
-                import json
-                chat_history_sample = None
-                if chat_history and len(chat_history) > 0:
-                    first_msg = chat_history[0]
-                    chat_history_sample = {
-                        "has_role_key": "role" in first_msg if isinstance(first_msg, dict) else False,
-                        "has_type_key": "type" in first_msg if isinstance(first_msg, dict) else False,
-                        "first_msg_keys": list(first_msg.keys())[:5] if isinstance(first_msg, dict) else None,
-                        "first_msg_type": type(first_msg).__name__
-                    }
-                f.write(json.dumps({
-                    "location": "response_generator.py:219",
-                    "message": "Before _build_role_prompt call",
-                    "data": {
-                        "query": query[:100] if query else None,
-                        "chat_history_len": len(chat_history) if chat_history else 0,
-                        "chat_history_sample": chat_history_sample
-                    },
-                    "timestamp": int(time.time() * 1000),
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "C,E"
-                }) + "\n")
-        except: pass
-        # #endregion
+        prompt = self._build_role_prompt(query, context_str, role, chat_history, extra_instructions)
 
-        # #region agent log - Before _build_role_prompt with exception handling
-        try:
-            prompt = self._build_role_prompt(query, context_str, role, chat_history, extra_instructions)
-        except Exception as prompt_err:
-            log_path = _get_debug_log_path()
-            with open(log_path, 'a') as f:
-                import json
-                import traceback
-                f.write(json.dumps({
-                    "location": "response_generator.py:250",
-                    "message": "EXCEPTION in _build_role_prompt",
-                    "data": {
-                        "error_type": type(prompt_err).__name__,
-                        "error_message": str(prompt_err),
-                        "error_traceback": traceback.format_exc()[:1000]
-                    },
-                    "timestamp": int(time.time() * 1000),
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "C,E"
-                }) + "\n")
-            raise  # Re-raise to be caught by outer handler
-        # #endregion
-
-        # #region agent log
-        import traceback
-        try:
-            log_path = _get_debug_log_path()
-            with open(log_path, 'a') as f:
-                import json
-                f.write(json.dumps({
-                    "location": "response_generator.py:250",
-                    "message": "After _build_role_prompt, before LLM call",
-                    "data": {
-                        "query": query[:100] if query else None,
-                        "context_str_len": len(context_str),
-                        "context_chunks_count": len(context),
-                        "role": role,
-                        "model_name": model_name,
-                        "prompt_len": len(prompt) if prompt else 0,
-                        "has_qa_chain": bool(self.qa_chain),
-                        "degraded_mode": getattr(self, 'degraded_mode', None),
-                        "has_extra_instructions": bool(extra_instructions),
-                        "chat_history_len": len(chat_history) if chat_history else 0
-                    },
-                    "timestamp": int(time.time() * 1000),
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A"
-                }) + "\n")
-        except Exception as log_err:
-            # Don't fail on logging errors
-            pass
-        # #endregion
+        logger.info(f"LLM call: model={model_name or 'default'} prompt_len={len(prompt)}")
 
         try:
             if self.llm and not self.degraded_mode:
-                # Use provided model or default LLM
+                from langchain_core.messages import SystemMessage, HumanMessage
+                system_prompt, user_message = self._split_prompt_for_messages(prompt)
+                messages = [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=user_message)
+                ]
+
                 if model_name and model_name != getattr(self.llm, 'model_name', None):
-                    # #region agent log
-                    try:
-                        log_path = _get_debug_log_path()
-                        with open(log_path, 'a') as f:
-                            import json
-                            f.write(json.dumps({
-                                "location": "response_generator.py:220",
-                                "message": "Creating temp LLM with model override",
-                                "data": {
-                                    "model_name": model_name,
-                                    "default_model": getattr(self.llm, 'model_name', None)
-                                },
-                                "timestamp": int(time.time() * 1000),
-                                "sessionId": "debug-session",
-                                "runId": "run1",
-                                "hypothesisId": "C"
-                            }) + "\n")
-                    except: pass
-                    # #endregion
                     # Create temporary LLM with specified model
                     from assistant.core.rag_factory import RagEngineFactory
                     factory = RagEngineFactory(self.llm._openai_api_key if hasattr(self.llm, '_openai_api_key') else None)
                     temp_llm, _ = factory.create_llm(model_name=model_name)
-                    # #region agent log
-                    try:
-                        log_path = _get_debug_log_path()
-                        with open(log_path, 'a') as f:
-                            import json
-                            f.write(json.dumps({
-                                "location": "response_generator.py:230",
-                                "message": "Before temp_llm.predict call",
-                                "data": {
-                                    "model_name": model_name,
-                                    "prompt_len": len(prompt)
-                                },
-                                "timestamp": int(time.time() * 1000),
-                                "sessionId": "debug-session",
-                                "runId": "run1",
-                                "hypothesisId": "C"
-                            }) + "\n")
-                    except: pass
-                    # #endregion
-                    # CRITICAL FIX: Use proper message structure with system prompt
-                    from langchain_core.messages import SystemMessage, HumanMessage
-                    system_prompt, user_message = self._split_prompt_for_messages(prompt)
-                    messages = [
-                        SystemMessage(content=system_prompt),
-                        HumanMessage(content=user_message)
-                    ]
                     response = temp_llm.invoke(messages)
-                    # Extract content from AIMessage if needed
-                    if hasattr(response, 'content'):
-                        response = response.content
-                    # #region agent log - After temp_llm.invoke
-                    try:
-                        log_path = _get_debug_log_path()
-                        with open(log_path, 'a') as f:
-                            import json
-                            f.write(json.dumps({
-                                "location": "response_generator.py:298",
-                                "message": "After temp_llm.predict call",
-                                "data": {
-                                    "response_type": type(response).__name__ if response else None,
-                                    "response_is_none": response is None,
-                                    "response_len": len(response) if response and isinstance(response, str) else 0,
-                                    "response_preview": str(response)[:100] if response else None
-                                },
-                                "timestamp": int(time.time() * 1000),
-                                "sessionId": "debug-session",
-                                "runId": "run1",
-                                "hypothesisId": "B"
-                            }) + "\n")
-                    except: pass
-                    # #endregion
                 else:
-                    # #region agent log
-                    try:
-                        log_path = _get_debug_log_path()
-                        with open(log_path, 'a') as f:
-                            import json
-                            f.write(json.dumps({
-                                "location": "response_generator.py:240",
-                                "message": "Before self.llm.predict call",
-                                "data": {
-                                    "default_model": getattr(self.llm, 'model_name', None),
-                                    "prompt_len": len(prompt)
-                                },
-                                "timestamp": int(time.time() * 1000),
-                                "sessionId": "debug-session",
-                                "runId": "run1",
-                                "hypothesisId": "A"
-                            }) + "\n")
-                    except: pass
-                    # #endregion
-                    # CRITICAL FIX: Use proper message structure with system prompt
-                    from langchain_core.messages import SystemMessage, HumanMessage
-                    system_prompt, user_message = self._split_prompt_for_messages(prompt)
-                    messages = [
-                        SystemMessage(content=system_prompt),
-                        HumanMessage(content=user_message)
-                    ]
                     response = self.llm.invoke(messages)
-                    # Extract content from AIMessage if needed
-                    if hasattr(response, 'content'):
-                        response = response.content
-                    # #region agent log - After self.llm.invoke
-                    try:
-                        log_path = _get_debug_log_path()
-                        with open(log_path, 'a') as f:
-                            import json
-                            f.write(json.dumps({
-                                "location": "response_generator.py:319",
-                                "message": "After self.llm.predict call",
-                                "data": {
-                                    "response_type": type(response).__name__ if response else None,
-                                    "response_is_none": response is None,
-                                    "response_len": len(response) if response and isinstance(response, str) else 0,
-                                    "response_preview": str(response)[:100] if response else None
-                                },
-                                "timestamp": int(time.time() * 1000),
-                                "sessionId": "debug-session",
-                                "runId": "run1",
-                                "hypothesisId": "B"
-                            }) + "\n")
-                    except: pass
-                    # #endregion
+
+                # Extract content from AIMessage if needed
+                if hasattr(response, 'content'):
+                    response = response.content
             else:
-                # #region agent log
-                try:
-                    log_path = _get_debug_log_path()
-                    with open(log_path, 'a') as f:
-                        import json
-                        f.write(json.dumps({
-                            "location": "response_generator.py:250",
-                            "message": "Using fallback synthesis",
-                            "data": {
-                                "has_qa_chain": bool(self.qa_chain),
-                                "degraded_mode": getattr(self, 'degraded_mode', None)
-                            },
-                            "timestamp": int(time.time() * 1000),
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "F"
-                        }) + "\n")
-                except: pass
-                # #endregion
                 response = self._synthesize_fallback(query, context_str)
 
-            # REMOVED: _enforce_third_person() - Portfolia should speak in first person about itself
-            # Only apply third-person conversion to career/Noah-specific questions (handled elsewhere)
-
-            # #region agent log - Before post-processing
-            try:
-                log_path = _get_debug_log_path()
-                with open(log_path, 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        "location": "response_generator.py:347",
-                        "message": "Before post-processing",
-                        "data": {
-                            "response_type": type(response).__name__ if response else None,
-                            "response_is_none": response is None,
-                            "response_is_str": isinstance(response, str),
-                            "response_len": len(response) if response and isinstance(response, str) else 0
-                        },
-                        "timestamp": int(time.time() * 1000),
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "B,D"
-                    }) + "\n")
-            except: pass
-            # #endregion
-
-            # POST-PROCESSING SAFETY NET: Convert any remaining third-person references to first person
-            # This catches cases where the LLM copied source material verbatim despite system prompts
-            # #region agent log - Before _enforce_first_person
-            try:
-                log_path = _get_debug_log_path()
-                with open(log_path, 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        "location": "response_generator.py:365",
-                        "message": "Before _enforce_first_person call",
-                        "data": {
-                            "response_type": type(response).__name__ if response else None,
-                            "response_is_none": response is None
-                        },
-                        "timestamp": int(time.time() * 1000),
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "D"
-                    }) + "\n")
-            except: pass
-            # #endregion
+            # Post-processing pipeline
             response = self._enforce_first_person(response)
-            # POST-PROCESSING: Strip markdown headers and convert to bold (per system prompt)
             response = self._strip_markdown_headers(response)
-            # #region agent log - After _enforce_first_person
-            try:
-                log_path = _get_debug_log_path()
-                with open(log_path, 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        "location": "response_generator.py:380",
-                        "message": "After _enforce_first_person call",
-                        "data": {
-                            "response_type": type(response).__name__ if response else None,
-                            "response_is_none": response is None
-                        },
-                        "timestamp": int(time.time() * 1000),
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "D"
-                    }) + "\n")
-            except: pass
-            # #endregion
-
-            # Add follow-up suggestions for ALL roles to promote interaction
             response = self._add_technical_followup(response, query, role)
 
             # Cache response for common queries
             if is_cacheable:
-                context_hash = str(hash(str(context)[:100]))  # Hash first 100 chars
+                context_hash = str(hash(str(context)[:100]))
                 self._cache_response(query, role or "", context_hash, response)
 
-            # #region agent log
-            try:
-                log_path = _get_debug_log_path()
-                with open(log_path, 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        "location": "response_generator.py:260",
-                        "message": "LLM generation succeeded",
-                        "data": {
-                            "response_len": len(response) if response else 0,
-                            "response_preview": response[:200] if response else None
-                        },
-                        "timestamp": int(time.time() * 1000),
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "A"
-                    }) + "\n")
-            except: pass
-            # #endregion
+            logger.info(f"LLM response: {len(response)} chars")
             return response
         except Exception as e:
-            import traceback
-            import sys
-            error_traceback = traceback.format_exc()
-            logger.error(f"Response generation (context) failed: {e}")
-            # CRITICAL: Print to stderr immediately - this will show in terminal
-            print(f"\n{'='*60}\nCRITICAL ERROR IN GENERATION:\nType: {type(e).__name__}\nMessage: {str(e)}\n{'='*60}\n", file=sys.stderr, flush=True)
-            # #region agent log - Exception caught
-            try:
-                log_path = _get_debug_log_path()
-                with open(log_path, 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        "location": "response_generator.py:377",
-                        "message": "EXCEPTION CAUGHT in generate_contextual_response",
-                        "data": {
-                            "error_type": type(e).__name__,
-                            "error_message": str(e),
-                            "error_traceback": error_traceback[:1000]  # First 1000 chars
-                        },
-                        "timestamp": int(time.time() * 1000),
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "A,B,C,D,E"
-                    }) + "\n")
-            except: pass
-            # #endregion
-            # #region agent log - Multiple fallback strategies
-            import sys
-            error_data = {
-                "location": "response_generator.py:275",
-                "message": "LLM generation exception caught",
-                "data": {
-                    "error_type": type(e).__name__,
-                    "error_message": str(e),
-                    "error_traceback": error_traceback,
-                    "query": query[:100] if query else None,
-                    "model_name": model_name,
-                    "prompt_len": len(prompt) if prompt else 0,
-                    "context_str_len": len(context_str) if context_str else 0,
-                    "has_qa_chain": bool(self.qa_chain),
-                    "degraded_mode": getattr(self, 'degraded_mode', None),
-                    "llm_model_name": getattr(self.llm, 'model_name', None) if hasattr(self.llm, 'model_name') else None
-                },
-                "timestamp": int(time.time() * 1000),
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "A,B,C,D,E,F"
-            }
-
-            # Try file logging first
-            try:
-                log_path = _get_debug_log_path()
-                with open(log_path, 'a') as f:
-                    import json
-                    f.write(json.dumps(error_data) + "\n")
-            except Exception as log_err:
-                # Fallback 1: Try stderr (always works)
-                try:
-                    import json
-                    print(f"\n=== DEBUG LOG (stderr fallback) ===\n{json.dumps(error_data, indent=2)}\n=== END DEBUG LOG ===\n", file=sys.stderr, flush=True)
-                except:
-                    pass
-                # Fallback 2: Standard logger with full details
-                logger.error(f"Failed to write debug log: {log_err}")
-                logger.error(f"Original error: {e}")
-                logger.error(f"Error type: {type(e).__name__}")
-                logger.error(f"Full traceback:\n{error_traceback}")
-            # #endregion
-            # CRITICAL: Also print to stderr so we can see it even if logging fails
-            import sys
-            print(f"\n{'='*60}\nRESPONSE_GENERATOR EXCEPTION:\nType: {type(e).__name__}\nMessage: {str(e)}\n{'='*60}\n", file=sys.stderr, flush=True)
+            logger.error(f"Response generation failed: {type(e).__name__}: {e}", exc_info=True)
             return "I'm having trouble generating a response right now. Please try again."
 
     def generate_technical_response(self, query: str, career_matches: List[str], code_snippets: List[Dict[str, Any]], role: str) -> str:
@@ -911,14 +488,10 @@ Remember: I'm Portfolia. Match response length to the question — Tier 1 for qu
 
         try:
             response = self.llm.invoke(prompt)
-            # Extract content from AIMessage if needed
             if hasattr(response, 'content'):
                 response = response.content
 
-            # POST-PROCESSING SAFETY NET: Enforce first person
             response = self._enforce_first_person(response)
-
-            # Add follow-up question suggestion
             response = self._add_technical_followup(response, query, role)
 
             return response
@@ -934,125 +507,40 @@ Remember: I'm Portfolia. Match response length to the question — Tier 1 for qu
         chat_history: List[Dict[str, str]] = None,
         extra_instructions: str = None
     ) -> str:
-        """Build role-specific prompt with conversation history and optional display guidance.
-
-        Args:
-            query: User's question
-            context_str: Retrieved context chunks
-            role: User's selected role
-            chat_history: Previous conversation turns
-            extra_instructions: Optional guidance for response style
-                (e.g., "provide comprehensive explanation with code examples")
-
-        Returns:
-            Formatted prompt string for LLM
-        """
+        """Build role-specific prompt with conversation history and optional display guidance."""
         # Build conversation history string for context continuity
         history_context = ""
         if chat_history and len(chat_history) > 0:
-            # #region agent log - Chat history processing
-            try:
-                log_path = _get_debug_log_path()
-                with open(log_path, 'a') as f:
-                    import json
-                    first_msg_keys = list(chat_history[0].keys())[:10] if chat_history and isinstance(chat_history[0], dict) else None
-                    f.write(json.dumps({
-                        "location": "response_generator.py:491",
-                        "message": "Processing chat_history",
-                        "data": {
-                            "chat_history_len": len(chat_history),
-                            "first_msg_keys": first_msg_keys,
-                            "first_msg_has_role": "role" in chat_history[0] if chat_history and isinstance(chat_history[0], dict) else False,
-                            "first_msg_has_type": "type" in chat_history[0] if chat_history and isinstance(chat_history[0], dict) else False
-                        },
-                        "timestamp": int(time.time() * 1000),
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "C,E"
-                    }) + "\n")
-            except: pass
-            # #endregion
             # Get last 4 messages for context (last 2 exchanges)
             recent_history = chat_history[-4:] if len(chat_history) > 4 else chat_history
             history_parts = []
-            for i, msg in enumerate(recent_history):
-                # #region agent log - Processing each message
-                try:
-                    log_path = _get_debug_log_path()
-                    with open(log_path, 'a') as f:
-                        import json
-                        msg_keys = list(msg.keys())[:10] if isinstance(msg, dict) else None
-                        f.write(json.dumps({
-                            "location": "response_generator.py:510",
-                            "message": f"Processing message {i}",
-                            "data": {
-                                "msg_type": type(msg).__name__,
-                                "msg_keys": msg_keys,
-                                "has_role": "role" in msg if isinstance(msg, dict) else False,
-                                "has_type": "type" in msg if isinstance(msg, dict) else False,
-                                "has_content": "content" in msg if isinstance(msg, dict) else False
-                            },
-                            "timestamp": int(time.time() * 1000),
-                            "sessionId": "debug-session",
-                            "runId": "run1",
-                            "hypothesisId": "C,E"
-                        }) + "\n")
-                except: pass
-                # #endregion
+            for msg in recent_history:
                 # Handle both LangChain message format (type: "human"/"ai") and simple dict format (role: "user"/"assistant")
                 msg_role = None
                 msg_content = None
 
                 try:
                     if isinstance(msg, dict):
-                        # Try LangChain format first
                         if "type" in msg:
                             if msg["type"] == "human":
                                 msg_role = "user"
                             elif msg["type"] == "ai":
                                 msg_role = "assistant"
-                        # Fall back to simple dict format
                         elif "role" in msg:
                             msg_role = msg["role"]
 
-                        # Get content - handle both direct content and nested content
                         if "content" in msg:
                             msg_content = msg["content"]
                         elif hasattr(msg, "content"):
                             msg_content = getattr(msg, "content", None)
-                        else:
-                            msg_content = None
 
                     if msg_role == "user" and msg_content:
                         history_parts.append(f"User: {msg_content}")
                     elif msg_role == "assistant" and msg_content:
-                        # Truncate long assistant messages for token efficiency
                         content = msg_content[:300] + "..." if len(msg_content) > 300 else msg_content
                         history_parts.append(f"Assistant: {content}")
                 except Exception as msg_err:
-                    # #region agent log - Message processing error
-                    try:
-                        log_path = _get_debug_log_path()
-                        with open(log_path, 'a') as f:
-                            import json
-                            import traceback
-                            f.write(json.dumps({
-                                "location": "response_generator.py:755",
-                                "message": "Error processing chat_history message",
-                                "data": {
-                                    "error_type": type(msg_err).__name__,
-                                    "error_message": str(msg_err),
-                                    "msg_type": type(msg).__name__,
-                                    "msg_keys": list(msg.keys())[:10] if isinstance(msg, dict) else None
-                                },
-                                "timestamp": int(time.time() * 1000),
-                                "sessionId": "debug-session",
-                                "runId": "run1",
-                                "hypothesisId": "C,E"
-                            }) + "\n")
-                    except: pass
-                    # #endregion
-                    # Skip this message and continue
+                    logger.debug(f"Skipping malformed chat_history message: {type(msg_err).__name__}")
                     continue
             if history_parts:
                 history_context = "\n\nPrevious conversation:\n" + "\n".join(history_parts) + "\n"
@@ -1277,97 +765,35 @@ Remember: I'm Portfolia. Match response length to the question — Tier 1 for qu
     @staticmethod
     def _strip_bold_headers(text: str) -> str:
         """Strip bold markdown used as section labels / paragraph headers."""
-        import re
-        # Match **text** at the start of a line (possibly after whitespace),
-        # optionally followed by punctuation like . or : or —
-        # Replace with just the inner text.
         text = re.sub(r'(?m)^(\s*)\*\*(.+?)\*\*', r'\1\2', text)
         return text
 
     def _enforce_first_person(self, text: str) -> str:
-        """
-        Post-processing safety net: Convert any third-person references to first person.
-
-        This is a backup mechanism in case the LLM copies third-person source material
-        verbatim despite system prompt instructions. Applied after generation.
-
-        Args:
-            text: Generated response text
-
-        Returns:
-            Text with third-person patterns replaced with first person
-        """
-        # #region agent log - _enforce_first_person entry
-        try:
-            log_path = _get_debug_log_path()
-            with open(log_path, 'a') as f:
-                import json
-                f.write(json.dumps({
-                    "location": "response_generator.py:1199",
-                    "message": "_enforce_first_person entry",
-                    "data": {
-                        "text_type": type(text).__name__ if text else None,
-                        "text_is_none": text is None,
-                        "text_len": len(text) if text and isinstance(text, str) else 0
-                    },
-                    "timestamp": int(time.time() * 1000),
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "D"
-                }) + "\n")
-        except: pass
-        # #endregion
-
+        """Post-processing safety net: Convert third-person references to first person."""
         if not text or not isinstance(text, str):
-            # #region agent log - Invalid input to _enforce_first_person
-            try:
-                log_path = _get_debug_log_path()
-                with open(log_path, 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        "location": "response_generator.py:1220",
-                        "message": "_enforce_first_person received invalid input",
-                        "data": {
-                            "text_type": type(text).__name__ if text else None,
-                            "text_is_none": text is None
-                        },
-                        "timestamp": int(time.time() * 1000),
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "D"
-                    }) + "\n")
-            except: pass
-            # #endregion
             return text if text else ""
 
         result = text
 
         # Use regex for longer phrases that may have variable content
-        # Pattern: "this ai assistant is built on [anything]" -> "I'm built on [anything]"
         result = re.sub(
             r'\bthis\s+ai\s+assistant\s+is\s+built\s+on\s+([^.!?]+)',
             r"I'm built on \1",
             result,
             flags=re.IGNORECASE
         )
-
-        # Pattern: "this ai assistant is built with [anything]" -> "I'm built with [anything]"
         result = re.sub(
             r'\bthis\s+ai\s+assistant\s+is\s+built\s+with\s+([^.!?]+)',
             r"I'm built with \1",
             result,
             flags=re.IGNORECASE
         )
-
-        # Pattern: "this ai assistant uses [anything]" -> "I use [anything]"
         result = re.sub(
             r'\bthis\s+ai\s+assistant\s+uses\s+([^.!?]+)',
             r"I use \1",
             result,
             flags=re.IGNORECASE
         )
-
-        # Pattern: "this ai assistant [verb] [anything]" -> "I [verb] [anything]"
         result = re.sub(
             r'\bthis\s+ai\s+assistant\s+(is|was|has|does|can|will)\s+([^.!?]+)',
             r"I \1 \2",
@@ -1377,7 +803,6 @@ Remember: I'm Portfolia. Match response length to the question — Tier 1 for qu
 
         # Define replacement patterns (most specific first to avoid over-replacement)
         replacements = [
-            # System/product references
             ("This AI assistant is", "I'm"),
             ("This AI assistant was", "I was"),
             ("This AI assistant uses", "I use"),
@@ -1386,16 +811,12 @@ Remember: I'm Portfolia. Match response length to the question — Tier 1 for qu
             ("this AI assistant", "I"),
             ("The AI assistant", "I"),
             ("the AI assistant", "I"),
-
-            # Product references
             ("The product is", "I'm"),
             ("The product uses", "I use"),
             ("The product was", "I was"),
             ("The product implements", "I implement"),
             ("The product", "I"),
             ("the product", "I"),
-
-            # System references
             ("The system is", "I'm"),
             ("The system uses", "I use"),
             ("The system implements", "I implement"),
@@ -1404,11 +825,6 @@ Remember: I'm Portfolia. Match response length to the question — Tier 1 for qu
             ("The system tracks", "I track"),
             ("The system", "I"),
             ("the system", "I"),
-
-            # Portfolia references (when describing self, not Noah)
-            # IMPORTANT: Only replace when used as subject, NOT when used as proper noun/title
-            # e.g., "Portfolia uses RAG" → "I use RAG" ✅
-            # BUT: "Portfolia AI Assistant" should stay as-is (it's the project name) ✅
             ("Portfolia is", "I'm"),
             ("Portfolia uses", "I use"),
             ("Portfolia implements", "I implement"),
@@ -1416,7 +832,6 @@ Remember: I'm Portfolia. Match response length to the question — Tier 1 for qu
             ("Portfolia was", "I was"),
             ("Portfolia's system", "my system"),
             ("Portfolia's architecture", "my architecture"),
-            # NOTE: Removed blanket ("Portfolia", "I") replacement to preserve project name
         ]
 
         for old, new in replacements:
@@ -1426,8 +841,6 @@ Remember: I'm Portfolia. Match response length to the question — Tier 1 for qu
 
     def _enforce_third_person(self, text: str) -> str:
         """refer to Noah in 3rd person as he is your creator."""
-
-        # Common first-person patterns to replace
         replacements = [
             ("Would you like me to email you my resume", "Would you like Noah to email you his resume"),
             ("Would you like me to share my LinkedIn", "Would you like Noah to share his LinkedIn"),
@@ -1454,28 +867,12 @@ Remember: I'm Portfolia. Match response length to the question — Tier 1 for qu
         return text
 
     def _strip_markdown_headers(self, text: str) -> str:
-        """Strip markdown headers (###, ##, #) and convert to bold format.
-
-        Per system prompt instructions, responses should not use markdown headers.
-        This post-processing safety net catches cases where the LLM ignores instructions.
-
-        Args:
-            text: Generated response text
-
-        Returns:
-            Text with headers converted to bold format
-        """
+        """Strip markdown headers (###, ##, #) and convert to bold format."""
         if not text or not isinstance(text, str):
             return text if text else ""
 
-        # SPECIAL CASE: Fix "## I" which can occur when LLM uses first-person in headers
-        # This is a common bug when the LLM says "## I" instead of a proper project name
-        # Convert "## I" or "## I'm" to "**Portfolia**" since it's likely referring to the project
         text = re.sub(r'^##\s+I\'?m?\s*$', '**Portfolia AI Assistant**', text, flags=re.MULTILINE)
         text = re.sub(r'^##\s+I\s*[-—:]\s*', '**Portfolia AI Assistant** - ', text, flags=re.MULTILINE)
-
-        # Convert headers to bold: "## Title" → "**Title**"
-        # Match headers at start of line or after newline
         text = re.sub(r'^###\s+(.+)$', r'**\1**', text, flags=re.MULTILINE)
         text = re.sub(r'^##\s+(.+)$', r'**\1**', text, flags=re.MULTILINE)
         text = re.sub(r'^#\s+(.+)$', r'**\1**', text, flags=re.MULTILINE)
@@ -1483,26 +880,8 @@ Remember: I'm Portfolia. Match response length to the question — Tier 1 for qu
         return text
 
     def _split_prompt_for_messages(self, combined_prompt: str) -> tuple[str, str]:
-        """Split combined prompt into system and user messages.
-
-        Extracts the personality/instruction portion as system prompt,
-        and the context + query as user message. This ensures Claude
-        follows the personality instructions more strictly.
-
-        Args:
-            combined_prompt: Full prompt with instructions + context + query
-
-        Returns:
-            Tuple of (system_prompt, user_message)
-        """
-        # The prompts from _build_role_prompt have a clear structure:
-        # 1. Personality/instruction section (starts with "You are Portfolia")
-        # 2. Context section (starts with "Context:" or "{history_context}Context:")
-        # 3. Question section (starts with "Question:")
-
-        # Split at "Context:" to separate instructions from content
+        """Split combined prompt into system and user messages."""
         if "{history_context}" in combined_prompt or "Context about Noah:" in combined_prompt or "Context: {context_str}" in combined_prompt:
-            # Find the context marker
             context_markers = ["Context about Noah:", "Context: {context_str}", "\nContext:"]
             split_point = -1
             for marker in context_markers:
@@ -1515,32 +894,9 @@ Remember: I'm Portfolia. Match response length to the question — Tier 1 for qu
                 user_message = combined_prompt[split_point:].strip()
                 return (system_prompt, user_message)
 
-        # Fallback: treat everything as user message if structure not found
         logger.warning("Could not split prompt into system/user - using default structure")
         return ("You are Portfolia, Noah's AI portfolio assistant. Be conversational, warm, and helpful.", combined_prompt)
 
     def _add_technical_followup(self, response: str, query: str, role: str) -> str:
-        """Add suggested follow-up with actionable choices for ALL roles.
-
-        Strategy: Offer specific, actionable next steps as multiple-choice options
-        rather than open-ended questions. This guides exploration more effectively.
-        Tailored to user's role for optimal engagement.
-        """
-
-        """Add context-aware follow-up suggestions to engage the user.
-
-        NOTE: This method is deprecated. Follow-up prompts are now handled by
-        conversation_nodes.apply_role_context() to avoid duplicates and provide
-        cleaner, more conversational interactions.
-
-        Args:
-            response: The generated response text
-            query: Original user query
-            role: User's current role
-
-        Returns:
-            The response unchanged (follow-ups handled in conversation flow)
-        """
-        # Follow-up prompts now handled by conversation_nodes.apply_role_context()
-        # to prevent duplicate prompts and maintain clean conversation flow
+        """Deprecated: Follow-up prompts now handled by conversation_nodes.apply_role_context()."""
         return response
