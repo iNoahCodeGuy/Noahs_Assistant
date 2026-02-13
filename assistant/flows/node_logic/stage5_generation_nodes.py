@@ -754,6 +754,13 @@ def _build_engagement_context(state: dict) -> str | None:
         f"| phase: {phase} | buying_signals: {buying_signals}"
     )
 
+    # Reinforce discovery question rule during opening phase
+    if phase == "opening":
+        hint += (
+            "\nREQUIRED: End your response with ONE discovery question "
+            "(e.g., \"What brings you here?\" or \"What's your angle on this?\")."
+        )
+
     # Detect traffic source from query + recent history
     _ts_query = (state.get("original_query", "") or state.get("query", "") or "").lower()
     _ts_history = ""

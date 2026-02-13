@@ -474,6 +474,10 @@ def _remove_markdown_headers(text: str) -> str:
 def _strip_menu_endings(text: str) -> str:
     """Remove trailing sentences that offer menu-style multiple options.
 
+    Only strips questions that present multiple choices (contain "or" between
+    options). Single discovery questions like "What brings you here?" or
+    "What's your angle on this?" are preserved.
+
     Detects and strips endings like:
     - "Want to hear about X or Y?"
     - "Would you like to explore X or Y?"
@@ -499,29 +503,23 @@ def _strip_menu_endings(text: str) -> str:
     for m in re.finditer(r'(?:[.!?]\s+|\n)', stripped):
         boundaries.append(m.end())
 
-    # Menu patterns to detect (broadened to catch more variants)
+    # Menu patterns — ONLY multi-option questions (must contain "or" between choices).
+    # Single-topic questions ("What brings you here?", "What's your angle?") are
+    # legitimate discovery questions and must NOT be stripped.
     menu_patterns = [
-        # Any sentence starting with "Want" that ends with a question mark
-        re.compile(r'\bWant\b.*?\?', re.IGNORECASE),
-        # Any sentence starting with "Should I" that ends with a question mark
-        re.compile(r'\bShould I\b.*?\?', re.IGNORECASE),
-        # trigger word + "or" + question mark (broad)
+        # trigger word + "or" + question mark
         re.compile(
-            r'(?:Would you like|Shall I|Interested in|Curious about|Wanna)'
+            r'(?:Would you like|Want|Shall I|Should I|Interested in|Curious about|Wanna)'
             r'.*?\bor\b.*?\?',
             re.IGNORECASE,
         ),
         # Any sentence with "or" between two options followed by question mark
         # e.g. "see the code, or go deeper on one of them?"
         re.compile(r'.*?\bor\b\s+(?:should|shall|would|do you|I)\b.*?\?', re.IGNORECASE),
-        # "would you rather"
+        # "would you rather" (inherently multi-option)
         re.compile(r'\bwould you rather\b.*?\?', re.IGNORECASE),
-        # "Anything else" / "anything specific"
-        re.compile(r'\b(?:Anything else|anything specific)\b.*?\?', re.IGNORECASE),
-        # "What would you like" / "Which" trailing question
-        re.compile(r'\b(?:What would you like|Which (?:one|topic|area))\b.*?\?', re.IGNORECASE),
-        # "Would you like" + question mark (no "or" needed)
-        re.compile(r'\bWould you like\b.*?\?', re.IGNORECASE),
+        # "What would you like" / "Which" with explicit option list
+        re.compile(r'\b(?:What would you like|Which (?:one|topic|area))\b.*?\bor\b.*?\?', re.IGNORECASE),
     ]
 
     logger.info(

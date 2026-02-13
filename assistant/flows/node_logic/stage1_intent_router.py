@@ -866,6 +866,7 @@ def classify_intent(state: ConversationState) -> ConversationState:
         "wheres the code", "where is the code", "can i see the code",
         "see his code", "check the code", "code link",
         "show me his code", "link to the code", "see your code",
+        "see code", "view code", "view the code", "code please",
     ]
     query_stripped = query_lower.rstrip("?!.,")
     if (query_stripped in _github_exact or
