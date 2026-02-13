@@ -729,178 +729,54 @@ def _detect_abstraction_level(query: str, role: str, chat_history: List[Dict]) -
 
 
 def _build_engagement_context(state: dict) -> str | None:
-    """Build dynamic engagement pacing instructions based on conversation state.
+    """Build a concise conversation-state hint for the LLM.
 
-    Returns a prompt string to inject into extra_instructions, or None if
-    no special pacing is needed.
+    The personality prompt already contains all pacing, formatting, and
+    engagement rules.  This function only supplies the dynamic facts the
+    LLM cannot infer from chat_history alone.
     """
     msg_count = state.get("message_count", 0)
     visitor_type = state.get("visitor_type", "unknown")
-    questions_asked = state.get("questions_asked_about_visitor", 0)
     buying_signals = state.get("buying_signals_count", 0)
-    soft_offer_made = state.get("hm_soft_offer_made", False)
 
-    lines = ["\n\nIMPORTANT GUIDANCE — CONVERSATION PACING:"]
-    lines.append(f"Message #{msg_count} | Visitor: {visitor_type} | "
-                 f"Buying signals: {buying_signals} | Questions asked about visitor: {questions_asked}")
+    # Derive conversation phase
+    if msg_count <= 1:
+        phase = "opening"
+    elif msg_count <= 4:
+        phase = "calibration"
+    elif msg_count <= 7:
+        phase = "teaching"
+    else:
+        phase = "sustained"
 
-    # Core pacing rules
-    lines.append(
-        "RULES (follow strictly):\n"
-        "- Maximum ONE question per response. Zero questions is fine. Two is never fine.\n"
-        "- NEVER offer menus or multiple-choice lists ('Want to hear about A, B, or C?'). "
-        "Instead, make ONE natural suggestion or end without a question.\n"
-        "  Bad: 'Want to hear about his projects, skills, or background?'\n"
-        "  Good: 'The attrition model is the most technically interesting if you want to go deeper.'\n"
-        "  Good: End with a statement that invites follow-up, not a question."
+    hint = (
+        f"\nCONVERSATION STATE: message #{msg_count} | visitor: {visitor_type} "
+        f"| phase: {phase} | buying_signals: {buying_signals}"
     )
 
-    # Message-based engagement pacing
-    if msg_count == 1:
-        lines.append(
-            "- This is message 1. Answer their question. End with ONE question "
-            "specific to what they asked."
-        )
-    elif msg_count <= 4:
-        lines.append(
-            f"- Message {msg_count} (calibration). Acknowledge what they shared. "
-            "Adjust depth based on their responses."
-        )
-    elif msg_count <= 7:
-        lines.append(
-            f"- Message {msg_count} (teaching mode). Focus on explaining. "
-            "Drop intro questions — they already know you."
-        )
-    elif msg_count >= 8:
-        lines.append(
-            f"- Message {msg_count} (sustained engagement). They're still here — "
-            "match their energy. Treat company/role mentions as buying signals."
-        )
-
-    # Curiosity gaps (every 3rd-4th response)
-    if msg_count >= 3 and msg_count % 3 == 0:
-        lines.append(
-            "- CURIOSITY GAP: In this response, briefly mention something interesting without "
-            "fully explaining it. Let them ask. Examples:\n"
-            "  'The dual threshold system is the part most people find surprising.'\n"
-            "  'His path into tech started with a chess match he watched in 2017.'\n"
-            "  'The grounding validation is what really separates this from most chatbots.'"
-        )
-
-    # Wit reminder (every 3rd-4th, offset from curiosity gaps)
-    if msg_count >= 2 and (msg_count + 1) % 4 == 0:
-        lines.append(
-            "- OPINIONS: If this answer touches something you have a genuine opinion about "
-            "(from your OPINIONS YOU HOLD list), state it. Start with WHY before WHAT."
-        )
-
-    # Visitor-type-specific guidance
-    if visitor_type == "hiring_manager":
-        lines.append(
-            "- HIRING MANAGER detected. Match Noah's skills to their implied needs. "
-            "Build trust before asking for anything."
-        )
-        # Soft offer injection
-        if soft_offer_made and msg_count >= 10 and buying_signals == 0:
-            lines.append(
-                "- Include this naturally at the end: 'By the way, if you'd like to connect "
-                "with Noah directly, just let me know and I'll set it up.'"
-            )
-    elif visitor_type == "crush":
-        lines.append("- CRUSH detected. Be a fun, conspiratorial wingman.")
-    elif visitor_type == "casual":
-        lines.append("- CASUAL visitor. Let them drive. Follow their curiosity. Low pressure.")
-
-    # ── Traffic source detection ──────────────────────────────────────
-    # Scan current query + recent history for platform mentions
+    # Detect traffic source from query + recent history
     _ts_query = (state.get("original_query", "") or state.get("query", "") or "").lower()
-    _ts_history_text = ""
-    _ts_chat = state.get("chat_history", [])
-    for _m in _ts_chat[-6:] if _ts_chat else []:
-        _c = ""
-        if isinstance(_m, dict):
-            _c = _m.get("content", "")
-        elif hasattr(_m, "content"):
-            _c = getattr(_m, "content", "")
-        _ts_history_text += " " + _c.lower()
-    _ts_combined = f"{_ts_query} {_ts_history_text}"
+    _ts_history = ""
+    for _m in (state.get("chat_history") or [])[-6:]:
+        _c = _m.get("content", "") if isinstance(_m, dict) else getattr(_m, "content", "")
+        _ts_history += " " + _c.lower()
+    _combined = f"{_ts_query} {_ts_history}"
 
     _source_map = {
-        "linkedin": "LinkedIn visitor detected. Lead with technical depth and engineering decisions.",
-        "instagram": "Instagram visitor detected. Lead with outcomes, not jargon.",
-        "hinge": "Hinge/dating context detected. Keep it personal and light.",
-        "upwork": "Upwork visitor detected. Lead with shipped work and specific technologies.",
-        "referral": "Referral visitor detected. Skip intro — show the work directly.",
-        "someone told me": "Referral visitor detected. Skip intro — show the work directly.",
-        "friend sent me": "Referral visitor detected. Skip intro — show the work directly.",
+        "linkedin": "linkedin",
+        "instagram": "instagram",
+        "hinge": "hinge",
+        "upwork": "upwork",
+        "referral": "referral",
+        "someone told me": "referral",
+        "friend sent me": "referral",
     }
-    for _keyword, _guidance in _source_map.items():
-        if _keyword in _ts_combined:
-            lines.append(f"- TRAFFIC SOURCE: {_guidance}")
+    for _kw, _src in _source_map.items():
+        if _kw in _combined:
+            hint += f" | source: {_src}"
             break
 
-    # ── Buying signal injection ───────────────────────────────────────
-    if buying_signals > 0:
-        lines.append(
-            "- BUYING SIGNAL DETECTED. Connect Noah's work to the visitor's context. "
-            "Don't pivot into a pitch — let the engineering speak."
-        )
-
-    return "\n".join(lines)
-
-
-# ============================================================================
-# DRIFT DETECTION - Detect when user is drifting away from Portfolia's KB
-# ============================================================================
-
-DRIFT_INDICATORS = [
-    "in general", "best practice", "what do you think", "your opinion",
-    "should i use", "which is better", "compare", "vs",
-    "best way to", "how should i", "what's the best", "recommend",
-    "pros and cons", "advantages", "disadvantages"
-]
-
-PILLAR_ANCHOR_KEYWORDS = [
-    # Keep user anchored to Portfolia's knowledge base
-    "orchestration", "langgraph", "nodes", "state", "memory", "pipeline",
-    "tech stack", "architecture", "rag", "retrieval", "pgvector", "supabase",
-    "enterprise", "adapt", "customer support", "scaling", "production",
-    "noah", "background", "career", "tesla", "resume", "portfolio",
-    "portfolia", "how do you", "your", "this system"
-]
-
-
-def _is_drifting_query(query: str) -> bool:
-    """Detect if user is drifting away from Portfolia's knowledge base.
-
-    Drift is when user asks generic questions that aren't about:
-    - Portfolia's architecture
-    - Noah's background
-    - How this specific system works
-
-    Args:
-        query: User's query string
-
-    Returns:
-        True if query appears to be drifting into generic territory
-    """
-    query_lower = query.lower()
-
-    # Check for generic question patterns that indicate drift
-    has_drift_pattern = any(indicator in query_lower for indicator in DRIFT_INDICATORS)
-
-    # Check if query is still anchored to Portfolia's knowledge base
-    has_anchor = any(kw in query_lower for kw in PILLAR_ANCHOR_KEYWORDS)
-
-    # Drift = has generic pattern BUT no anchor to our knowledge base
-    if has_drift_pattern and not has_anchor:
-        return True
-
-    # Also drift if query is very short with no anchor (might be testing)
-    if len(query.split()) <= 3 and not has_anchor:
-        return False  # Don't flag very short queries as drift
-
-    return False
+    return hint
 
 
 def _should_use_teaching_style(state: ConversationState) -> bool:
@@ -1488,148 +1364,63 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
             runtime_awareness_triggered = True
             logger.info("Runtime awareness: Enterprise scaling strategy triggered")
 
-    # Use the LLM to generate a response with retrieved context
-    # Add display intelligence based on query classification
+    # =====================================================================
+    # BUILD EXTRA INSTRUCTIONS — max 3 blocks to avoid prompt bloat.
+    # The personality prompt already covers voice, format, length, pacing,
+    # grounding, and engagement rules.  Only inject what it cannot infer.
+    # =====================================================================
     extra_instructions = []
 
-    # Dynamic grounding strictness based on retrieval quality
+    # ── 1. GROUNDING — retrieval quality warning ─────────────────────
     retrieval_scores = state.get("retrieval_scores", [])
     max_score = max(retrieval_scores) if retrieval_scores else 0.0
     if retrieval_scores and max_score < 0.5:
         extra_instructions.append(
-            "\nGROUNDING WARNING: Retrieved context has LOW similarity "
-            f"(max={max_score:.2f}). Only state what chunks EXPLICITLY support. "
-            "Do NOT extrapolate or invent features/metrics. If the question isn't "
-            "addressed in context, say so and redirect to a related topic.\n"
+            f"GROUNDING: Low retrieval similarity (max={max_score:.2f}). "
+            "Only state what chunks explicitly support."
         )
         logger.info(f"Grounding strictness injected: max_score={max_score:.3f}")
 
-    # CONTINUATION DETECTION - When user says "tell me more" / "go deeper",
-    # instruct LLM to build on previous answer instead of repeating it.
-    if state.get("is_continuation"):
+    # ── 2. ENGAGEMENT STATE — concise conversation hint ──────────────
+    engagement_ctx = _build_engagement_context(state)
+    if engagement_ctx:
+        extra_instructions.append(engagement_ctx)
+
+    # ── 3. SITUATIONAL OVERRIDE — at most one ────────────────────────
+    # Priority: continuation > out-of-scope > retrieval mismatch
+    _situational_added = False
+
+    if state.get("is_continuation") and not _situational_added:
         extra_instructions.append(
-            "\n\nCRITICAL - CONTINUATION REQUEST:\n"
-            f"The user's original message was: \"{state.get('original_query', '')}\"\n"
-            "They are asking you to GO DEEPER on the topic you already discussed.\n"
-            "DO NOT repeat your previous answer. Instead:\n"
-            "- Provide NEW details, technical specifics, or implementation insights\n"
-            "- Dive into aspects you didn't cover in your previous response\n"
-            "- If the topic is your own architecture, explain HOW things work, not just WHAT they are\n"
-            "- Reference your previous answer briefly ('As I mentioned...') then expand\n"
+            f"CONTINUATION: User said \"{state.get('original_query', '')}\". "
+            "Go deeper — new details only, do not repeat previous answer."
         )
-        logger.info(f"Added continuation instructions for original_query='{state.get('original_query', '')}'")
+        logger.info(f"Continuation hint for: '{state.get('original_query', '')[:50]}'")
+        _situational_added = True
 
-    # OUT-OF-SCOPE DETECTION - Gracefully handle queries outside knowledge base
-    from assistant.flows.node_logic.stage6_formatting_nodes import detect_out_of_scope
-    is_out_of_scope, bridge_pillar, bridge_prompt = detect_out_of_scope(query, state.get("role_mode", "explorer"))
-
-    if is_out_of_scope:
-        state["out_of_scope_detected"] = True
-        state["bridge_suggestion"] = bridge_prompt
-        logger.info(f"Out-of-scope query detected: '{query[:50]}'. Bridge: {bridge_pillar}")
-
-        # Add instruction to prompt for graceful handling
-        out_of_scope_instruction = f"""
-IMPORTANT: The user asked about something outside your primary knowledge base.
-
-DO NOT just say "I don't know" or refuse to answer. Instead:
-1. Acknowledge that this specific topic isn't your specialty
-2. Bridge gracefully to related content you DO have: "{bridge_prompt}"
-3. Always be helpful and offer alternatives
-
-Example response pattern:
-"That's outside my main focus area - I'm built to demonstrate GenAI engineering patterns.
-However, [bridge to relevant topic]. Would you like to explore that?"
-"""
-        extra_instructions.append(out_of_scope_instruction)
-
-    # DRIFT DETECTION - Guide user back when they're asking generic questions
-    if _is_drifting_query(query):
-        session_memory = state.get("session_memory", {})
-        from assistant.flows.node_logic.stage6_formatting_nodes import _get_unexplored_pillars
-        unexplored = _get_unexplored_pillars(session_memory, state.get("role_mode", "explorer"))
-
-        # Build bridge suggestion
-        bridge_suggestion = unexplored[0][1] if unexplored else "exploring a specific aspect of my architecture"
-
-        logger.info(f"Drift detected: '{query[:50]}' - bridging back to knowledge base")
-
-        drift_instruction = f"""
-DRIFT DETECTED - BRIDGE BACK TO KNOWLEDGE BASE:
-
-The user's question is drifting toward generic topics outside your specific knowledge.
-You're designed to demonstrate Noah's GenAI engineering through YOUR OWN architecture.
-
-RESPONSE PATTERN:
-1. Briefly acknowledge their question (1 sentence max)
-2. Explain your focus: "I'm built to demonstrate GenAI engineering through my own architecture, so I can speak best to how I handle this specifically..."
-3. Bridge back with a specific offer: "{bridge_suggestion}"
-4. If relevant, connect their question to something you DO know
-
-EXAMPLE:
-User: "What's the best caching strategy in general?"
-You: "Great question! I can speak best to my own approach - I use simple in-memory caching
-for session state, which keeps costs low at ~$0.0003/query. For enterprise deployments,
-you'd want Redis. Want to see how I handle data caching, or explore how this scales for enterprise?"
-
-AVOID:
-- Long generic explanations of topics you weren't built to cover
-- Making up information outside your knowledge base
-- Ignoring the drift and answering as if you're a general AI assistant
-"""
-        extra_instructions.append(drift_instruction)
-
-    # Check for retrieval topic mismatch - if chunks don't match query, use LLM fallback
-    if state.get("retrieval_topic_mismatch"):
-        logger.warning(f"Retrieval topic mismatch detected for query: {query[:50]}")
-        # Add explicit instruction to use LLM's inherent knowledge
-        enterprise_keywords = ["adapt", "adapts", "adaptation", "customer support", "enterprise",
-                               "use case", "chatbot", "internal docs", "sales enablement"]
-        is_enterprise_query = any(kw in query.lower() for kw in enterprise_keywords)
-
-        if is_enterprise_query:
-            fallback_instruction = (
-                "\n\n⚠️ CRITICAL: RETRIEVAL MISMATCH DETECTED\n"
-                "The retrieved context may not directly answer this question about enterprise adaptation.\n"
-                f"Based on your knowledge of RAG systems and enterprise AI patterns, please answer: {query}\n\n"
-                "If discussing enterprise adaptation, explain:\n"
-                "1. What components typically change (knowledge base, roles, actions)\n"
-                "2. What stays the same (orchestration pipeline)\n"
-                "3. Expected business value (ROI, cost savings, efficiency gains)\n"
-                "4. Code examples where relevant (ROLES dictionary, action handlers)\n\n"
-                "DO NOT rely solely on retrieved chunks - use your knowledge to provide a comprehensive answer.\n"
-            )
-        else:
-            fallback_instruction = (
-                "\n\n⚠️ CRITICAL: RETRIEVAL MISMATCH DETECTED\n"
-                "The retrieved context may not directly answer this question.\n"
-                f"Based on your knowledge, please answer: {query}\n\n"
-                "DO NOT rely solely on retrieved chunks - use your knowledge to provide a comprehensive answer.\n"
-            )
-
-        # Prepend fallback instruction to extra_instructions
-        extra_instructions.append(fallback_instruction)
-
-    # Check retrieval quality and add synthesis instructions for moderate scores
-    if retrieval_scores:
-        top_similarity = max(retrieval_scores) if retrieval_scores else 0.0
-        avg_similarity = sum(retrieval_scores) / len(retrieval_scores) if retrieval_scores else 0.0
-
-        # Moderate similarity range (0.4-0.7) needs better synthesis
-        # Low scores (<0.4) should trigger clarification, but moderate scores need synthesis help
-        if 0.4 <= top_similarity < 0.7:
+    if not _situational_added:
+        from assistant.flows.node_logic.stage6_formatting_nodes import detect_out_of_scope
+        is_out_of_scope, bridge_pillar, bridge_prompt = detect_out_of_scope(
+            query, state.get("role_mode", "explorer")
+        )
+        if is_out_of_scope:
+            state["out_of_scope_detected"] = True
+            state["bridge_suggestion"] = bridge_prompt
             extra_instructions.append(
-                "\n\nCRITICAL: MODERATE RETRIEVAL QUALITY - ENHANCE SYNTHESIS\n"
-                f"- Retrieval similarity is moderate ({top_similarity:.3f}) - retrieved chunks are somewhat relevant but not perfect matches\n"
-                "- DO NOT just echo or list the retrieved chunks verbatim\n"
-                "- Instead, SYNTHESIZE the information: connect ideas, explain relationships, provide context\n"
-                "- If chunks mention examples or documentation structure, extract the underlying concepts and explain them\n"
-                "- Bridge gaps: if chunks don't directly answer the question, use your knowledge to connect them to the user's query\n"
-                "- Be explicit about what you're inferring vs. what's directly in the chunks\n"
-                "- For enterprise adaptation queries: explain HOW the architecture adapts, not just that it can adapt\n"
+                f"OUT OF SCOPE: Bridge to \"{bridge_prompt}\" instead of answering generically."
             )
-            logger.debug(f"Added moderate similarity synthesis instructions (top_similarity={top_similarity:.3f})")
+            logger.info(f"Out-of-scope: '{query[:50]}'. Bridge: {bridge_pillar}")
+            _situational_added = True
 
+    if not _situational_added and state.get("retrieval_topic_mismatch"):
+        extra_instructions.append(
+            "RETRIEVAL MISMATCH: Chunks may not match the query. "
+            "Use self-knowledge and context to answer; don't rely solely on chunks."
+        )
+        logger.warning(f"Retrieval mismatch for: {query[:50]}")
+        _situational_added = True
+
+    # ── Kept as-is: runtime awareness (Software Developer only) ──────
     is_menu_option_one = (
         state.get("query_type") == "menu_selection" and
         state.get("menu_choice") == "1" and
@@ -1638,156 +1429,22 @@ AVOID:
 
     layer_outline: Optional[Dict[str, str]] = None
 
-    # Handle repeated menu selection
-    if state.get("is_repeated_menu_selection"):
-        menu_choice = state.get("menu_choice", "")
-        repeated_count = state.get("session_memory", {}).get("repeated_menu_count", 1)
-
-        if repeated_count == 1:
-            extra_instructions.append(
-                f"\n\nIMPORTANT: User selected menu option {menu_choice} again.\n"
-                f"Instead of repeating the same explanation, start your answer with:\n"
-                f"'I notice you selected option {menu_choice} again. Would you like me to:'\n"
-                f"1. Explore a different aspect of this topic\n"
-                f"2. Dive deeper into a specific part\n"
-                f"3. Move to a related topic\n"
-                f"Then offer 2-3 specific alternative explorations based on the menu option.\n"
-            )
-            logger.info(f"Added repeated menu selection handling for option {menu_choice}")
-        else:
-            # Multiple repetitions - suggest different topic
-            extra_instructions.append(
-                f"\n\nIMPORTANT: User has selected menu option {menu_choice} multiple times ({repeated_count} times).\n"
-                f"Start with: 'You seem very interested in this area! Let me suggest a completely different angle...'\n"
-                f"Then provide a fresh perspective or suggest exploring a different topic area entirely.\n"
-            )
-            logger.info(f"Added multiple repetition handling for option {menu_choice} (count: {repeated_count})")
-
-    # Handle repeated query (same question asked twice)
-    if state.get("is_repeated_query"):
-        query_preview = state.get("query", "")[:50]
-        extra_instructions.append(
-            "\n\nIMPORTANT: User asked this EXACT question before. DO NOT repeat your previous answer.\n"
-            "Instead, start with: 'Déjà vu! We just covered that. Want me to:'\n"
-            "Then offer 3 specific alternative angles:\n"
-            "- A deeper dive into one specific aspect\n"
-            "- A related topic they haven't explored\n"
-            "- A different perspective on the same topic\n"
-            "End with: 'Or shall we explore something completely new?'\n"
-            "Keep the response SHORT (3-5 sentences) - don't re-explain everything.\n"
-        )
-        logger.info(f"Added repeated query handling for: '{query_preview}...'")
-
     is_menu_option_two = (
         state.get("query_type") == "menu_selection" and
         state.get("menu_choice") == "2" and
         state.get("role_mode") == "hiring_manager_technical"
     )
 
-    # Runtime awareness: Add content block to context if triggered
     if runtime_awareness_triggered and runtime_content_block:
         extra_instructions.append(
-            f"RUNTIME AWARENESS: The user asked a technical question about Portfolia's architecture/performance. "
-            f"Below is a self-referential teaching block showing live data. Reference this in your explanation, "
-            f"weave it into your narrative naturally, and expand on it conversationally. "
-            f"Maintain warmth and curiosity while being technically precise.\n\n{runtime_content_block}"
+            f"RUNTIME AWARENESS: Reference this self-referential data in your "
+            f"explanation, woven naturally.\n\n{runtime_content_block}"
         )
 
-    # EXPLICIT code request - user specifically asked
-    if state.get("code_display_requested", False) and role in [
-        "Software Developer",
-        "Hiring Manager (technical)"
-    ]:
-        extra_instructions.append(
-            "The user has requested code. After your explanation, include relevant code snippets "
-            "with comments explaining key decisions. Keep code blocks under 40 lines and focus "
-            "on the most interesting parts."
-        )
-    # PROACTIVE code suggestion - code would clarify but wasn't explicitly requested
-    elif state.get("code_would_help", False) and role in [
-        "Software Developer",
-        "Hiring Manager (technical)"
-    ]:
-        extra_instructions.append(
-            "This technical concept would benefit from a code example. After your explanation, "
-            "include a relevant code snippet (≤40 lines) with comments to clarify the implementation. "
-            "This is proactive - the user didn't explicitly ask but code will help understanding."
-        )
-
-    # EXPLICIT data request - user specifically asked
-    if state.get("data_display_requested", False):
-        extra_instructions.append(
-            "The user wants data/analytics. Be brief with narrative - focus on presenting clean "
-            "tables with proper formatting. Include source attribution."
-        )
-    # PROACTIVE data suggestion - metrics would clarify but weren't explicitly requested
-    elif state.get("data_would_help", False):
-        extra_instructions.append(
-            "This question would benefit from actual metrics/data. After your explanation, "
-            "include relevant analytics in table format if available. Be concise with tables, "
-            "include source attribution. This is proactive - help the user with concrete numbers."
-        )
-
-    # Job details gathering (AFTER resume sent) - Task 9
-    # Import here to avoid circular dependency
+    # ── Kept as-is: job details gathering ────────────────────────────
     from assistant.flows.node_logic.util_resume_distribution import should_gather_job_details, get_job_details_prompt
-
     if should_gather_job_details(state):
         extra_instructions.append(get_job_details_prompt())
-
-    # ── Engagement pacing context ──────────────────────────────────────────
-    engagement_ctx = _build_engagement_context(state)
-    if engagement_ctx:
-        extra_instructions.append(engagement_ctx)
-
-    # Reinforce output format rules (these override any conflicting instructions)
-    extra_instructions.append(
-        "\n\nRESPONSE FORMAT REMINDER: Write in natural conversational paragraphs. "
-        "Do NOT use markdown headers (# or ##). Do NOT use bold text for section labels "
-        "like '**1. Name**' or '**Stage 1**'. Weave information into flowing prose. "
-        "Bold is only for emphasis on a key phrase within a sentence. "
-        "Do NOT use italic emphasis (*word*). NEVER end with a menu offering two+ options ('Want X or Y?')."
-    )
-
-    # ── VISITOR QUESTION — injected LAST so it's freshest in context window ──
-    _vq_msg_count = state.get("message_count", 0)
-
-    # ── Detect if visitor answered a previous question ─────────────────
-    _visitor_answered_question = False
-    if _vq_msg_count >= 2:
-        _last_user_msg = ""
-        _last_assistant_had_question = False
-        for msg in reversed(chat_history[-4:] if chat_history else []):
-            _r = ""
-            _c = ""
-            if isinstance(msg, dict):
-                _r = msg.get("role") or msg.get("type", "")
-                _c = msg.get("content", "")
-            elif hasattr(msg, "content"):
-                _r = getattr(msg, "type", "") or getattr(msg, "role", "")
-                _c = getattr(msg, "content", "")
-            if _r in ("user", "human") and _c and not _last_user_msg:
-                _last_user_msg = _c.lower()
-            if _r in ("assistant", "ai") and _c and "?" in _c:
-                _last_assistant_had_question = True
-            if _last_user_msg and _last_assistant_had_question:
-                break
-        if _last_assistant_had_question and _last_user_msg and "?" not in _last_user_msg:
-            _visitor_answered_question = True
-
-    if _vq_msg_count == 1:
-        extra_instructions.append(
-            "\n\nEnd with ONE question specific to what they asked. "
-            "Not a generic 'what brings you here' — something tied to their actual query."
-        )
-    elif _vq_msg_count <= 4:
-        if _visitor_answered_question:
-            extra_instructions.append(
-                "\n\nThe visitor just answered a question you asked. "
-                "Acknowledge what they shared before continuing. "
-                "Do NOT re-ask the same or a similar question."
-            )
-    # Messages 5+: no forced question injection
 
     # Build the instruction suffix
     instruction_suffix = " ".join(extra_instructions) if extra_instructions else None
