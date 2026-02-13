@@ -267,7 +267,7 @@ plan_actions() detects hiring signals. format_answer() structures response with 
 FINALIZATION (assistant/flows/node_logic/stage7_logging_nodes.py):
 execute_actions() fires SMS via Twilio (assistant/services/twilio_service.py), email via Resend. update_memory() stores signals with bounded sliding windows (10 topics, 20 entities).
 
-SYSTEM PROMPT: This file (assistant/core/response_generator.py) contains the inline prompt for terminal chat. assistant/prompts/prompt_hub.py contains the prompt for the API pipeline.
+SYSTEM PROMPT: This file (assistant/core/response_generator.py) contains the inline prompt for terminal chat.
 
 Generation: Claude Sonnet 4.5. Intent classification: Claude Haiku. Embeddings: OpenAI text-embedding-3-small.
 
@@ -749,19 +749,6 @@ Remember: I'm Portfolia. Match response length to the question — Tier 1 for qu
         )
         return PromptTemplate(template=template, input_variables=["context", "question"])
 
-    def add_role_suffix(self, response: str, role: Optional[str]) -> str:
-        """Add role-specific suffix to response."""
-        if not role:
-            return response
-
-        role_map = {
-            "Hiring Manager (technical)": "\n\n[Technical Emphasis: Highlights practical hands-on experimentation with LangChain & RAG.]",
-            "Hiring Manager (nontechnical)": "\n\n[Business Emphasis: Noah bridges customer insight with emerging AI capabilities.]",
-            "Software Developer": "\n\n[Dev Note: Focus on pragmatic prototyping and fast iteration.]",
-            "Looking to confess crush": "\n\n[Friendly Tone: Keeping this professional but personable.]",
-        }
-        return response + role_map.get(role, "")
-
     @staticmethod
     def _strip_bold_headers(text: str) -> str:
         """Strip bold markdown used as section labels / paragraph headers."""
@@ -838,33 +825,6 @@ Remember: I'm Portfolia. Match response length to the question — Tier 1 for qu
             result = result.replace(old, new)
 
         return result
-
-    def _enforce_third_person(self, text: str) -> str:
-        """refer to Noah in 3rd person as he is your creator."""
-        replacements = [
-            ("Would you like me to email you my resume", "Would you like Noah to email you his resume"),
-            ("Would you like me to share my LinkedIn", "Would you like Noah to share his LinkedIn"),
-            ("I have experience", "Noah has experience"),
-            ("I worked at", "Noah worked at"),
-            ("I built", "Noah built"),
-            ("I'm skilled in", "Noah is skilled in"),
-            ("I am skilled in", "Noah is skilled in"),
-            ("My background", "Noah's background"),
-            ("My experience", "Noah's experience"),
-            ("My projects", "Noah's projects"),
-            ("I can help", "Noah can help"),
-            ("I developed", "Noah developed"),
-            ("I created", "Noah created"),
-            ("I designed", "Noah designed"),
-            ("My work", "Noah's work"),
-            ("My GitHub", "Noah's GitHub"),
-            ("My portfolio", "Noah's portfolio"),
-        ]
-
-        for first_person, third_person in replacements:
-            text = text.replace(first_person, third_person)
-
-        return text
 
     def _strip_markdown_headers(self, text: str) -> str:
         """Strip markdown headers (###, ##, #) and convert to bold format."""

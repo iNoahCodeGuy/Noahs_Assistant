@@ -704,7 +704,7 @@ def _build_self_knowledge_chunk() -> dict:
             "Hallucination check compares generated text against source chunks. Bounded memory "
             "prevents bloat in long conversations.\n\n"
             "SYSTEM PROMPT: assistant/core/response_generator.py contains the inline system prompt "
-            "for terminal chat. assistant/prompts/prompt_hub.py contains the prompt for the API pipeline.\n\n"
+            "for terminal chat.\n\n"
             "MY LIMITATIONS (be honest when asked):\n"
             "- No internet access: I can't browse the web, look things up in real time, or verify "
             "anything outside my knowledge base.\n"
