@@ -123,15 +123,22 @@ What brings you here?
                 print_system(f"\n🔧 Debug mode: {status}\n")
                 continue
 
-            # Detect role selection (1, 2, 3, 4)
+            # Detect role selection (1, 2, 3, 4 or free-text menu labels)
             role_map = {
-                "1": "Hiring Manager (nontechnical)",
-                "2": "Software Developer",
+                "1": "Learn more about Noah",
+                "2": "See what Noah has built",
                 "3": "Just looking around",
-                "4": "Looking to confess crush"
+                "4": "Looking to confess crush",
             }
-            if user_input in role_map and len(chat_history) == 0:
-                role = role_map[user_input]
+            _text_role_map = {
+                "learn more about noah": "Learn more about Noah",
+                "see what noah has built": "See what Noah has built",
+                "just looking around": "Just looking around",
+                "confess a crush": "Looking to confess crush",
+            }
+            selection = role_map.get(user_input) or _text_role_map.get(user_input.lower())
+            if selection and len(chat_history) == 0:
+                role = selection
                 if debug_mode:
                     print_debug(f"Role selected: {role}")
 
