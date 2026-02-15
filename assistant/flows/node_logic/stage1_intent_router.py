@@ -686,6 +686,16 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["skip_rag"] = True
         return state
 
+    # ── Menu selection detection ─────────────────────────────────────────
+    # Single-digit "1"–"4" (or emoji variants) are menu picks, not off_topic.
+    # Detect them here so they pass through to classify_role_mode in stage 2.
+    _MENU_SELECTIONS = {"1", "2", "3", "4", "1️⃣", "2️⃣", "3️⃣", "4️⃣"}
+    if query_lower in _MENU_SELECTIONS:
+        logger.info(f"Menu selection detected pre-Haiku: {query}")
+        state["message_intent"] = "knowledge_query"
+        state["skip_rag"] = False
+        return state
+
     # ── Short continuation detection ────────────────────────────────────
     # Phrases like "tell me more", "go deeper", "yes", "continue" have no
     # semantic content and fail retrieval + edge case detection.  When the

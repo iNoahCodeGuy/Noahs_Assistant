@@ -1891,7 +1891,15 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
     # Strip italic emphasis (*word* -> word) while preserving bold
     body_text = _strip_italic_emphasis(body_text)
     # Strip menu-style endings ("Want X or Y?")
+    logger.info(
+        "DIAG format_answer BEFORE _strip_menu_endings | last_120: '%s'",
+        body_text[-120:] if body_text else "(empty)",
+    )
     body_text = _strip_menu_endings(body_text)
+    logger.info(
+        "DIAG format_answer AFTER  _strip_menu_endings | last_120: '%s'",
+        body_text[-120:] if body_text else "(empty)",
+    )
 
     # Clean, conversational output — no HTML wrappers or "Teaching Takeaways" template
     sections: List[str] = []

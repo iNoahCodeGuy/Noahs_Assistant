@@ -740,7 +740,7 @@ def _build_engagement_context(state: dict) -> str | None:
     buying_signals = state.get("buying_signals_count", 0)
 
     # Derive conversation phase
-    if msg_count <= 1:
+    if msg_count <= 2:
         phase = "opening"
     elif msg_count <= 4:
         phase = "calibration"
@@ -759,6 +759,11 @@ def _build_engagement_context(state: dict) -> str | None:
         hint += (
             "\nREQUIRED: End your response with ONE discovery question "
             "(e.g., \"What brings you here?\" or \"What's your angle on this?\")."
+            "\nDo NOT include any links (GitHub, LinkedIn, or otherwise) in this response."
+        )
+        logger.info(
+            "DIAG engagement_context phase=opening msg_count=%d | full hint: %s",
+            msg_count, hint,
         )
 
     # Detect traffic source from query + recent history
