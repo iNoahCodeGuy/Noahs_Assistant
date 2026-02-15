@@ -754,17 +754,35 @@ def _build_engagement_context(state: dict) -> str | None:
         f"| phase: {phase} | buying_signals: {buying_signals}"
     )
 
-    # Reinforce discovery question rule during opening phase
+    # Phase-specific ending guidance
     if phase == "opening":
         hint += (
             "\nREQUIRED: End your response with ONE discovery question "
             "(e.g., \"What brings you here?\" or \"What's your angle on this?\")."
             "\nDo NOT include any links (GitHub, LinkedIn, or otherwise) in this response."
         )
-        logger.info(
-            "DIAG engagement_context phase=opening msg_count=%d | full hint: %s",
-            msg_count, hint,
+    elif phase == "calibration":
+        hint += (
+            "\nENDING RULE: End with a natural hook to an uncovered topic, not a menu. "
+            "Example: \"The statistical foundation behind the retrieval is the same math "
+            "that powers the attrition model.\" Never end with \"Want X or Y?\""
         )
+    elif phase == "teaching":
+        hint += (
+            "\nENDING RULE: End with a bridge to related content OR no question at all. "
+            "Never offer multiple options like \"Want X or Y?\" A statement that invites "
+            "curiosity is better than a menu."
+        )
+    else:  # sustained
+        hint += (
+            "\nENDING RULE: Match their energy. End with a statement, not a question, "
+            "unless you have a genuine reason to ask. Never offer a menu of options."
+        )
+
+    logger.info(
+        "DIAG engagement_context phase=%s msg_count=%d | full hint: %s",
+        phase, msg_count, hint,
+    )
 
     # Detect traffic source from query + recent history
     _ts_query = (state.get("original_query", "") or state.get("query", "") or "").lower()
