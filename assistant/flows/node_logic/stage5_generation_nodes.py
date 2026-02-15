@@ -736,6 +736,7 @@ def _build_engagement_context(state: dict) -> str | None:
     LLM cannot infer from chat_history alone.
     """
     msg_count = state.get("message_count", 0)
+    logger.info("DIAG _build_engagement_context CALLED msg_count=%d", msg_count)
     visitor_type = state.get("visitor_type", "unknown")
     buying_signals = state.get("buying_signals_count", 0)
 
@@ -1476,6 +1477,7 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     if should_gather_job_details(state):
         extra_instructions.append(get_job_details_prompt())
 
+    logger.info("DIAG generate_draft extra_instructions=%s", extra_instructions)
     # Build the instruction suffix
     instruction_suffix = " ".join(extra_instructions) if extra_instructions else None
     base_instruction_suffix = instruction_suffix
