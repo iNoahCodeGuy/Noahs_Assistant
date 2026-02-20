@@ -269,32 +269,38 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
         persona_hints: Dict[str, str] = state["session_memory"].setdefault("persona_hints", {})
         persona_hints.setdefault("role_mode", normalized)
 
-        # Show role-specific welcome message on first role detection
+        # Show role-specific welcome message on first role detection —
+        # BUT only if the query was a simple menu selection (e.g. "1", "2").
+        # If the user typed a substantive question, skip the welcome and let
+        # it proceed through RAG so the question actually gets answered.
+        query_raw = state.get("query", "").strip()
+        is_menu_number = query_raw in _ROLE_SELECTION_MAP
         if not persona_hints.get("role_welcome_shown"):
-            welcome_msg = _get_role_welcome_message(normalized)
-            if welcome_msg:
-                state["answer"] = welcome_msg
-                state["pipeline_halt"] = True  # Wait for user's first real query
-                persona_hints["role_welcome_shown"] = True
-                # #region agent log
-                with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-                    import json
-                    f.write(json.dumps({
-                        "location": "stage2_role_routing.py:252",
-                        "message": "Setting role welcome message",
-                        "data": {
-                            "role": normalized,
-                            "role_welcome_shown": persona_hints.get("role_welcome_shown"),
-                            "pipeline_halt": state.get("pipeline_halt"),
-                            "answer_length": len(welcome_msg)
-                        },
-                        "timestamp": int(time.time() * 1000),
-                        "sessionId": "debug-session",
-                        "runId": "run2",
-                        "hypothesisId": "F"
-                    }) + "\n")
-                # #endregion
-                return state
+            persona_hints["role_welcome_shown"] = True  # Mark shown regardless
+            if is_menu_number:
+                welcome_msg = _get_role_welcome_message(normalized)
+                if welcome_msg:
+                    state["answer"] = welcome_msg
+                    state["pipeline_halt"] = True  # Wait for user's first real query
+                    # #region agent log
+                    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
+                        import json
+                        f.write(json.dumps({
+                            "location": "stage2_role_routing.py:252",
+                            "message": "Setting role welcome message",
+                            "data": {
+                                "role": normalized,
+                                "role_welcome_shown": persona_hints.get("role_welcome_shown"),
+                                "pipeline_halt": state.get("pipeline_halt"),
+                                "answer_length": len(welcome_msg)
+                            },
+                            "timestamp": int(time.time() * 1000),
+                            "sessionId": "debug-session",
+                            "runId": "run2",
+                            "hypothesisId": "F"
+                        }) + "\n")
+                    # #endregion
+                    return state
 
         # Merged: Handle technical HM routing (from route_hiring_manager_technical)
         # If technical HM role detected, check for menu handling or onboarding

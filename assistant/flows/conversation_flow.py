@@ -148,8 +148,12 @@ _KNOWLEDGE_HOOKS = (
     "if you want to see how the engineering holds up.",
     "The attrition model is worth a look if you're evaluating "
     "his analytical skills.",
-    "The statistical foundation behind the retrieval is the same "
-    "math that powers the attrition model.",
+    "The MMA coaching story connects to the professional background "
+    "in a way most people don't expect.",
+    "The biology-to-data-science path makes more sense once you hear "
+    "where the statistics training comes from.",
+    "The sales background is the part most people underestimate "
+    "until they hear how it connects to the technical work.",
 )
 
 
