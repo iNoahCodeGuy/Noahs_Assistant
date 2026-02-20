@@ -68,6 +68,7 @@ Performance characteristics:
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Callable, Optional, Sequence, TYPE_CHECKING, Any
 
@@ -126,6 +127,174 @@ except ImportError:
 
 
 Node = Callable[[ConversationState], ConversationState]
+
+
+# ── Discovery-question post-hook ──────────────────────────────────────────
+# Appends a discovery question (or curiosity hook) to early-phase responses
+# that don't already end with one.  Works for both hardcoded pipeline_halt
+# responses and LLM-generated answers.
+_SKIP_INTENTS = frozenset({
+    "crush_confession", "greeting", "contact_info_submission",
+})
+
+_CAPTURE_QUESTIONS = (
+    "What's your angle on this — hiring, curiosity, or something else?",
+    "Want to share what you're working on so Noah can follow up?",
+    "Hiring, building, or just curious?",
+)
+
+_KNOWLEDGE_HOOKS = (
+    "The architecture behind this conversation is worth a look "
+    "if you want to see how the engineering holds up.",
+    "The attrition model is worth a look if you're evaluating "
+    "his analytical skills.",
+    "The statistical foundation behind the retrieval is the same "
+    "math that powers the attrition model.",
+)
+
+
+# Patterns that identify menu-style questions (multi-option "or" questions).
+# Reused by _maybe_append_discovery_question to detect trailing menu endings
+# that _strip_menu_endings may have missed.
+_MENU_QUESTION_RE = re.compile(
+    r'(?:Would you like|Want|Shall I|Should I|Interested in|Curious about|Wanna|'
+    r'Would you rather|What would you like|Which (?:one|topic|area))'
+    r'.*?\bor\b.*?\?',
+    re.IGNORECASE,
+)
+
+
+def _is_menu_ending(answer: str) -> bool:
+    """Check if the answer's trailing question is a menu-style multi-option prompt.
+
+    Extracts the last sentence (from last '. '/'! '/'\\n' boundary to end)
+    and checks whether it matches a menu pattern (trigger word + 'or' + '?').
+    Single discovery questions like "What brings you here?" return False.
+    """
+    # Find the last sentence boundary
+    last_boundary = 0
+    for m in re.finditer(r'(?:[.!?]\s+|\n)', answer):
+        last_boundary = m.end()
+
+    last_sentence = answer[last_boundary:].strip()
+    if not last_sentence:
+        return False
+
+    is_menu = bool(_MENU_QUESTION_RE.search(last_sentence))
+    logger.info(
+        "Discovery hook _is_menu_ending check | last_sentence='%s' | is_menu=%s",
+        last_sentence[:100], is_menu,
+    )
+    return is_menu
+
+
+def _strip_trailing_menu(answer: str) -> str:
+    """Remove the trailing menu question from the answer text.
+
+    Returns the answer with the last menu-style sentence removed.
+    """
+    last_boundary = 0
+    for m in re.finditer(r'(?:[.!?]\s+|\n)', answer):
+        last_boundary = m.end()
+
+    if last_boundary > 0:
+        return answer[:last_boundary].rstrip()
+    # Entire answer is the menu question — return empty so caller keeps original
+    return ""
+
+
+def _maybe_append_discovery_question(state: dict) -> dict:
+    """Append a capture question AND knowledge hook to substantive answers that lack them.
+
+    Every substantive response (not greetings, not crush flow) should end with:
+    1. A capture/discovery question — draws out who they are or why they're here
+    2. A knowledge hook — a statement that invites curiosity about an uncovered topic
+    """
+    if state.get("_discovery_injected"):
+        return state
+
+    answer = (state.get("answer") or "").strip()
+    if not answer:
+        return state
+
+    # If answer ends with "?", check whether it's a menu ending or a real question.
+    # Menu endings ("Want to see X or Y?") get replaced with our two-part ending.
+    # Real questions are left alone only if a knowledge hook is also present.
+    if answer.endswith("?"):
+        if _is_menu_ending(answer):
+            stripped = _strip_trailing_menu(answer)
+            if stripped:
+                answer = stripped
+                logger.info(
+                    "Discovery hook: replaced menu ending, answer now ends: '...%s'",
+                    answer[-80:],
+                )
+            else:
+                # Entire answer was the menu question — leave it alone
+                return state
+
+    # Don't touch special flows
+    if state.get("message_intent") in _SKIP_INTENTS:
+        return state
+    if state.get("hm_capture_step"):
+        return state
+    if state.get("is_greeting"):
+        return state
+
+    msg_count = state.get("message_count", 0)
+    if msg_count < 1:
+        return state
+
+    # Check what's already present in the answer
+    answer_lower = answer.lower()
+    has_capture = any(
+        frag in answer_lower for frag in [
+            "what brings you", "what's your angle", "hiring, building",
+            "hiring, curiosity", "want to share what you",
+            "want noah to reach out", "noah can follow up",
+            "say the word", "just let me know",
+        ]
+    )
+    has_hook = any(
+        frag in answer_lower for frag in [
+            "worth a look", "same math that powers",
+            "statistical foundation", "architecture behind this",
+            "attrition model", "if you want to see",
+        ]
+    )
+
+    # If both already present, nothing to do
+    if has_capture and has_hook:
+        state["_discovery_injected"] = True
+        return state
+
+    # Pick a capture question based on phase
+    if msg_count <= 2:
+        capture = _CAPTURE_QUESTIONS[0]  # "What's your angle..."
+    elif msg_count <= 5:
+        capture = _CAPTURE_QUESTIONS[1]  # "Want to share what you're working on..."
+    else:
+        capture = _CAPTURE_QUESTIONS[2]  # "Hiring, building, or just curious?"
+
+    # Pick a knowledge hook (cycle through them based on msg_count)
+    hook = _KNOWLEDGE_HOOKS[msg_count % len(_KNOWLEDGE_HOOKS)]
+
+    # Append whichever parts are missing
+    suffix_parts = []
+    if not has_capture:
+        suffix_parts.append(capture)
+    if not has_hook:
+        suffix_parts.append(hook)
+
+    if suffix_parts:
+        state["answer"] = answer + "\n\n" + "\n".join(suffix_parts)
+        state["_discovery_injected"] = True
+        logger.info(
+            "Discovery hook appended (msg_count=%d): capture=%s hook=%s",
+            msg_count, not has_capture, not has_hook,
+        )
+
+    return state
 
 
 def run_conversation_flow(
@@ -291,6 +460,11 @@ def run_conversation_flow(
                 }) + "\n")
             # #endregion
             break
+
+    # ── Post-loop discovery-question hook ─────────────────────────────
+    # Runs after BOTH pipeline_halt (hardcoded) and full-pipeline paths
+    # so discovery questions fire regardless of which path produced the answer.
+    _maybe_append_discovery_question(state)
 
     # Append user query and assistant answer to chat_history for conversation continuity
     # Skip only for actual greetings (initial greeting before role selection)

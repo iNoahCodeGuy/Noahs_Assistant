@@ -755,29 +755,40 @@ def _build_engagement_context(state: dict) -> str | None:
         f"| phase: {phase} | buying_signals: {buying_signals}"
     )
 
-    # Phase-specific ending guidance
+    # Phase-specific ending guidance — always two-part: capture question + knowledge hook
     if phase == "opening":
         hint += (
-            "\nREQUIRED: End your response with ONE discovery question "
-            "(e.g., \"What brings you here?\" or \"What's your angle on this?\")."
+            "\nREQUIRED ENDING: End with TWO lines:"
+            "\n1. A discovery/capture question (e.g., \"What brings you here?\" or "
+            "\"Hiring, building, or just curious?\")."
+            "\n2. A knowledge hook statement (e.g., \"The architecture behind this "
+            "conversation is worth a look if you want to see how the engineering holds up.\")."
             "\nDo NOT include any links (GitHub, LinkedIn, or otherwise) in this response."
         )
     elif phase == "calibration":
         hint += (
-            "\nENDING RULE: End with a natural hook to an uncovered topic, not a menu. "
-            "Example: \"The statistical foundation behind the retrieval is the same math "
-            "that powers the attrition model.\" Never end with \"Want X or Y?\""
+            "\nREQUIRED ENDING: End with TWO lines:"
+            "\n1. A capture question (e.g., \"Want to share what you're working on "
+            "so Noah can follow up?\")."
+            "\n2. A knowledge hook to an uncovered topic (e.g., \"The statistical "
+            "foundation behind the retrieval is the same math that powers the "
+            "attrition model.\"). Never end with \"Want X or Y?\""
         )
     elif phase == "teaching":
         hint += (
-            "\nENDING RULE: End with a bridge to related content OR no question at all. "
-            "Never offer multiple options like \"Want X or Y?\" A statement that invites "
-            "curiosity is better than a menu."
+            "\nREQUIRED ENDING: End with TWO lines:"
+            "\n1. A capture question (e.g., \"If you want Noah to follow up on this, "
+            "just say the word.\")."
+            "\n2. A knowledge hook bridging to related content (e.g., \"The attrition "
+            "model uses the same statistical foundation if you want to see it applied "
+            "to a different problem.\"). Never offer a menu like \"Want X or Y?\""
         )
     else:  # sustained
         hint += (
-            "\nENDING RULE: Match their energy. End with a statement, not a question, "
-            "unless you have a genuine reason to ask. Never offer a menu of options."
+            "\nENDING RULE: End with TWO lines:"
+            "\n1. A capture question (e.g., \"Want Noah to reach out directly?\")."
+            "\n2. A knowledge hook matching their energy. "
+            "Never offer a menu of options."
         )
 
     logger.info(

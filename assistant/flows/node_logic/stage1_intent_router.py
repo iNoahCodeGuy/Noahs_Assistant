@@ -75,6 +75,19 @@ _HM_CAPTURE_DETAILS_MARKER = "Go ahead — name, email, and any message"
 _HM_CAPTURE_COMPLETE_MARKERS = ["I'll make sure Noah sees this", "Info passed along"]
 _HM_SOFT_OFFER_MARKER = "just let me know and I'll set it up"
 
+# ── Contact form markers ─────────────────────────────────────────────────
+_CONTACT_FORM_MARKER = "fill this out and Noah will reach out"
+_CONTACT_FORM_DETAILS_MARKER = "Name:\nNumber:\nEmail:\nCompany:\nComments:"
+
+# Phrases in last assistant message that indicate a capture question was asked
+_CAPTURE_QUESTION_FRAGMENTS = [
+    "what brings you here", "what's your angle",
+    "hiring, building, or just curious", "hiring, curiosity",
+    "want to share what you're working on",
+    "noah can follow up", "want noah to reach out",
+    "say the word", "just let me know",
+]
+
 
 # ── Engagement counter computation ──────────────────────────────────────
 # These functions compute state from chat_history each turn (stateless).
@@ -310,6 +323,10 @@ def _detect_hm_capture_flow_from_history(state: ConversationState) -> str | None
     if _HM_CAPTURE_DETAILS_MARKER in last_assistant_content:
         return "awaiting_hm_details"
 
+    # Contact form marker (from new capture question flow)
+    if _CONTACT_FORM_MARKER in last_assistant_content:
+        return "awaiting_hm_details"
+
     if _HM_CAPTURE_MARKER in last_assistant_content:
         return "awaiting_hm_response"
 
@@ -440,6 +457,66 @@ def _is_connect_intent(query: str) -> bool:
         "yes", "sure", "yeah", "please", "do it",
     ]
     return any(phrase in q for phrase in connect_phrases)
+
+
+def _is_capture_question_response(query: str, state: ConversationState) -> bool:
+    """Check if user is responding to a capture question with connect/hiring intent.
+
+    Returns True if:
+    1. The last assistant message contained a capture question fragment, AND
+    2. The user's response indicates hiring intent, company mention, or
+       explicit interest in connecting.
+    """
+    # First, check if last assistant message had a capture question
+    chat_history = state.get("chat_history", [])
+    last_assistant = ""
+    for msg in reversed(chat_history):
+        if isinstance(msg, dict):
+            role = msg.get("role") or msg.get("type", "")
+            content = msg.get("content", "")
+        elif hasattr(msg, "content"):
+            role = getattr(msg, "type", "") or getattr(msg, "role", "")
+            content = getattr(msg, "content", "")
+        else:
+            continue
+        if role in ("assistant", "ai") and content:
+            last_assistant = content.lower()
+            break
+
+    if not last_assistant:
+        return False
+
+    had_capture_question = any(
+        frag in last_assistant for frag in _CAPTURE_QUESTION_FRAGMENTS
+    )
+    if not had_capture_question:
+        return False
+
+    # Now check if user's response signals hiring/connect intent
+    q = query.lower().strip()
+
+    # Direct connect intent
+    if _is_connect_intent(q):
+        return True
+
+    # Hiring/recruitment signals in response
+    hiring_signals = [
+        "hiring", "recruiter", "recruiting", "we're looking",
+        "we are looking", "open role", "open position",
+        "evaluating candidates", "data analyst", "data engineer",
+        "software engineer", "developer role", "team is hiring",
+        "interested in him", "interested in noah",
+        "i work at", "i'm at", "i'm from", "i work for",
+        "our company", "our team", "my company", "my team",
+    ]
+    if any(signal in q for signal in hiring_signals):
+        return True
+
+    # Contact info provided directly (they skipped the form prompt)
+    if _looks_like_contact_info(query):
+        return True
+
+    return False
 
 
 def handle_hm_capture_continuation(state: ConversationState) -> ConversationState:
@@ -1154,6 +1231,40 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["pipeline_halt"] = True
         state["skip_rag"] = True
         logger.info("HM capture flow triggered: eligible hiring manager expressed connect intent")
+        return state
+
+    # ── Contact form capture trigger (all visitor types) ────────────────
+    # If last assistant message had a capture question and user responds
+    # with hiring/connect intent, present the contact form directly.
+    if (not state.get("hm_capture_step")
+            and msg_count >= 2
+            and _is_capture_question_response(query, state)):
+        # Check if they provided contact info directly (skip form)
+        if _looks_like_contact_info(query):
+            info = _parse_hm_contact_info(query)
+            if info.get("name") or info.get("email") or info.get("phone"):
+                cf_session_id = state.get("session_id", "unknown")
+                _save_recruiter_lead(cf_session_id, info, state)
+                _send_hm_lead_sms(info)
+                display = info.get("name") or info.get("email") or "your info"
+                state["answer"] = (
+                    f"I'll make sure Noah sees this. I've forwarded {display}'s details — "
+                    f"he'll follow up directly. Thanks for the interest in his work."
+                )
+                state["hm_capture_step"] = None
+                state["pipeline_halt"] = True
+                state["skip_rag"] = True
+                logger.info("Contact form: user provided info directly in capture response")
+                return state
+        # Present the contact form
+        state["answer"] = (
+            "Perfect — fill this out and Noah will reach out to you:\n\n"
+            "Name:\nNumber:\nEmail:\nCompany:\nComments:"
+        )
+        state["hm_capture_step"] = "awaiting_hm_details"
+        state["pipeline_halt"] = True
+        state["skip_rag"] = True
+        logger.info("Contact form presented: user responded to capture question with intent")
         return state
 
     # Soft offer at message 10+ for hiring managers with no buying signal

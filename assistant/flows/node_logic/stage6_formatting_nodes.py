@@ -538,10 +538,28 @@ def _strip_menu_endings(text: str) -> str:
     if not check_starts:
         check_starts = [0]
 
+    # Label each pattern for diagnostics
+    pattern_labels = [
+        "trigger+or+?",
+        "or+modal+?",
+        "would_you_rather",
+        "what_which+or+?",
+    ]
+
     for start_pos in check_starts:
         candidate = stripped[start_pos:]
-        for pattern in menu_patterns:
+        logger.info(
+            "_strip_menu_endings: checking candidate at pos=%d len=%d: '%s'",
+            start_pos, len(candidate), candidate[:120],
+        )
+        for pattern, label in zip(menu_patterns, pattern_labels):
             match = pattern.search(candidate)
+            logger.info(
+                "_strip_menu_endings:   pattern=%-20s matched=%s%s",
+                label,
+                bool(match),
+                f"  span={match.span()}  text='{match.group()[:80]}'" if match else "",
+            )
             if match:
                 # Cut at the boundary where the menu sentence begins
                 if start_pos > 0:

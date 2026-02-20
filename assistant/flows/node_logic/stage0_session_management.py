@@ -169,6 +169,7 @@ def initialize_conversation_state(state: ConversationState) -> ConversationState
         state["clarifying_question"] = ""  # Re-set by ask_clarifying_question
         state["answer"] = ""  # Will be set by generation or short-circuit
         state["draft_answer"] = ""  # Will be set by generate_draft
+        state["_discovery_injected"] = False  # Re-set per turn
 
     return state
 
