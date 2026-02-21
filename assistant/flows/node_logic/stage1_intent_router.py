@@ -500,13 +500,21 @@ def _is_capture_question_response(query: str, state: ConversationState) -> bool:
         return True
 
     # Hiring/recruitment signals in response
+    # Traffic source phrases that should NOT be treated as hiring signals
+    _traffic_source_phrases = [
+        "from linkedin", "from twitter", "from instagram", "from ig",
+        "from reddit", "from github", "from youtube", "from upwork",
+        "from hinge", "from tinder", "from bumble",
+    ]
+    if any(ts in q for ts in _traffic_source_phrases):
+        return False
+
     hiring_signals = [
         "hiring", "recruiter", "recruiting", "we're looking",
         "we are looking", "open role", "open position",
         "evaluating candidates", "data analyst", "data engineer",
         "software engineer", "developer role", "team is hiring",
         "interested in him", "interested in noah",
-        "i work at", "i'm at", "i'm from", "i work for",
         "our company", "our team", "my company", "my team",
     ]
     if any(signal in q for signal in hiring_signals):
@@ -560,6 +568,7 @@ def handle_hm_capture_continuation(state: ConversationState) -> ConversationStat
                         f"he'll follow up directly. Thanks for the interest in his work."
                     )
                     state["hm_capture_step"] = None
+                    state["message_intent"] = "contact_info_submission"
                     state["pipeline_halt"] = True
                     return state
 
@@ -591,6 +600,7 @@ def handle_hm_capture_continuation(state: ConversationState) -> ConversationStat
                 f"he'll follow up directly. Thanks for checking out his work."
             )
             state["hm_capture_step"] = None
+            state["message_intent"] = "contact_info_submission"
             state["pipeline_halt"] = True
         else:
             state["answer"] = (
@@ -707,16 +717,22 @@ def classify_intent(state: ConversationState) -> ConversationState:
     if not query or state.get("message_intent"):
         return state
 
-    # Dating app traffic source detection — BEFORE crush keyword check.
+    # Traffic source detection — BEFORE crush keyword check and LLM classify.
     # "I came here from hinge" is NOT a crush confession.
+    # "I am from linkedin" is NOT contact info.
     query_lower = query.lower()
-    _dating_app_traffic = [
+    _traffic_source_phrases = [
         "came from hinge", "came from tinder", "came from bumble",
         "from hinge", "from tinder", "from bumble", "from a dating app",
         "on hinge", "on tinder", "on bumble",
+        "from linkedin", "from twitter", "from instagram", "from ig",
+        "from reddit", "from github", "from youtube", "from upwork",
+        "i am from linkedin", "i'm from linkedin",
+        "i am from twitter", "i'm from twitter",
+        "i am from instagram", "i'm from instagram",
     ]
-    if any(phrase in query_lower for phrase in _dating_app_traffic):
-        logger.info(f"Dating app traffic source detected (not crush): {query[:50]}")
+    if any(phrase in query_lower for phrase in _traffic_source_phrases):
+        logger.info(f"Traffic source detected (not capture/crush): {query[:50]}")
         state["message_intent"] = "small_talk"
         state["skip_rag"] = True
         return state
@@ -1252,6 +1268,7 @@ def classify_intent(state: ConversationState) -> ConversationState:
                     f"he'll follow up directly. Thanks for the interest in his work."
                 )
                 state["hm_capture_step"] = None
+                state["message_intent"] = "contact_info_submission"
                 state["pipeline_halt"] = True
                 state["skip_rag"] = True
                 logger.info("Contact form: user provided info directly in capture response")
@@ -1566,8 +1583,8 @@ def _looks_like_contact_info(query: str) -> bool:
     # Email pattern
     if re.search(r'\S+@\S+\.\S+', query):
         return True
-    # Name introduction patterns
-    if re.search(r"(?:my name is|i'm |i am |this is |it's |call me )", q):
+    # Name introduction patterns (exclude "i'm from/on/just/here" — traffic sources)
+    if re.search(r"(?:my name is|i'm (?!from |on |just |here )|i am (?!from |on |just |here )|this is |it's |call me )", q):
         return True
     # Messaging-Noah patterns
     if re.search(r"(?:tell (?:noah|him)|let (?:noah|him) know|hit me up|message him|reach me)", q):
