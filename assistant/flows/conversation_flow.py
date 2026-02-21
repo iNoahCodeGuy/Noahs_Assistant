@@ -138,14 +138,14 @@ _SKIP_INTENTS = frozenset({
 })
 
 _CAPTURE_QUESTIONS = (
-    "What's your angle on this — hiring, curiosity, or something else?",
+    "Are you hiring, exploring, or just curious? If you'd like Noah to follow up, just say the word.",
     "Want to share what you're working on so Noah can follow up?",
     "Hiring, building, or just curious?",
 )
 
 _KNOWLEDGE_HOOKS = (
-    "The architecture behind this conversation is worth a look "
-    "if you want to see how the engineering holds up.",
+    "The architecture behind this conversation is the best demo "
+    "of his engineering — ask me how I work.",
     "The attrition model is worth a look if you're evaluating "
     "his analytical skills.",
     "The MMA coaching story connects to the professional background "
@@ -263,7 +263,8 @@ def _maybe_append_discovery_question(state: dict) -> dict:
     has_capture = any(
         frag in answer_tail for frag in [
             "what brings you", "what's your angle", "hiring, building",
-            "hiring, curiosity", "want to share what you",
+            "hiring, curiosity", "hiring, exploring",
+            "want to share what you",
             "want noah to reach out", "noah can follow up",
             "say the word", "just let me know",
         ]
@@ -273,6 +274,7 @@ def _maybe_append_discovery_question(state: dict) -> dict:
             "worth a look", "same math that powers",
             "statistical foundation", "architecture behind this",
             "attrition model", "if you want to see",
+            "ask me how i work",
         ]
     )
 
@@ -477,6 +479,15 @@ def run_conversation_flow(
                 }) + "\n")
             # #endregion
             break
+
+    # ── Strip leaked source citations ──────────────────────────────────
+    # hallucination_check appends "Sources: 1. entry_X; ..." to draft_answer.
+    # format_answer normally strips it, but early-return paths (welcome messages,
+    # action requests) or LLM-generated citations can leak through.
+    answer = state.get("answer") or ""
+    if answer:
+        answer = re.sub(r'\n*Sources:\s*[\d].*$', '', answer, flags=re.DOTALL).rstrip()
+        state["answer"] = answer
 
     # ── Post-loop discovery-question hook ─────────────────────────────
     # Runs after BOTH pipeline_halt (hardcoded) and full-pipeline paths
