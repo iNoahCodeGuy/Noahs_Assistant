@@ -256,10 +256,12 @@ def _maybe_append_discovery_question(state: dict) -> dict:
     if msg_count < 1:
         return state
 
-    # Check what's already present in the answer
-    answer_lower = answer.lower()
+    # Check what's already present at the END of the answer (last 200 chars).
+    # Only look at the tail to avoid false-positiving on phrases that appear
+    # incidentally in the prose body (e.g., "worth a look" mid-paragraph).
+    answer_tail = answer[-200:].lower()
     has_capture = any(
-        frag in answer_lower for frag in [
+        frag in answer_tail for frag in [
             "what brings you", "what's your angle", "hiring, building",
             "hiring, curiosity", "want to share what you",
             "want noah to reach out", "noah can follow up",
@@ -267,7 +269,7 @@ def _maybe_append_discovery_question(state: dict) -> dict:
         ]
     )
     has_hook = any(
-        frag in answer_lower for frag in [
+        frag in answer_tail for frag in [
             "worth a look", "same math that powers",
             "statistical foundation", "architecture behind this",
             "attrition model", "if you want to see",
@@ -275,6 +277,10 @@ def _maybe_append_discovery_question(state: dict) -> dict:
     )
 
     # If both already present, nothing to do
+    logger.info(
+        "DIAG _maybe_append: ends_with_q=%s has_capture=%s has_hook=%s tail=%r",
+        answer.endswith("?"), has_capture, has_hook, answer_tail,
+    )
     if has_capture and has_hook:
         state["_discovery_injected"] = True
         return state
