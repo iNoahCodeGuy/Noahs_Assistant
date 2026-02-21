@@ -214,6 +214,13 @@ def _maybe_append_discovery_question(state: dict) -> dict:
     1. A capture/discovery question — draws out who they are or why they're here
     2. A knowledge hook — a statement that invites curiosity about an uncovered topic
     """
+    logger.info(
+        "ENTER _maybe_append_discovery_question: injected=%s answer_len=%d intent=%s msg=%d",
+        state.get("_discovery_injected"),
+        len(state.get("answer", "")),
+        state.get("message_intent"),
+        state.get("message_count", 0),
+    )
     if state.get("_discovery_injected"):
         return state
 
@@ -469,6 +476,20 @@ def run_conversation_flow(
     # Runs after BOTH pipeline_halt (hardcoded) and full-pipeline paths
     # so discovery questions fire regardless of which path produced the answer.
     _maybe_append_discovery_question(state)
+
+    # Sync chat_history if the discovery hook modified the answer.
+    # For normal (non-halt) pipeline runs, update_memory already appended
+    # the answer to chat_history BEFORE this hook ran, so the history has
+    # the old version. Update the last assistant entry to match.
+    if state.get("_discovery_injected") and not state.get("pipeline_halt"):
+        chat_history = state.get("chat_history", [])
+        new_answer = state.get("answer", "")
+        if chat_history and new_answer:
+            for i in range(len(chat_history) - 1, -1, -1):
+                msg = chat_history[i]
+                if isinstance(msg, dict) and (msg.get("role") or msg.get("type", "")) in ("assistant", "ai"):
+                    msg["content"] = new_answer
+                    break
 
     # Append user query and assistant answer to chat_history for conversation continuity
     # Skip only for actual greetings (initial greeting before role selection)
