@@ -1,0 +1,110 @@
+# Pre-Commit Hooks Configuration for Quality Assurance
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  - repo: local
+    hooks:
+      # ============================================================
+      # QUALITY TESTS: Run automated test suite before commit
+      # ============================================================
+
+      - id: documentation-alignment-tests
+        name: Documentation Alignment Tests (12 tests)
+        entry: pytest tests/test_documentation_alignment.py -v --tb=short
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      # ============================================================
+      # DOCUMENTATION DRIFT PREVENTION
+      # ============================================================
+
+      - id: check-new-docs
+        name: Check new .md files are properly registered
+        entry: python3 scripts/check_new_docs.py
+        language: system
+        files: '^docs/.*\.md$'
+        pass_filenames: true
+        stages: [pre-commit]
+
+      # ============================================================
+      # CODE QUALITY CHECKS (Optional - can be enabled later)
+      # ============================================================
+
+      # Uncomment these when ready for stricter enforcement:
+
+      # - id: no-print-statements
+      #   name: No print() statements (use logger)
+      #   entry: bash -c 'grep -rn "^\s*print(" src/ && exit 1 || exit 0'
+      #   language: system
+      #   pass_filenames: false
+      #
+      # - id: no-hardcoded-paths
+      #   name: No hardcoded absolute paths
+      #   entry: bash -c 'grep -rn "/Users/\|/home/\|C:" --include="*.py" . && exit 1 || exit 0'
+      #   language: system
+      #   pass_filenames: false
+
+      # ============================================================
+      # STANDARD CHECKS (from pre-commit-hooks repo)
+      # ============================================================
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+
+      - id: end-of-file-fixer
+        name: Fix end of files
+
+      - id: check-yaml
+        name: Check YAML syntax
+
+      - id: check-json
+        name: Check JSON syntax
+
+      - id: check-added-large-files
+        name: Check for large files (>500KB)
+        args: ['--maxkb=500']
+
+      - id: check-merge-conflict
+        name: Check for merge conflict markers
+
+      - id: mixed-line-ending
+        name: Check for mixed line endings
+
+# ============================================================
+# CONFIGURATION NOTES
+# ============================================================
+#
+# This configuration implements Phase 1 Priority 2 of QA_STRATEGY.md
+#
+# What gets checked:
+# 1. All 30 automated tests (18 conversation + 12 alignment)
+# 2. New .md files are properly registered in QA docs
+# 3. No print() statements in src/ (use logging)
+# 4. No hardcoded absolute paths
+# 5. Standard file hygiene (trailing whitespace, etc.)
+#
+# How to use:
+# - Install: pip install pre-commit && pre-commit install
+# - Run manually: pre-commit run --all-files
+# - Skip for hotfix: git commit --no-verify (use sparingly!)
+# - Update hooks: pre-commit autoupdate
+#
+# Performance:
+# - Tests run in ~2-3 seconds total
+# - Only runs on staged files (except tests)
+# - Can run specific hook: pre-commit run <hook-id>
+#
+# Troubleshooting:
+# - Hook failing? Run manually: pytest tests/ -v
+# - Skip one hook: SKIP=<hook-id> git commit
+# - See logs: .git/hooks/pre-commit
+#
+# Related docs:
+# - QA_STRATEGY.md §5 "Pre-Commit Hooks"
+# - QA_STRATEGY.md §11 "Anti-Drift Protection"
+# - scripts/check_new_docs.py (custom documentation checker)

@@ -1,0 +1,105 @@
+# Security - API Keys and Secrets
+.env
+.env.local
+.env.production
+.env.development
+
+# Build/Deploy Artifacts
+.next/
+.langgraph_api/
+.vercel/
+.turbo/
+out/
+
+# Cache directories
+.cache/
+.cursor/
+
+# macOS System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# API Keys
+openai_key.txt
+api_keys.txt
+secrets.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Session Data
+data/session_memory.json
+data/*.json
+
+# Vector Stores (large files)
+vector_stores/*/
+faiss_index/
+chroma_db/
+node_modules
+node_modules
+frontend/
+package.json
+package-lock.json

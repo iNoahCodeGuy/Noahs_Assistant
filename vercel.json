@@ -1,0 +1,15 @@
+{
+  "framework": "nextjs",
+  "functions": {
+    "api/**/*.py": {
+      "memory": 1024,
+      "maxDuration": 30,
+      "includeFiles": "data/**"
+    }
+  },
+  "build": {
+    "env": {
+      "PYTHON_VERSION": "3.11"
+    }
+  }
+}

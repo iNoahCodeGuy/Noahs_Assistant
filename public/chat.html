@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat with Portfolia - Noah's AI Assistant</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .chat-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 800px;
+            width: 100%;
+            height: 90vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .chat-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .chat-header h1 {
+            font-size: 1.5em;
+            margin-bottom: 5px;
+        }
+        
+        .chat-header p {
+            opacity: 0.9;
+            font-size: 0.9em;
+        }
+        
+        .role-selector {
+            background: #f8f9fa;
+            padding: 15px 20px;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        
+        .role-selector label {
+            font-weight: 600;
+            color: #333;
+            margin-right: 10px;
+        }
+        
+        .role-selector select {
+            padding: 8px 12px;
+            border: 2px solid #667eea;
+            border-radius: 8px;
+            font-size: 1em;
+            background: white;
+            cursor: pointer;
+            min-width: 250px;
+        }
+        
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f8f9fa;
+        }
+        
+        .message {
+            margin-bottom: 16px;
+            display: flex;
+            gap: 10px;
+        }
+        
+        .message.user {
+            flex-direction: row-reverse;
+        }
+        
+        .message-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2em;
+            flex-shrink: 0;
+        }
+        
+        .message.bot .message-avatar {
+            background: #667eea;
+        }
+        
+        .message.user .message-avatar {
+            background: #10b981;
+        }
+        
+        .message-content {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            line-height: 1.5;
+        }
+        
+        .message.bot .message-content {
+            background: white;
+            border: 2px solid #e5e7eb;
+        }
+        
+        .message.user .message-content {
+            background: #667eea;
+            color: white;
+        }
+        
+        .message-content pre {
+            background: #f1f5f9;
+            padding: 10px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 10px 0;
+            color: #333;
+        }
+        
+        .message-content code {
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+        
+        .message-content table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+            color: #333;
+        }
+        
+        .message-content th,
+        .message-content td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        
+        .message-content th {
+            background: #f1f5f9;
+            font-weight: 600;
+        }
+        
+        .input-container {
+            padding: 20px;
+            background: white;
+            border-top: 2px solid #e5e7eb;
+        }
+        
+        .input-wrapper {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .input-wrapper input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            font-size: 1em;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        
+        .input-wrapper input:focus {
+            border-color: #667eea;
+        }
+        
+        .input-wrapper button {
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .input-wrapper button:hover:not(:disabled) {
+            background: #5568d3;
+            transform: translateY(-2px);
+        }
+        
+        .input-wrapper button:disabled {
+            background: #cbd5e1;
+            cursor: not-allowed;
+        }
+        
+        .typing-indicator {
+            display: flex;
+            gap: 4px;
+            padding: 12px 16px;
+        }
+        
+        .typing-indicator span {
+            width: 8px;
+            height: 8px;
+            background: #667eea;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite;
+        }
+        
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+        
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+        
+        @keyframes bounce {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-10px); }
+        }
+        
+        .welcome-message {
+            text-align: center;
+            padding: 40px 20px;
+            color: #666;
+        }
+        
+        .welcome-message h2 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .back-link {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            text-decoration: none;
+            font-weight: 600;
+            padding: 8px 16px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 8px;
+            transition: background 0.2s;
+        }
+        
+        .back-link:hover {
+            background: rgba(255,255,255,0.3);
+        }
+    </style>
+</head>
+<body>
+    <a href="/" class="back-link">← Back to Home</a>
+    
+    <div class="chat-container">
+        <div class="chat-header">
+            <h1>🤖 Portfolia - Noah's AI Assistant</h1>
+            <p>Interactive Resume & Career Assistant</p>
+        </div>
+        
+        <div class="role-selector">
+            <label for="role">Select Your Role:</label>
+            <select id="role">
+                <option value="Hiring Manager (Nontechnical)">Hiring Manager (Non-Technical)</option>
+                <option value="Hiring Manager (Technical)">Hiring Manager (Technical)</option>
+                <option value="Software Developer">Software Developer</option>
+                <option value="Just looking around">Just Exploring</option>
+                <option value="Looking to confess crush">Confess Crush 💌</option>
+            </select>
+        </div>
+        
+        <div class="messages-container" id="messages">
+            <div class="welcome-message">
+                <h2>👋 Welcome!</h2>
+                <p>Select your role above and start chatting. I can share Noah's career history, projects, code samples, and more!</p>
+            </div>
+        </div>
+        
+        <div class="input-container">
+            <div class="input-wrapper">
+                <input 
+                    type="text" 
+                    id="userInput" 
+                    placeholder="Type your message..." 
+                    autocomplete="off"
+                />
+                <button id="sendBtn">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Auto-detect API URL based on environment
+        const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+            ? 'http://localhost:3000/api/chat'  // Local development
+            : '/api/chat';  // Production (relative URL, same domain)
+        
+        const messagesContainer = document.getElementById('messages');
+        const userInput = document.getElementById('userInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const roleSelect = document.getElementById('role');
+        
+        let sessionId = generateSessionId();
+        let messageCount = 0;
+        
+        function generateSessionId() {
+            return 'session_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+        }
+        
+        function addMessage(content, isUser = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user' : 'bot'}`;
+            
+            const avatar = document.createElement('div');
+            avatar.className = 'message-avatar';
+            avatar.textContent = isUser ? '👤' : '🤖';
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            
+            // Parse markdown-style formatting
+            let formatted = content
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/`([^`]+)`/g, '<code>$1</code>')
+                .replace(/\n/g, '<br>');
+            
+            // Handle code blocks
+            formatted = formatted.replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+            
+            contentDiv.innerHTML = formatted;
+            
+            messageDiv.appendChild(avatar);
+            messageDiv.appendChild(contentDiv);
+            
+            // Remove welcome message if exists
+            const welcome = messagesContainer.querySelector('.welcome-message');
+            if (welcome) welcome.remove();
+            
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+        
+        function showTypingIndicator() {
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'message bot';
+            typingDiv.id = 'typing-indicator';
+            
+            const avatar = document.createElement('div');
+            avatar.className = 'message-avatar';
+            avatar.textContent = '🤖';
+            
+            const indicator = document.createElement('div');
+            indicator.className = 'typing-indicator';
+            indicator.innerHTML = '<span></span><span></span><span></span>';
+            
+            typingDiv.appendChild(avatar);
+            typingDiv.appendChild(indicator);
+            messagesContainer.appendChild(typingDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+        
+        function removeTypingIndicator() {
+            const indicator = document.getElementById('typing-indicator');
+            if (indicator) indicator.remove();
+        }
+        
+        async function sendMessage() {
+            const message = userInput.value.trim();
+            if (!message) return;
+            
+            const role = roleSelect.value;
+            
+            // Add user message
+            addMessage(message, true);
+            userInput.value = '';
+            messageCount++;
+            
+            // Disable input while processing
+            userInput.disabled = true;
+            sendBtn.disabled = true;
+            showTypingIndicator();
+            
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        query: message,
+                        role: role,
+                        session_id: sessionId
+                    })
+                });
+                
+                const data = await response.json();
+                
+                removeTypingIndicator();
+                
+                if (data.success && data.answer) {
+                    addMessage(data.answer);
+                } else {
+                    addMessage('Sorry, I encountered an error. Please try again.');
+                }
+                
+            } catch (error) {
+                removeTypingIndicator();
+                addMessage('Connection error. Please check your internet and try again.');
+                console.error('Error:', error);
+            } finally {
+                userInput.disabled = false;
+                sendBtn.disabled = false;
+                userInput.focus();
+            }
+        }
+        
+        // Event listeners
+        sendBtn.addEventListener('click', sendMessage);
+        userInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+        
+        roleSelect.addEventListener('change', () => {
+            // Reset session when role changes
+            sessionId = generateSessionId();
+            messageCount = 0;
+            
+            // Clear messages except welcome
+            messagesContainer.innerHTML = `
+                <div class="welcome-message">
+                    <h2>👋 Role Changed!</h2>
+                    <p>Now chatting as: <strong>${roleSelect.value}</strong></p>
+                </div>
+            `;
+        });
+        
+        // Focus input on load
+        userInput.focus();
+    </script>
+</body>
+</html>
