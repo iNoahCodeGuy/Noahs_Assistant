@@ -23,7 +23,6 @@ from textwrap import dedent
 
 from assistant.state.conversation_state import ConversationState
 from assistant.observability.langsmith_tracer import create_custom_span
-import time
 
 
 # ============================================================================
@@ -88,50 +87,6 @@ def initialize_conversation_state(state: ConversationState) -> ConversationState
                     f"This may indicate a serialization/deserialization issue."
                 )
 
-        # #region agent log
-        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-            import json
-            # Convert LangGraph message objects to serializable format
-            chat_history_serializable = []
-            for msg in state.get("chat_history", []):
-                if isinstance(msg, dict):
-                    chat_history_serializable.append(msg)
-                elif hasattr(msg, "type") or hasattr(msg, "content"):
-                    # LangGraph message object - convert to dict
-                    chat_history_serializable.append({
-                        "type": getattr(msg, "type", None) or getattr(msg, "role", None),
-                        "content": getattr(msg, "content", str(msg))[:100] if hasattr(msg, "content") else str(msg)[:100]
-                    })
-                else:
-                    chat_history_serializable.append(str(msg)[:100])
-
-            backup_serializable = []
-            for msg in session_memory.get("chat_history_backup", []):
-                if isinstance(msg, dict):
-                    backup_serializable.append(msg)
-                elif hasattr(msg, "type") or hasattr(msg, "content"):
-                    backup_serializable.append({
-                        "type": getattr(msg, "type", None) or getattr(msg, "role", None),
-                        "content": getattr(msg, "content", str(msg))[:100] if hasattr(msg, "content") else str(msg)[:100]
-                    })
-                else:
-                    backup_serializable.append(str(msg)[:100])
-
-            f.write(json.dumps({
-                "location": "stage0_session_management.py:64",
-                "message": "initialize_conversation_state: After chat_history restoration",
-                "data": {
-                    "chat_history_len": len(state.get("chat_history", [])),
-                    "has_backup": bool(session_memory.get("chat_history_backup")),
-                    "backup_len": len(session_memory.get("chat_history_backup", [])),
-                    "chat_history": chat_history_serializable
-                },
-                "timestamp": int(time.time() * 1000),
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "D"
-            }) + "\n")
-        # #endregion
         state.setdefault("entities", {})
         state.setdefault("job_details", {})
         state.setdefault("followup_prompts", [])
