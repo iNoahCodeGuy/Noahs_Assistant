@@ -738,7 +738,6 @@ def _build_engagement_context(state: dict) -> str | None:
     msg_count = state.get("message_count", 0)
     logger.info("DIAG _build_engagement_context CALLED msg_count=%d", msg_count)
     visitor_type = state.get("visitor_type", "unknown")
-    buying_signals = state.get("buying_signals_count", 0)
 
     # Derive conversation phase
     if msg_count <= 2:
@@ -752,57 +751,43 @@ def _build_engagement_context(state: dict) -> str | None:
 
     hint = (
         f"\nCONVERSATION STATE: message #{msg_count} | visitor: {visitor_type} "
-        f"| phase: {phase} | buying_signals: {buying_signals}"
+        f"| phase: {phase}"
     )
 
     # Visitor-type-specific guidance
     if visitor_type == "gatekeeper":
         hint += (
             "\nVISITOR NOTE: Gatekeeper — screening for a decision-maker. "
-            "Keep answers concise and easy to forward. Lead with results and outcomes. "
-            "Capture is valuable (ask who they're screening for)."
+            "Keep answers concise and easy to forward. Lead with results and outcomes."
         )
     elif visitor_type == "student":
         hint += (
             "\nVISITOR NOTE: Student/learner — here to learn from the architecture. "
-            "Go deep on technical decisions when asked. Point to GitHub. "
-            "Low capture priority — don't push contact forms."
+            "Go deep on technical decisions when asked. Point to GitHub."
         )
 
-    # Phase-specific ending guidance — always two-part: capture question + knowledge hook
-    if phase == "opening":
+    # Capture flow: messages 1-3 educate + rotate "why are you here" phrasing.
+    # Message 4+ offer reach-out vs. uncovered project.
+    if msg_count <= 3:
+        why_questions = {
+            1: "What brings you here?",
+            2: "What caught your eye?",
+            3: "Are you exploring for yourself or someone else?",
+        }
+        why_q = why_questions.get(msg_count, "What brings you here?")
         hint += (
             "\nREQUIRED ENDING: End with TWO lines:"
-            "\n1. A discovery/capture question (e.g., \"What brings you here?\" or "
-            "\"Hiring, building, or just curious?\")."
-            "\n2. A knowledge hook statement (e.g., \"The architecture behind this "
-            "conversation is worth a look if you want to see how the engineering holds up.\")."
+            f"\n1. A 'why are you here' question: \"{why_q}\""
+            "\n2. A knowledge hook about an uncovered project."
             "\nDo NOT include any links (GitHub, LinkedIn, or otherwise) in this response."
         )
-    elif phase == "calibration":
+    else:
         hint += (
-            "\nREQUIRED ENDING: End with TWO lines:"
-            "\n1. A capture question (e.g., \"Want to share what you're working on "
-            "so Noah can follow up?\")."
-            "\n2. A knowledge hook to an uncovered topic (e.g., \"The statistical "
-            "foundation behind the retrieval is the same math that powers the "
-            "attrition model.\"). Never end with \"Want X or Y?\""
-        )
-    elif phase == "teaching":
-        hint += (
-            "\nREQUIRED ENDING: End with TWO lines:"
-            "\n1. A capture question (e.g., \"If you want Noah to follow up on this, "
-            "just say the word.\")."
-            "\n2. A knowledge hook bridging to related content (e.g., \"The attrition "
-            "model uses the same statistical foundation if you want to see it applied "
-            "to a different problem.\"). Never offer a menu like \"Want X or Y?\""
-        )
-    else:  # sustained
-        hint += (
-            "\nENDING RULE: End with TWO lines:"
-            "\n1. A capture question (e.g., \"Want Noah to reach out directly?\")."
-            "\n2. A knowledge hook matching their energy. "
-            "Never offer a menu of options."
+            "\nREQUIRED ENDING: End with an offer: \"Want Noah to reach out, "
+            "or want to hear about [specific uncovered project with one-line "
+            "description]?\""
+            "\nIf the user has already declined this offer, just end with a "
+            "knowledge hook — no reach-out offer."
         )
 
     logger.info(
