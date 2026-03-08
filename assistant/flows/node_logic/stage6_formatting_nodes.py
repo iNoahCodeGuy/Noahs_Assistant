@@ -1797,27 +1797,6 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
         >>> "**Teaching Takeaways**" in state["answer"]
         True
     """
-    # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-        import json
-        import time
-        f.write(json.dumps({
-            "location": "stage6_formatting_nodes.py:652",
-            "message": "format_answer: Entry",
-            "data": {
-                "has_draft_answer": bool(state.get("draft_answer")),
-                "draft_answer_len": len(_extract_content_from_message(state.get("draft_answer"))) if state.get("draft_answer") else 0,
-                "has_answer": bool(state.get("answer")),
-                "answer_len": len(_extract_content_from_message(state.get("answer"))) if state.get("answer") else 0,
-                "draft_answer_preview": _extract_content_from_message(state.get("draft_answer"))[:100] if state.get("draft_answer") else None
-            },
-            "timestamp": int(time.time() * 1000),
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "C"
-        }) + "\n")
-    # #endregion
-
     # GUARDRAIL: Retry generation if quality check failed
     base_answer = _retry_generation_if_insufficient(state, rag_engine)
 
@@ -1832,24 +1811,6 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
     if base_answer is None or not base_answer:
         logger.error("format_answer called without draft_answer")
 
-        # #region agent log
-        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-            import json
-            import time
-            f.write(json.dumps({
-                "location": "stage6_formatting_nodes.py:681",
-                "message": "format_answer: Clearing answer because draft_answer is None",
-                "data": {
-                    "has_draft_answer": bool(state.get("draft_answer")),
-                    "has_answer": bool(state.get("answer")),
-                    "base_answer_after_retry": base_answer
-                },
-                "timestamp": int(time.time() * 1000),
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "C"
-            }) + "\n")
-        # #endregion
 
         # Explicitly clear answer instead of returning empty dict
         # Returning {} means no state update, which would preserve old answer

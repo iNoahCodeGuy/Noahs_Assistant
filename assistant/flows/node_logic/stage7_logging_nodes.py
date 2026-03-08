@@ -379,28 +379,6 @@ def update_memory(state: ConversationState) -> ConversationState:
     # Role welcome messages and menu selections are part of conversation and should be preserved
     chat_history = state.get("chat_history", [])
 
-    # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-        import json
-        f.write(json.dumps({
-            "location": "stage7_logging_nodes.py:319",
-            "message": "update_memory: Before chat_history append check",
-            "data": {
-                "has_answer": bool(state.get("answer")),
-                "is_greeting": state.get("is_greeting"),
-                "answer_preview": (state.get("answer", "")[:100] + "...") if state.get("answer") else None,
-                "chat_history_len": len(chat_history),
-                "has_query": bool(state.get("query")),
-                "query": state.get("query", ""),
-                "condition_passes": bool(state.get("answer") and not state.get("is_greeting"))
-            },
-            "timestamp": int(time.time() * 1000),
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "D"
-        }) + "\n")
-    # #endregion
-
     if state.get("answer") and not state.get("is_greeting"):
         # Validate chat_history accumulation
         previous_len = len(chat_history)
@@ -444,37 +422,6 @@ def update_memory(state: ConversationState) -> ConversationState:
                 f"Chat history did not accumulate: previous={previous_len}, current={current_len}. "
                 f"This may indicate duplicate detection or append logic failure."
             )
-
-        # #region agent log
-        with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-            import json
-            # Convert LangGraph message objects to serializable format
-            messages_serializable = []
-            for msg in chat_history:
-                if isinstance(msg, dict):
-                    messages_serializable.append(msg)
-                elif hasattr(msg, "type") or hasattr(msg, "content"):
-                    # LangGraph message object - convert to dict
-                    messages_serializable.append({
-                        "type": getattr(msg, "type", None) or getattr(msg, "role", None),
-                        "content": getattr(msg, "content", str(msg))[:200] if hasattr(msg, "content") else str(msg)[:200]
-                    })
-                else:
-                    messages_serializable.append(str(msg)[:200])
-
-            f.write(json.dumps({
-                "location": "stage7_logging_nodes.py:329",
-                "message": "update_memory: After chat_history append",
-                "data": {
-                    "chat_history_len": len(chat_history),
-                    "messages": messages_serializable
-                },
-                "timestamp": int(time.time() * 1000),
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "D"
-            }) + "\n")
-        # #endregion
 
         logger.debug(f"Appended to chat_history: {len(chat_history)} messages total")
 

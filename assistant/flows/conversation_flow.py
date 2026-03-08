@@ -455,26 +455,6 @@ def run_conversation_flow(
             state = result
         # Short-circuit conditions: greeting, pipeline halt, or skip_rag (non-knowledge intent)
         if state.get("pipeline_halt") or state.get("is_greeting"):
-            # #region agent log
-            with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-                import json
-                f.write(json.dumps({
-                    "location": "conversation_flow.py:215",
-                    "message": "Pipeline break detected",
-                    "data": {
-                        "pipeline_halt": state.get("pipeline_halt"),
-                        "is_greeting": state.get("is_greeting"),
-                        "skip_rag": state.get("skip_rag"),
-                        "message_intent": state.get("message_intent"),
-                        "has_answer": bool(state.get("answer")),
-                        "chat_history_len": len(state.get("chat_history", []))
-                    },
-                    "timestamp": int(time.time() * 1000),
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A"
-                }) + "\n")
-            # #endregion
             break
 
     # ── Strip leaked source citations ──────────────────────────────────
@@ -508,25 +488,6 @@ def run_conversation_flow(
     # Append user query and assistant answer to chat_history for conversation continuity
     # Skip only for actual greetings (initial greeting before role selection)
     # Role welcome messages and menu selections are part of conversation and should be preserved
-    # #region agent log
-    with open('/Users/noahdelacalzada/NoahsAIAssistant/NoahsAIAssistant-/.cursor/debug.log', 'a') as f:
-        import json
-        f.write(json.dumps({
-            "location": "conversation_flow.py:221",
-            "message": "Before chat_history append check",
-            "data": {
-                "has_answer": bool(state.get("answer")),
-                "is_greeting": state.get("is_greeting"),
-                "pipeline_halt": state.get("pipeline_halt"),
-                "chat_history_len": len(state.get("chat_history", [])),
-                "condition_passes": bool(state.get("answer") and not state.get("is_greeting"))
-            },
-            "timestamp": int(time.time() * 1000),
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "B"
-        }) + "\n")
-    # #endregion
 
     # For normal pipeline runs, chat_history append is handled by update_memory()
     # in stage7_logging_nodes.py. But when pipeline_halt is True (crush flow, etc.),
