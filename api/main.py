@@ -71,10 +71,19 @@ def chat(req: ChatRequest):
         "role": "Just looking around",
     })
 
+    # Map menu button text to queries that match KB content
+    MENU_QUERY_MAP = {
+        "Learn more about Noah": "What is Noah's professional background and what projects has he built?",
+        "See what Noah has built": "What technical projects has Noah built?",
+        "Just looking around": "Just looking around",
+        "Confess a crush": "Confess a crush",
+    }
+    message = MENU_QUERY_MAP.get(req.message, req.message)
+
     # Build pipeline state — deepcopy to prevent the pipeline from mutating stored state
     state = {
         "role": session["role"],
-        "query": req.message,
+        "query": message,
         "chat_history": deepcopy(session["chat_history"]),
         "session_id": session_id,
         "session_memory": deepcopy(session["session_memory"]),
