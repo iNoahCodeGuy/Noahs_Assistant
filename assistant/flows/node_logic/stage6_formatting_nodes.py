@@ -561,6 +561,14 @@ def _strip_menu_endings(text: str) -> str:
                 f"  span={match.span()}  text='{match.group()[:80]}'" if match else "",
             )
             if match:
+                # Preserve capture-flow offer ("Want Noah to reach out, or...")
+                matched_text = match.group()
+                if "reach out" in matched_text.lower():
+                    logger.info(
+                        "_strip_menu_endings: skipping capture offer: '%s'",
+                        matched_text[:80],
+                    )
+                    continue
                 # Cut at the boundary where the menu sentence begins
                 if start_pos > 0:
                     result = stripped[:start_pos].rstrip()
