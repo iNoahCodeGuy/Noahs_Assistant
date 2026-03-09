@@ -591,6 +591,7 @@ def handle_hm_capture_continuation(state: ConversationState) -> ConversationStat
             state["answer"] = (
                 "I can have Noah reach out — fill this out so we can best assist you:\n\n"
                 "Name:\nNumber:\nEmail:\nCompany:\nAdditional information:"
+                "\n\nOnce you submit, I can walk you through the rest of Noah's projects."
             )
             state["hm_capture_step"] = "awaiting_hm_details"
             state["pipeline_halt"] = True
@@ -612,7 +613,7 @@ def handle_hm_capture_continuation(state: ConversationState) -> ConversationStat
             display = info.get("name") or info.get("email") or "your info"
             state["answer"] = (
                 f"I'll make sure Noah sees this. {display}'s details have been forwarded — "
-                f"he'll follow up directly. Thanks for checking out his work."
+                f"he'll follow up directly. Want to see what else Noah has built?"
             )
             state["hm_capture_step"] = None
             state["message_intent"] = "contact_info_submission"
@@ -811,6 +812,7 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["answer"] = (
             "I can have Noah reach out — fill this out so we can best assist you:"
             "\n\nName:\nNumber:\nEmail:\nCompany:\nAdditional information:"
+            "\n\nOnce you submit, I can walk you through the rest of Noah's projects."
         )
         state["pipeline_halt"] = True
         return state
@@ -1310,6 +1312,7 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["answer"] = (
             "I can have Noah reach out — fill this out so we can best assist you:\n\n"
             "Name:\nNumber:\nEmail:\nCompany:\nAdditional information:"
+            "\n\nOnce you submit, I can walk you through the rest of Noah's projects."
         )
         state["hm_capture_step"] = "awaiting_hm_details"
         state["pipeline_halt"] = True
