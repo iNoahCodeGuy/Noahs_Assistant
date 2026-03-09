@@ -71,7 +71,7 @@ def chat(req: ChatRequest):
         "role": "Just looking around",
     })
 
-    # Map menu button text to the menu number the pipeline expects
+    # Map menu button text to descriptive queries for KB retrieval
     MENU_MAP = {
         "Learn more about Noah": "Tell me about Noah's professional background and what he has built",
         "See what Noah has built": "What technical projects has Noah built?",
@@ -79,12 +79,22 @@ def chat(req: ChatRequest):
         "Confess a crush": "4",
     }
 
-    # Convert menu button text to number
-    message = MENU_MAP.get(req.message, req.message)
+    # Map menu button text to role (mirrors terminal client's role_map)
+    ROLE_MAP = {
+        "Learn more about Noah": "Learn more about Noah",
+        "See what Noah has built": "See what Noah has built",
+        "Just looking around": "Just looking around",
+        "Confess a crush": "Looking to confess crush",
+    }
+
+    # Set role from menu selection, otherwise keep existing session role
+    original_message = req.message
+    role = ROLE_MAP.get(original_message, session.get("role", "Just looking around"))
+    message = MENU_MAP.get(original_message, original_message)
 
     # Build pipeline state — deepcopy to prevent the pipeline from mutating stored state
     state = {
-        "role": session["role"],
+        "role": role,
         "query": message,
         "chat_history": deepcopy(session["chat_history"]),
         "session_id": session_id,
