@@ -28,8 +28,15 @@ logger = logging.getLogger(__name__)
 # Used to reconstruct crush flow state from chat_history when state fields
 # don't persist across API calls (serverless/stateless architecture).
 _CRUSH_INITIAL_MARKER = "What's it gonna be?"
-_CRUSH_REVEAL_MARKER = "Go ahead and tell me your name and a message"
+_CRUSH_ANON_FORM_MARKER = "Alias:\nMessage for Noah:"
+_CRUSH_REVEAL_FORM_MARKER = "Name:\nNumber or social:\nMessage for Noah:"
 _CRUSH_COMPLETE_MARKERS = ["Message sent", "Say less", "Noah knows"]
+
+# Pattern to detect contact form submissions in chat history.
+# Used to filter them out of Haiku's classification context.
+_CONTACT_FORM_RE = re.compile(
+    r"Name:.*(?:Number:|Email:|Company:)", re.DOTALL | re.IGNORECASE
+)
 
 INTENT_CLASSIFICATION_PROMPT = """Classify the user's message into TWO values separated by a pipe (|):
 
@@ -310,9 +317,13 @@ def _detect_crush_flow_from_history(state: ConversationState) -> str | None:
         if marker in last_assistant_content:
             return None
 
-    # Check if we're awaiting contact info (reveal path)
-    if _CRUSH_REVEAL_MARKER in last_assistant_content:
-        return "awaiting_contact_info"
+    # Check if we're awaiting anonymous form submission
+    if _CRUSH_ANON_FORM_MARKER in last_assistant_content:
+        return "awaiting_anon_form"
+
+    # Check if we're awaiting reveal form submission
+    if _CRUSH_REVEAL_FORM_MARKER in last_assistant_content:
+        return "awaiting_reveal_form"
 
     # Check if we're awaiting the 1/2 choice
     if _CRUSH_INITIAL_MARKER in last_assistant_content:
@@ -1218,7 +1229,10 @@ def classify_intent(state: ConversationState) -> ConversationState:
             else:
                 continue
             if role in ("user", "human") and content:
-                recent_user_msgs.append(content[:200])
+                # Skip contact form submissions — they contain phrases like
+                # "I love Noah" that cause Haiku to false-positive on crush.
+                if not _CONTACT_FORM_RE.search(content):
+                    recent_user_msgs.append(content[:200])
             if len(recent_user_msgs) >= 3:
                 break
         # Build context: previous messages then current query
@@ -1541,10 +1555,10 @@ def handle_crush_confession(state: ConversationState) -> ConversationState:
         Updated state with crush confession prompt and flags
     """
     state["answer"] = (
-        "Wait... for real?? 👀 Okay I wasn't expecting anyone to actually pick this but I respect the energy.\n\n"
-        "I can let Noah know someone came through with intentions. But first — how do you want to play this?\n\n"
-        "**1️⃣ 🕵️ Stay anonymous** — I'll tell him he's got a secret admirer\n"
-        "**2️⃣ 😏 Reveal yourself** — drop your name and a message for Noah, and I'll pass it along\n\n"
+        "Didn't expect anyone to actually pick this one. Respect the commitment though.\n\n"
+        "I can let Noah know someone came through with intentions. Two options:\n\n"
+        "**1.** Stay anonymous -- I tell him he's got a secret admirer. You still get to leave a message.\n"
+        "**2.** Reveal yourself -- drop your name and how to reach you.\n\n"
         "What's it gonna be?"
     )
 
@@ -1698,50 +1712,155 @@ def _parse_name_and_message(query: str) -> tuple[str | None, str | None]:
     return None, text
 
 
-def _send_crush_sms(name: str | None = None, message: str | None = None, anonymous: bool = False) -> bool:
-    """Send Twilio SMS to NOAH about a crush confession.
+def _parse_crush_form(query: str, anonymous: bool = True):
+    """Parse crush form submission.
 
-    The TO number is ALWAYS NOAH_PHONE_NUMBER from env.
-    The user's contact info goes in the MESSAGE BODY, never in the TO field.
+    Anonymous form expects: Alias + Message for Noah
+    Reveal form expects: Name + Number or social + Message for Noah
 
-    Args:
-        name: Confessor's name (None for anonymous).
-        message: The user's raw message / contact info (None for anonymous).
-        anonymous: True for anonymous confession.
-
-    Returns True if SMS sent successfully, False otherwise.
+    Returns:
+        anonymous=True: (alias, message) tuple
+        anonymous=False: dict with keys: name, contact, message
     """
+    text = query.strip()
+
+    if anonymous:
+        # Try field-based parsing: "Alias: X\nMessage for Noah: Y"
+        alias_match = re.search(
+            r"(?:alias|nickname|call me)\s*[:=]?\s*(.+)", text, re.IGNORECASE
+        )
+        msg_match = re.search(
+            r"(?:message(?:\s+for\s+noah)?)\s*[:=]?\s*(.+)", text, re.IGNORECASE
+        )
+        if alias_match and msg_match:
+            return alias_match.group(1).strip(), msg_match.group(1).strip()
+
+        # Fallback: split on newline — first line alias, rest message
+        lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+        if len(lines) >= 2:
+            return lines[0], " ".join(lines[1:])
+
+        # Single line — treat as message only
+        return None, text if text else None
+
+    # ── Reveal form ──
+    info: dict[str, str | None] = {"name": None, "contact": None, "message": None}
+
+    name_match = re.search(r"(?:name)\s*[:=]\s*(.+)", text, re.IGNORECASE)
+    contact_match = re.search(
+        r"(?:number|social|phone|ig|insta|snap|email)\s*[:=]?\s*(.+)",
+        text, re.IGNORECASE,
+    )
+    msg_match = re.search(
+        r"(?:message(?:\s+for\s+noah)?)\s*[:=]?\s*(.+)", text, re.IGNORECASE
+    )
+
+    if name_match:
+        info["name"] = name_match.group(1).strip()
+    if contact_match:
+        info["contact"] = contact_match.group(1).strip()
+    if msg_match:
+        info["message"] = msg_match.group(1).strip()
+
+    # Fallback: line-based parsing
+    if not any(info.values()):
+        lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+        if len(lines) >= 1:
+            info["name"] = lines[0]
+        if len(lines) >= 2:
+            info["contact"] = lines[1]
+        if len(lines) >= 3:
+            info["message"] = " ".join(lines[2:])
+
+    # Final fallback: reuse existing free-form parser
+    if not info["name"] and not info["contact"]:
+        name, msg = _parse_name_and_message(text)
+        info["name"] = name
+        info["message"] = msg
+        phone = re.search(
+            r'(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', text
+        )
+        if phone:
+            info["contact"] = phone.group()
+        else:
+            handle = re.search(r'@\w{2,}', text)
+            if handle:
+                info["contact"] = handle.group()
+
+    return info
+
+
+def _send_crush_notifications(
+    anonymous: bool = False,
+    alias: str | None = None,
+    name: str | None = None,
+    contact: str | None = None,
+    message: str | None = None,
+) -> None:
+    """Send both SMS and email notifications to Noah about a crush confession."""
+
+    # ── SMS ──
     try:
         from assistant.services.twilio_service import get_twilio_service
-
         twilio = get_twilio_service()
         noah_phone = os.getenv("NOAH_PHONE_NUMBER")
 
-        if not noah_phone:
-            logger.error("NOAH_PHONE_NUMBER not set in env — crush SMS cannot be sent")
-            return False
-
-        if not twilio or not twilio.enabled:
-            logger.warning("Twilio not configured — skipping crush SMS")
-            return False
-
-        if anonymous:
-            sms_body = "Portfolia Alert 💌 You've got a secret admirer browsing your portfolio!"
+        if noah_phone and twilio and twilio.enabled:
+            if anonymous:
+                sms_body = (
+                    f"Portfolia: Secret admirer alert.\n"
+                    f"Alias: {alias or 'Anonymous'}\n"
+                    f"Message: {(message or '(none)')[:200]}"
+                )
+            else:
+                sms_body = (
+                    f"Portfolia: Someone chose the bold option.\n"
+                    f"Name: {name or 'Unknown'}\n"
+                    f"Contact: {contact or '(none)'}\n"
+                    f"Message: {(message or '(none)')[:150]}"
+                )
+            if len(sms_body) > 1600:
+                sms_body = sms_body[:1597] + "..."
+            twilio.send_sms(to_phone=noah_phone, message=sms_body)
+            logger.info("Crush SMS sent to Noah")
         else:
-            sms_body = f"Portfolia Alert 💌 Someone on your portfolio said: {message}"
-            if name and name != "Someone":
-                sms_body += f"\nContact: {name}"
-        if len(sms_body) > 1600:
-            sms_body = sms_body[:1597] + "..."
-
-        logger.info(f"Sending crush SMS to NOAH ({noah_phone})...")
-        result = twilio.send_sms(to_phone=noah_phone, message=sms_body)
-        logger.info(f"Crush SMS sent to NOAH successfully: {result.get('status', 'unknown')}")
-        return True
-
+            logger.warning("Twilio not configured -- skipping crush SMS")
     except Exception as e:
-        logger.error(f"Failed to send crush SMS: {e}")
-        return False
+        logger.error(f"Crush SMS failed: {e}")
+
+    # ── Email ──
+    try:
+        from assistant.services.resend_service import get_resend_service
+        resend_svc = get_resend_service()
+
+        if resend_svc and resend_svc.enabled:
+            if anonymous:
+                subject = "Portfolia: Secret admirer"
+                html = (
+                    "<h2>Secret Admirer on Portfolia</h2>"
+                    f"<p><strong>Alias:</strong> {alias or 'Anonymous'}</p>"
+                    f"<p><strong>Message:</strong> {message or '(none)'}</p>"
+                    "<p><em>Submitted via crush confession flow</em></p>"
+                )
+            else:
+                subject = f"Portfolia: {name or 'Someone'} chose the bold option"
+                html = (
+                    "<h2>Crush Confession on Portfolia</h2>"
+                    f"<p><strong>Name:</strong> {name or 'Unknown'}</p>"
+                    f"<p><strong>Contact:</strong> {contact or '(none)'}</p>"
+                    f"<p><strong>Message:</strong> {message or '(none)'}</p>"
+                    "<p><em>Submitted via crush confession flow</em></p>"
+                )
+            resend_svc.send_email(
+                to_email=resend_svc.admin_email,
+                subject=subject,
+                html=html,
+            )
+            logger.info("Crush email sent to Noah")
+        else:
+            logger.warning("Resend not configured -- skipping crush email")
+    except Exception as e:
+        logger.error(f"Crush email failed: {e}")
 
 
 def handle_crush_flow_continuation(state: ConversationState) -> ConversationState:
@@ -1801,117 +1920,136 @@ def handle_crush_flow_continuation(state: ConversationState) -> ConversationStat
         state["skip_rag"] = False
         return state
 
-    # ── Step 2: User choosing anonymous (1) or reveal (2) ────────────────
+    # ── Step: User choosing anonymous (1) or reveal (2) ─────────────────
     if step == "awaiting_choice":
-        # SMART DETECTION: If the user provides contact info directly
-        # (phone number, name, email, "tell noah to call me ..."), treat
-        # that as an implicit "reveal" and jump straight to processing
-        # their info — don't make them say "2" first.
+        # SMART DETECTION: If the user provides contact info directly,
+        # treat as implicit reveal and jump to the reveal form step.
         if _looks_like_contact_info(query):
-            logger.info(f"Implicit reveal detected (contact info provided): {query[:60]}")
-            # Fall through to the awaiting_contact_info handler below
-            step = "awaiting_contact_info"
-            state["crush_flow_step"] = "awaiting_contact_info"
-            # Don't return — let it fall through to step 3 processing
+            logger.info(f"Implicit reveal detected: {query[:60]}")
+            step = "awaiting_reveal_form"
+            state["crush_flow_step"] = "awaiting_reveal_form"
+            # Fall through to awaiting_reveal_form handler below
 
         elif _is_anonymous_choice(query):
-            # Anonymous choice — store in Supabase + send SMS
-            try:
-                from supabase import create_client
-                supabase = create_client(
-                    os.getenv("SUPABASE_URL"),
-                    os.getenv("SUPABASE_SERVICE_KEY")
-                )
-                supabase.table('crush_confessions').insert({
-                    'session_id': session_id,
-                    'anonymous': True,
-                    'name': None,
-                    'contact': None
-                }).execute()
-                logger.info(f"Anonymous crush confession stored for session {session_id}")
-            except Exception as e:
-                logger.error(f"Failed to store anonymous crush confession: {e}")
-
-            # Send anonymous SMS to Noah
-            _send_crush_sms(anonymous=True)
-
             state["answer"] = (
-                "Say less 🕵️ Noah knows he's got a secret admirer. "
-                "If you ever want to come back and reveal yourself, the option is always open 💌\n\n"
-                "Want to see what he actually builds? I can walk you through his projects 😄"
+                "Anonymous it is. Still letting you leave a message though -- "
+                "Noah should know what he's working with.\n\n"
+                "Alias:\nMessage for Noah:"
             )
-            state["crush_flow_step"] = None
-            state["awaiting_crush_choice"] = False
+            state["crush_flow_step"] = "awaiting_anon_form"
+            state["awaiting_crush_choice"] = True
             state["pipeline_halt"] = True
             return state
 
         elif _is_reveal_choice(query):
-            # Reveal choice — ask for name + message
             state["answer"] = (
-                "Full send. I respect it 💯\n\n"
-                "Go ahead and tell me your name and a message for Noah — "
-                "whatever you want him to know."
+                "Full send. Go ahead and fill this out.\n\n"
+                "Name:\nNumber or social:\nMessage for Noah:"
             )
-            state["crush_flow_step"] = "awaiting_contact_info"
+            state["crush_flow_step"] = "awaiting_reveal_form"
             state["awaiting_crush_choice"] = True
             state["pipeline_halt"] = True
             return state
 
         else:
-            # Couldn't determine choice
             state["answer"] = (
-                "Hmm, I need either **1** (stay anonymous) or **2** (reveal yourself). "
-                "Which one sounds good to you?"
+                "I need either **1** (stay anonymous) or **2** (reveal yourself). "
+                "Which one?"
             )
             state["pipeline_halt"] = True
             return state
 
-    # ── Step 3: User providing name + message ────────────────────────────
-    if step == "awaiting_contact_info":
-        name, message = _parse_name_and_message(query)
+    # ── Step: Anonymous form submission (alias + message) ─────────────────
+    if step == "awaiting_anon_form":
+        alias, crush_message = _parse_crush_form(query, anonymous=True)
 
-        # Accept the confession if we got a name OR if the raw message
-        # contains contact info (phone, email, etc.) even without a name.
-        has_usable_info = name or _looks_like_contact_info(query)
+        if alias or crush_message:
+            display_alias = alias or "Anonymous"
+            safe_message = crush_message or "(no message)"
 
-        if has_usable_info:
-            display_name = name or "Someone"
-            contact_data = message or query  # fall back to raw input
-
-            # Store in Supabase
             try:
                 from supabase import create_client
                 supabase = create_client(
                     os.getenv("SUPABASE_URL"),
-                    os.getenv("SUPABASE_SERVICE_KEY")
+                    os.getenv("SUPABASE_SERVICE_KEY"),
                 )
-                supabase.table('crush_confessions').insert({
-                    'session_id': session_id,
-                    'anonymous': False,
-                    'name': name,
-                    'contact': contact_data
+                supabase.table("crush_confessions").insert({
+                    "session_id": session_id,
+                    "anonymous": True,
+                    "name": display_alias,
+                    "contact": None,
                 }).execute()
-                logger.info(f"Revealed crush confession stored: {display_name}")
+                logger.info(f"Anonymous crush stored: alias={display_alias}")
             except Exception as e:
-                logger.error(f"Failed to store revealed crush confession: {e}")
+                logger.error(f"Failed to store anonymous crush: {e}")
 
-            # Send SMS to Noah via Twilio
-            sms_message = contact_data if not name else (message or f"{name} visited your portfolio and wanted to say hi")
-            _send_crush_sms(name=display_name, message=sms_message)
+            _send_crush_notifications(
+                anonymous=True, alias=display_alias, message=safe_message,
+            )
 
             state["answer"] = (
-                "Message sent 📱✨ Noah's been notified. "
-                "Want to see what he actually builds? I can walk you through his projects 😄"
+                "Say less. Noah knows he's got a secret admirer -- and he got your message.\n\n"
+                "Now that we've handled that, want to see what he actually builds?"
             )
             state["crush_flow_step"] = None
             state["awaiting_crush_choice"] = False
             state["pipeline_halt"] = True
-
         else:
-            # Couldn't parse a name or contact info — ask again
             state["answer"] = (
-                "I need at least your name so Noah knows who to thank 😄 "
-                "Try something like: \"Sarah, tell him he seems really cool\""
+                "I need at least a message for Noah. "
+                'Something like: "Tell him his portfolio convinced me."'
+            )
+            state["pipeline_halt"] = True
+
+        return state
+
+    # ── Step: Reveal form submission (name + contact + message) ───────────
+    if step == "awaiting_reveal_form":
+        info = _parse_crush_form(query, anonymous=False)
+        r_name = info.get("name")
+        r_contact = info.get("contact")
+        r_message = info.get("message")
+
+        if r_name or r_contact:
+            display_name = r_name or "Someone"
+            safe_message = r_message or "(no message)"
+            safe_contact = r_contact or ""
+
+            try:
+                from supabase import create_client
+                supabase = create_client(
+                    os.getenv("SUPABASE_URL"),
+                    os.getenv("SUPABASE_SERVICE_KEY"),
+                )
+                supabase.table("crush_confessions").insert({
+                    "session_id": session_id,
+                    "anonymous": False,
+                    "name": display_name,
+                    "contact": safe_contact,
+                }).execute()
+                logger.info(f"Revealed crush stored: {display_name}")
+            except Exception as e:
+                logger.error(f"Failed to store revealed crush: {e}")
+
+            _send_crush_notifications(
+                anonymous=False,
+                name=display_name,
+                contact=safe_contact,
+                message=safe_message,
+            )
+
+            state["answer"] = (
+                f"Done. Noah just got notified that {display_name} visited his portfolio "
+                "and chose the bold option. Now that we've handled that -- "
+                "want to see what he actually builds? Might add context to the decision."
+            )
+            state["crush_flow_step"] = None
+            state["awaiting_crush_choice"] = False
+            state["pipeline_halt"] = True
+        else:
+            state["answer"] = (
+                "I need at least a name or a way to reach you. "
+                'Something like: "Sarah, @sarah_ig, tell him he seems cool."'
             )
             state["pipeline_halt"] = True
 
