@@ -96,6 +96,29 @@ def _throttle_links(answer: str, chat_history: list) -> str:
     return answer
 
 
+def _strip_em_dashes(text: str) -> str:
+    """Replace em-dashes and double-hyphens with periods or commas.
+
+    Converts '—', '–', and '--' to '. ' (before uppercase) or ', ' (otherwise).
+    Applied as a universal post-processing step on ALL answer paths.
+    """
+    if not text:
+        return text
+
+    def _replace_dash(m: re.Match) -> str:
+        after = m.group(1)
+        if after and after[0].isupper():
+            return ". " + after
+        return ", " + (after or "")
+
+    text = re.sub(r'\s*[—–]\s*(\S)', _replace_dash, text)
+    text = re.sub(r'\s*--\s*(\S)', _replace_dash, text)
+    # Catch trailing em-dashes with no following character
+    text = re.sub(r'\s*[—–]\s*$', '.', text, flags=re.MULTILINE)
+    text = re.sub(r'\s*--\s*$', '.', text, flags=re.MULTILINE)
+    return text
+
+
 def _extract_content_from_message(msg) -> str:
     """Extract content from message (handles dict, LangChain message objects, and strings).
 
@@ -350,6 +373,7 @@ def _format_action_request_response(state: Dict[str, Any]) -> Dict[str, Any]:
 
     answer = "\n".join(sections)
 
+    answer = _strip_em_dashes(answer)
     logger.info(f"Formatted action request response: {len(answer)} chars")
     return {"answer": answer}
 
@@ -1853,7 +1877,7 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
     if state.get("draft_answer") and any(indicator in base_answer for indicator in welcome_indicators):
         # This is a welcome/menu message from generate_draft() - don't add formatting
         # Return partial update dict (not full state) to avoid preserving old fields
-        return {"answer": base_answer}
+        return {"answer": _strip_em_dashes(base_answer)}
 
     # SIMPLIFIED FORMAT FOR ACTION REQUESTS (resume, linkedin, github)
     # Skip the full Teaching Takeaways / Full Walkthrough template for simple resource requests
@@ -1867,7 +1891,7 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
         # If this is a repeated action request, just return the acknowledgment
         if is_repeated:
             debug_trace.append({"loc": "format_answer:returning_ack", "msg": "Returning repeated action acknowledgment"})
-            return {"answer": base_answer, "_debug_trace": debug_trace}
+            return {"answer": _strip_em_dashes(base_answer), "_debug_trace": debug_trace}
 
         result = _format_action_request_response(state)
         result["_debug_trace"] = debug_trace
@@ -1883,8 +1907,7 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
     body_text, sources_text = _split_answer_and_sources(base_answer)
     # Remove chunk citation phrases that break first-person narrative
     body_text = _remove_chunk_citations(body_text)
-    # Remove markdown headers that leak from KB chunks
-    body_text = _remove_markdown_headers(body_text)
+    # Markdown headers preserved for frontend react-markdown renderer
     # Strip italic emphasis (*word* -> word) while preserving bold
     body_text = _strip_italic_emphasis(body_text)
     # Strip menu-style endings ("Want X or Y?")
@@ -2228,19 +2251,7 @@ def build_conversation_graph():
     enriched_answer = "\n".join(section for section in sections if section is not None)
 
     # ── Em-dash removal ───────────────────────────────────────────────
-    # The system prompt bans dashes as punctuation but the LLM still uses
-    # them. Replace em dashes (—) and double hyphens (--) with periods or
-    # commas depending on context.
-    # Pattern: " — " between clauses → ". " (new sentence) when followed
-    # by a capital letter, else ", ".
-    def _replace_dash(m: re.Match) -> str:
-        after = m.group(1)
-        if after and after[0].isupper():
-            return ". " + after
-        return ", " + (after or "")
-
-    enriched_answer = re.sub(r'\s*[—–]\s*(\S)', _replace_dash, enriched_answer)
-    enriched_answer = re.sub(r'\s*--\s*(\S)', _replace_dash, enriched_answer)
+    enriched_answer = _strip_em_dashes(enriched_answer)
 
     # ── Link throttling ───────────────────────────────────────────────
     # Count recent assistant responses that already contained a link.

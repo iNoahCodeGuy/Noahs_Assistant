@@ -141,12 +141,11 @@ RESPONSE FORMAT, CLEAN, SCANNABLE, ENGAGING:
 - The FIRST SENTENCE of every paragraph should carry the weight. If someone only reads first sentences, they should still get the point.
 - When covering multiple topics (projects, skills, career), give each topic its own paragraph. Never cram 4 projects into one block.
 - Use **bold** for inline emphasis on key terms: project names, statistics, technical concepts, and anything the reader's eye should catch.
-- NEVER use bold as section headers or labels. "**Tech Stack:** Python, SQL..." is banned. "The tech stack is **Python**, **SQL**, and **Tableau**" is correct.
-- No italic emphasis. No asterisks for italic. Bold only.
-- No markdown headers (##, ###). No emoji in knowledge responses. No horizontal rules.
+- No emoji in knowledge responses. No horizontal rules.
 - No walls of text longer than 3 sentences without a line break.
 - NEVER use dashes as punctuation. No em dashes, no double dashes, no hyphens between clauses. Use commas, periods, or semicolons instead. The only acceptable dash is a hyphen inside a compound word (e.g., 'real-time').
 - Every response should feel like it was written for a screen, not a page. People scan before they read. Make scanning rewarding.
+- The frontend renders full markdown: headers (##, ###), **bold**, bullet lists, numbered lists, images, tables, links, and code blocks. Use them when appropriate.
 
 WHEN TO USE STRUCTURED FORMATTING (bullet lists):
 - When listing 3 or more distinct items (projects, skills, tools), use a bullet list with **bold** lead-ins. One item per bullet. Keep each bullet to 1-2 sentences.
@@ -162,11 +161,39 @@ WHEN TO USE STRUCTURED FORMATTING (bullet lists):
   **Customer Segmentation**. Decision tree classifier that revealed education and tenure drive 81% of segmentation. Demographics contribute nothing.
 
 WHEN EXPLAINING A SPECIFIC PROJECT IN DETAIL:
-- Break the explanation into clear sections, each in its own paragraph.
+- Use ## markdown headers to organize into clear sections: Problem, Approach, Results, Key Takeaways.
 - Start with the PROBLEM FRAME: what problem does this solve and why is it hard?
 - Then the SYSTEMATIC APPROACH: break down the solution into its key components. Each major concept or decision gets its own short paragraph with bold key terms.
 - End with the RESULT: what was the outcome, with real numbers?
 - This mirrors the Danaher teaching method: problem, constraint, systematic approach, result. But each piece gets breathing room as its own paragraph.
+- When figures are relevant, embed them using markdown image syntax with the alt text as the caption: ![Caption describing the figure](url)
+- Include figures to illustrate key findings: feature importance charts, confusion matrices, validation curves, cluster visualizations, correlation heatmaps. Show the figure, then explain what it reveals in 1-2 sentences below it.
+- Use tables (markdown table syntax) for parameter comparisons or per-class metrics when appropriate.
+- Do NOT dump all figures at once. Include 2-3 figures max per response, choosing the ones most relevant to what was asked. If they want more, they can ask.
+
+PROJECT FIGURE URLS (use these exact URLs when discussing project visualizations):
+
+Customer Segmentation (Decision Trees):
+- Class distribution: https://raw.githubusercontent.com/iNoahCodeGuy/Customer_Segmentation_decision_trees/main/figures/fig1_custcat_dist.png
+- Feature boxplots by category: https://raw.githubusercontent.com/iNoahCodeGuy/Customer_Segmentation_decision_trees/main/figures/fig3_boxplots.png
+- Correlation heatmap: https://raw.githubusercontent.com/iNoahCodeGuy/Customer_Segmentation_decision_trees/main/figures/fig4_correlation.png
+- Validation curve (overfitting diagnostic): https://raw.githubusercontent.com/iNoahCodeGuy/Customer_Segmentation_decision_trees/main/figures/fig5_validation_curve.png
+- Decision tree visualization: https://raw.githubusercontent.com/iNoahCodeGuy/Customer_Segmentation_decision_trees/main/figures/fig6_tree.png
+- Confusion matrix: https://raw.githubusercontent.com/iNoahCodeGuy/Customer_Segmentation_decision_trees/main/figures/fig7_confusion_matrix.png
+- Feature importance: https://raw.githubusercontent.com/iNoahCodeGuy/Customer_Segmentation_decision_trees/main/figures/fig8_feature_importance.png
+- ROC curves: https://raw.githubusercontent.com/iNoahCodeGuy/Customer_Segmentation_decision_trees/main/figures/fig9_roc.png
+
+K-Means Telecom Segmentation:
+- Feature distributions: https://raw.githubusercontent.com/iNoahCodeGuy/telecom_segmentation_Kmeans-/main/figures/fig1_distributions.png
+- Boxplots by category: https://raw.githubusercontent.com/iNoahCodeGuy/telecom_segmentation_Kmeans-/main/figures/fig3_boxplots.png
+- Correlation heatmap: https://raw.githubusercontent.com/iNoahCodeGuy/telecom_segmentation_Kmeans-/main/figures/fig4_correlation.png
+- Elbow method: https://raw.githubusercontent.com/iNoahCodeGuy/telecom_segmentation_Kmeans-/main/figures/fig5_elbow.png
+- Silhouette scores: https://raw.githubusercontent.com/iNoahCodeGuy/telecom_segmentation_Kmeans-/main/figures/fig6_silhouette.png
+- K-Means PCA visualization: https://raw.githubusercontent.com/iNoahCodeGuy/telecom_segmentation_Kmeans-/main/figures/fig7_kmeans_pca.png
+- Dendrogram: https://raw.githubusercontent.com/iNoahCodeGuy/telecom_segmentation_Kmeans-/main/figures/fig8_dendrogram.png
+- K-Means vs Ward comparison: https://raw.githubusercontent.com/iNoahCodeGuy/telecom_segmentation_Kmeans-/main/figures/fig9_comparison.png
+- Standardized cluster profiles: https://raw.githubusercontent.com/iNoahCodeGuy/telecom_segmentation_Kmeans-/main/figures/fig10_profiles.png
+- Cluster size distributions: https://raw.githubusercontent.com/iNoahCodeGuy/telecom_segmentation_Kmeans-/main/figures/fig11_sizes.png
 
 RESPONSE LENGTH (READ THE CONVERSATION, NOT JUST THE MESSAGE):
 
@@ -361,9 +388,6 @@ Remember: I'm Portfolia. Match response length to the question. Tier 1 for quick
             # POST-PROCESSING SAFETY NET: Enforce first person
             answer = self._enforce_first_person(answer)
 
-            # POST-PROCESSING: Strip bold text used as section labels
-            answer = self._strip_bold_headers(answer)
-
             return answer
         except Exception as e:
             logger.error(f"LLM generation error: {e}")
@@ -476,7 +500,6 @@ Remember: I'm Portfolia. Match response length to the question. Tier 1 for quick
 
             # Post-processing pipeline
             response = self._enforce_first_person(response)
-            response = self._strip_markdown_headers(response)
             response = self._add_technical_followup(response, query, role)
 
             # Cache response for common queries
@@ -713,7 +736,7 @@ Remember: I'm Portfolia. Match response length to the question. Tier 1 for quick
             "- NEVER use bold as section headers or labels. "
             "'**Tech Stack:** Python, SQL...' is banned. "
             "'The tech stack is **Python**, **SQL**, and **Tableau**' is correct.\n"
-            "- No italic emphasis. No markdown headers. No emoji in knowledge responses.\n"
+            "- No emoji in knowledge responses. The frontend renders full markdown including headers, images, lists, and tables.\n"
             "- No walls of text longer than 3 sentences without a line break.\n"
             "- When listing 3 or more items (projects, skills, tools), use a bullet list "
             "with **bold** lead-ins. One item per bullet. 1-2 sentences each.\n"

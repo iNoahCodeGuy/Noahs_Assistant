@@ -1767,14 +1767,8 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
                 if not update.get("generation_quality_warning"):
                     update["generation_quality_warning"] = "Verbatim copying detected and corrected"
 
-        # Remove markdown asterisks
-        answer = _remove_markdown_asterisks(answer)
-        logger.debug("Removed markdown asterisks from response")
-
-        # Remove markdown headers (import from formatting_nodes)
-        from assistant.flows.node_logic.stage6_formatting_nodes import _remove_markdown_headers
-        answer = _remove_markdown_headers(answer)
-        logger.debug("Removed markdown headers from response")
+        # Markdown formatting (bold, headers, images) is preserved for the frontend
+        # react-markdown renderer. Only strip markdown in menu option contexts.
 
     cleaned_answer = sanitize_generated_answer(answer)
 
