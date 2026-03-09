@@ -663,6 +663,172 @@ def _strip_italic_emphasis(text: str) -> str:
     return result
 
 
+# ── Voice compliance enforcement ──────────────────────────────────
+# Rule-based post-processor that catches personality violations the LLM
+# ignores from the system prompt. Runs after generation, <5ms.
+
+# Openers that violate the Craig Jones voice (enthusiastic, performative, filler)
+_BANNED_OPENERS: List[re.Pattern] = [
+    re.compile(r'^Ah\s+cool[,!.]?\s*', re.IGNORECASE),
+    re.compile(r'^Oh\s+cool[,!.]?\s*', re.IGNORECASE),
+    re.compile(r'^That\'s\s+awesome[.!]?\s*', re.IGNORECASE),
+    re.compile(r'^That\'s\s+great[.!]?\s*', re.IGNORECASE),
+    re.compile(r'^That\'s\s+(?:a\s+)?(?:really\s+)?(?:great|good|interesting|excellent|fantastic)\s+(?:question|point|observation)[.!]?\s*', re.IGNORECASE),
+    re.compile(r'^Great\s+question[.!]?\s*', re.IGNORECASE),
+    re.compile(r'^Good\s+question[.!]?\s*', re.IGNORECASE),
+    re.compile(r'^Interesting\s+question[.!]?\s*', re.IGNORECASE),
+    re.compile(r'^(?:I\'d\s+)?(?:love|be\s+happy)\s+to\s+(?:help|show|walk|break|explain|tell)\b[^.!?]*[.!]?\s*', re.IGNORECASE),
+    re.compile(r'^(?:Let\s+me\s+(?:break\s+that\s+down|walk\s+you\s+through|explain))[.!]?\s*', re.IGNORECASE),
+    re.compile(r'^Here\'s\s+the\s+(?:breakdown|thing|cool\s+part|magic)[.!:]?\s*', re.IGNORECASE),
+    re.compile(r'^(?:Ha|Haha|Hah)[,!.]?\s+', re.IGNORECASE),
+    re.compile(r'^LOL[.!,]?\s*', re.IGNORECASE),
+    re.compile(r'^Absolutely[.!,]?\s*', re.IGNORECASE),
+    re.compile(r'^Of\s+course[.!,]?\s*', re.IGNORECASE),
+    re.compile(r'^Sure\s+thing[.!,]?\s*', re.IGNORECASE),
+    re.compile(r'^(?:Oh\s+)?(?:I\s+)?(?:appreciate|love)\s+(?:the|that|your)\s+(?:energy|enthusiasm|curiosity|interest)[.!]?\s*', re.IGNORECASE),
+]
+
+# Mid-text phrases that break voice (performative enthusiasm)
+_BANNED_PHRASES: List[Tuple[re.Pattern, str]] = [
+    (re.compile(r"That's awesome[.!]?", re.IGNORECASE), ""),
+    (re.compile(r"That's great[.!]?", re.IGNORECASE), ""),
+    (re.compile(r"I'd love to show you", re.IGNORECASE), "Here's"),
+    (re.compile(r"I'd love to", re.IGNORECASE), "I can"),
+    (re.compile(r"I'd be happy to", re.IGNORECASE), "I can"),
+    (re.compile(r"I appreciate (?:the|that|your) (?:energy|enthusiasm|curiosity|interest)[.!,]?", re.IGNORECASE), ""),
+]
+
+# Inline option lists: "whether that's X, Y, or Z" pattern
+_INLINE_MENU_PATTERNS: List[re.Pattern] = [
+    re.compile(
+        r',?\s*whether\s+(?:that\'s|it\'s|you\'re\s+(?:interested\s+in|looking\s+at|curious\s+about))\s+'
+        r'.+?,\s+.+?,?\s+or\s+.+?[.?!]',
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r',?\s*(?:whether\s+)?(?:that\'s|it\'s)\s+.+?,\s+.+?,?\s+or\s+.+?[.?!]',
+        re.IGNORECASE,
+    ),
+    # "from X to Y to Z" option spread
+    re.compile(
+        r',?\s*(?:from|ranging\s+from)\s+.+?\s+to\s+.+?\s+to\s+.+?[.?!]',
+        re.IGNORECASE,
+    ),
+]
+
+# "What kind of X interests you?" — generic interest-polling questions
+_INTEREST_POLL_PATTERNS: List[re.Pattern] = [
+    re.compile(r'What\s+(?:kind|type|sort)\s+of\s+\w+\s+interests?\s+you\s*(?:most|the\s+most)?\s*\?', re.IGNORECASE),
+    re.compile(r'What\s+(?:are\s+you|would\s+you\s+be)\s+most\s+interested\s+in\s*\?', re.IGNORECASE),
+    re.compile(r'What\s+(?:catches|caught)\s+your\s+(?:eye|interest|attention)\s+(?:most|the\s+most)\s*\?', re.IGNORECASE),
+]
+
+
+def _enforce_voice_rules(text: str) -> str:
+    """Post-generation voice compliance enforcer.
+
+    Catches personality violations the LLM produces despite system prompt rules:
+    1. Banned openers (enthusiastic filler, performative reactions)
+    2. Excess exclamation points (max 1 per response, none in first sentence)
+    3. Banned mid-text phrases (enthusiasm that breaks Craig Jones voice)
+    4. Inline menu patterns ("whether that's X, Y, or Z")
+    5. Generic interest-polling questions
+
+    Runs in <5ms. No LLM call — pure regex/string manipulation.
+    """
+    if not text:
+        return text
+
+    result = text
+
+    # ── 1. Strip banned openers ──
+    # Apply repeatedly in case multiple filler phrases stack at the start
+    changed = True
+    iterations = 0
+    while changed and iterations < 5:
+        changed = False
+        iterations += 1
+        for pattern in _BANNED_OPENERS:
+            new_result = pattern.sub('', result, count=1)
+            if new_result != result:
+                result = new_result
+                changed = True
+                break  # restart from top after each strip
+
+    # Capitalize first letter if we stripped an opener
+    if result and result != text:
+        result = result[0].upper() + result[1:] if len(result) > 1 else result.upper()
+        logger.info("Voice enforcer: stripped banned opener")
+
+    # ── 2. Strip banned mid-text phrases ──
+    for pattern, replacement in _BANNED_PHRASES:
+        new_result = pattern.sub(replacement, result)
+        if new_result != result:
+            logger.info("Voice enforcer: replaced banned phrase")
+            result = new_result
+
+    # Clean up double spaces / orphaned punctuation from phrase removal
+    result = re.sub(r'  +', ' ', result)
+    result = re.sub(r'\.\s*\.', '.', result)
+    result = re.sub(r'^\s*[,.]?\s*', '', result)
+
+    # ── 3. Kill excess exclamation points ──
+    # No exclamation in the first sentence
+    first_sentence_end = re.search(r'[.!?]', result)
+    if first_sentence_end and result[first_sentence_end.start()] == '!':
+        result = result[:first_sentence_end.start()] + '.' + result[first_sentence_end.start() + 1:]
+        logger.info("Voice enforcer: replaced ! in first sentence")
+
+    # Max 1 exclamation in entire response (preserve the first one found after sentence 1)
+    excl_count = result.count('!')
+    if excl_count > 1:
+        # Keep the first !, replace the rest with .
+        first_excl = result.index('!')
+        before = result[:first_excl + 1]
+        after = result[first_excl + 1:].replace('!', '.')
+        result = before + after
+        logger.info("Voice enforcer: capped exclamation points from %d to 1", excl_count)
+
+    # ── 4. Strip inline menu patterns ──
+    for pattern in _INLINE_MENU_PATTERNS:
+        match = pattern.search(result)
+        if match:
+            # Remove the inline menu, clean up surrounding text
+            before = result[:match.start()].rstrip()
+            after = result[match.end():].lstrip()
+            if before and after:
+                # Join with period if the before part doesn't end with punctuation
+                if before[-1] not in '.!?:':
+                    result = before + '. ' + after
+                else:
+                    result = before + ' ' + after
+            elif before:
+                result = before
+            else:
+                result = after
+            logger.info("Voice enforcer: stripped inline menu pattern")
+            break  # one pass is enough
+
+    # ── 5. Strip generic interest-polling questions ──
+    for pattern in _INTEREST_POLL_PATTERNS:
+        match = pattern.search(result)
+        if match:
+            # Remove the polling question, keep everything before it
+            before = result[:match.start()].rstrip()
+            after = result[match.end():].lstrip()
+            if before:
+                result = before + (' ' + after if after else '')
+            logger.info("Voice enforcer: stripped interest-polling question")
+            break
+
+    # Final cleanup: collapse whitespace, trim trailing spaces on lines
+    result = re.sub(r' +\n', '\n', result)
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    result = result.strip()
+
+    return result
+
+
 def _add_subcategory_code_blocks(
     sections: List[str],
     active_subcats: List[str],
@@ -1955,6 +2121,13 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
 
     logger.info(
         "DIAG format_answer AFTER  _strip_menu_endings | last_120: '%s'",
+        body_text[-120:] if body_text else "(empty)",
+    )
+
+    # Voice compliance: strip banned openers, excess !, inline menus, polling questions
+    body_text = _enforce_voice_rules(body_text)
+    logger.info(
+        "DIAG format_answer AFTER  _enforce_voice_rules | last_120: '%s'",
         body_text[-120:] if body_text else "(empty)",
     )
 

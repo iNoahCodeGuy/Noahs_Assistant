@@ -777,7 +777,14 @@ def _build_engagement_context(state: dict) -> str | None:
             "RAG pipeline he built from scratch), and the ML examples "
             "include two attrition models, two customer segmentation "
             "studies, and statistical analysis tools. Mention he earned "
-            "IBM and DeepLearning.AI certifications along the way."
+            "IBM and DeepLearning.AI certifications along the way. "
+            "The specific certifications are: Fundamentals of Building "
+            "AI Agents (IBM), Building Generative AI-Powered "
+            "Applications with Python (IBM), AI For Everyone "
+            "(DeepLearning.AI), and 100 Days of Code (Udemy). "
+            "Do NOT invent or guess certification names — use only "
+            "these exact names or refer to them generally as "
+            "'IBM and DeepLearning.AI certifications'."
         )
 
     # Capture flow: message 1 asks "What brings you here?",

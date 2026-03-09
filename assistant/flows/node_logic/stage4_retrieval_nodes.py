@@ -861,7 +861,8 @@ def handle_grounding_gap(state: ConversationState) -> ConversationState:
     self_knowledge_keywords = [
         "built", "build", "retrieval", "pipeline", "architecture", "rag",
         "langgraph", "pgvector", "embedding", "vector", "node", "generation",
-        "how do you work", "how does your", "how were you", "how are you built",
+        "how do you work", "how you work", "how you were built", "how this works",
+        "how does your", "how were you", "how are you built",
         "what model", "which model", "tech stack", "supabase", "intent",
         "classification", "how does this work", "how were", "how was", "how did",
         "similarity", "threshold", "hallucination", "routing", "crush flow", "crush",

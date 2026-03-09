@@ -27,9 +27,7 @@ logger = logging.getLogger(__name__)
 # ── Crush flow chat-history markers ──────────────────────────────────────────
 # Used to reconstruct crush flow state from chat_history when state fields
 # don't persist across API calls (serverless/stateless architecture).
-_CRUSH_INITIAL_MARKER = "What's it gonna be?"
-_CRUSH_ANON_FORM_MARKER = "Alias:"
-_CRUSH_REVEAL_FORM_MARKER = "Number or social:"
+_CRUSH_FORM_MARKER = "Message for Noah:"
 _CRUSH_COMPLETE_MARKERS = ["Message sent", "Say less", "Noah knows"]
 
 # Pattern to detect contact form submissions in chat history.
@@ -289,7 +287,7 @@ def _detect_crush_flow_from_history(state: ConversationState) -> str | None:
     we look at the last assistant message to determine where we are.
 
     Returns:
-        'awaiting_choice' | 'awaiting_contact_info' | None
+        'awaiting_crush_form' | None
     """
     chat_history = state.get("chat_history", [])
     if not chat_history:
@@ -319,17 +317,9 @@ def _detect_crush_flow_from_history(state: ConversationState) -> str | None:
         if marker in last_assistant_content:
             return None
 
-    # Check if we're awaiting anonymous form submission
-    if _CRUSH_ANON_FORM_MARKER in last_assistant_content:
-        return "awaiting_anon_form"
-
-    # Check if we're awaiting reveal form submission
-    if _CRUSH_REVEAL_FORM_MARKER in last_assistant_content:
-        return "awaiting_reveal_form"
-
-    # Check if we're awaiting the 1/2 choice
-    if _CRUSH_INITIAL_MARKER in last_assistant_content:
-        return "awaiting_choice"
+    # Check if we're awaiting crush form submission
+    if _CRUSH_FORM_MARKER in last_assistant_content:
+        return "awaiting_crush_form"
 
     return None
 
@@ -1099,6 +1089,7 @@ def classify_intent(state: ConversationState) -> ConversationState:
         "your architecture", "your pipeline", "your design", "your system",
         "your tech stack", "your retrieval", "your generation", "your nodes",
         "how were you", "how are you built", "how do you work", "how do you",
+        "how you work", "how you were built", "how this works", "how does this work",
         "what are you", "who are you", "who built you", "what powers you",
         "describe yourself", "introduce yourself",
         # Personality / behavior / decision-making questions
@@ -1577,30 +1568,31 @@ def handle_non_knowledge_intent(state: ConversationState, rag_engine: Any) -> Co
 
 
 def handle_crush_confession(state: ConversationState) -> ConversationState:
-    """Handle crush confession — Step 1: Show anonymous/reveal options.
+    """Handle crush confession — show the crush form immediately.
 
     Args:
         state: ConversationState
 
     Returns:
-        Updated state with crush confession prompt and flags
+        Updated state with crush form prompt and flags
     """
     state["answer"] = (
         "Didn't expect anyone to actually pick this one. Respect the commitment though.\n\n"
-        "I can let Noah know someone came through with intentions. Two options:\n\n"
-        "**1.** Stay anonymous. I tell him he's got a secret admirer. You still get to leave a message.\n"
-        "**2.** Reveal yourself. Drop your name and how to reach you.\n\n"
-        "What's it gonna be?"
+        "I can let Noah know someone came through with intentions. Fill this out:\n\n"
+        "Name:\n"
+        "Number or social:\n"
+        "Message for Noah:\n\n"
+        "Want to stay anonymous? Just leave name and number blank."
     )
 
     # Set flags for next turn handling
     state["awaiting_crush_choice"] = True
-    state["crush_flow_step"] = "awaiting_choice"
+    state["crush_flow_step"] = "awaiting_crush_form"
     state["pipeline_halt"] = True
     state["skip_rag"] = True
     state["message_intent"] = "crush_confession"
 
-    logger.info("Crush confession detected - presented options to user")
+    logger.info("Crush confession detected - presented form to user")
 
     return state
 
@@ -1656,9 +1648,8 @@ def _is_reveal_choice(query: str) -> bool:
 def _looks_like_contact_info(query: str) -> bool:
     """Check if a message looks like it contains contact info or a direct reveal.
 
-    Used in the awaiting_choice step to detect that the user is providing
-    contact info directly (implicitly choosing "reveal") instead of saying
-    "1" or "2".
+    Used to detect that a message contains contact info (name, phone,
+    email, social handle, etc.).
 
     Matches: phone numbers, emails, "my name is", "tell noah/him", "call me",
     "here is my number", "hit me up", name + number patterns, etc.
@@ -1959,163 +1950,79 @@ def handle_crush_flow_continuation(state: ConversationState) -> ConversationStat
         state["skip_rag"] = False
         return state
 
-    # ── Step: User choosing anonymous (1) or reveal (2) ─────────────────
-    if step == "awaiting_choice":
-        # SMART DETECTION: If the user provides contact info directly,
-        # treat as implicit reveal and jump to the reveal form step.
-        if _looks_like_contact_info(query):
-            logger.info(f"Implicit reveal detected: {query[:60]}")
-            step = "awaiting_reveal_form"
-            state["crush_flow_step"] = "awaiting_reveal_form"
-            # Fall through to awaiting_reveal_form handler below
-
-        elif _is_anonymous_choice(query):
-            state["answer"] = (
-                "Anonymous it is. Still letting you leave a message though.\n\n"
-                "Alias:\n"
-                "Message for Noah:"
-            )
-            state["crush_flow_step"] = "awaiting_anon_form"
-            state["awaiting_crush_choice"] = True
-            state["pipeline_halt"] = True
-            return state
-
-        elif _is_reveal_choice(query):
-            state["answer"] = (
-                "Full send. Go ahead and fill this out.\n\n"
-                "Name:\n"
-                "Number or social:\n"
-                "Message for Noah:"
-            )
-            state["crush_flow_step"] = "awaiting_reveal_form"
-            state["awaiting_crush_choice"] = True
-            state["pipeline_halt"] = True
-            return state
-
-        else:
-            state["answer"] = (
-                "I need either **1** (stay anonymous) or **2** (reveal yourself). "
-                "Which one?"
-            )
-            state["pipeline_halt"] = True
-            return state
-
-    # ── Step: Anonymous form submission (alias + message) ─────────────────
-    if step == "awaiting_anon_form":
-        alias, crush_message = _parse_crush_form(query, anonymous=True)
-
-        if alias or crush_message:
-            display_alias = alias or "Anonymous"
-            safe_message = crush_message or "(no message)"
-
-            try:
-                from supabase import create_client
-                supabase = create_client(
-                    os.getenv("SUPABASE_URL"),
-                    os.getenv("SUPABASE_SERVICE_KEY"),
-                )
-                supabase.table("crush_confessions").insert({
-                    "session_id": session_id,
-                    "anonymous": True,
-                    "name": display_alias,
-                    "contact": None,
-                }).execute()
-                logger.info(f"Anonymous crush stored: alias={display_alias}")
-            except Exception as e:
-                logger.error(f"Failed to store anonymous crush: {e}")
-
-            # Mark capture in conversation analytics
-            try:
-                from assistant.analytics.supabase_analytics import supabase_analytics
-                supabase_analytics.mark_data_captured(
-                    session_id=session_id,
-                    capture_turn=state.get("message_count", 0),
-                    capture_type="crush_confession",
-                )
-            except Exception as analytics_err:
-                logger.error(f"Failed to mark crush capture in analytics: {analytics_err}")
-
-            _send_crush_notifications(
-                anonymous=True, alias=display_alias, message=safe_message,
-            )
-
-            state["answer"] = (
-                "Say less. Noah knows he's got a secret admirer, and he got your message.\n\n"
-                "Now that we've handled that, want to see what he actually builds?"
-            )
-            state["crush_flow_step"] = None
-            state["awaiting_crush_choice"] = False
-            state["pipeline_halt"] = True
-        else:
-            state["answer"] = (
-                "I need at least a message for Noah. "
-                'Something like: "Tell him his portfolio convinced me."'
-            )
-            state["pipeline_halt"] = True
-
-        return state
-
-    # ── Step: Reveal form submission (name + contact + message) ───────────
-    if step == "awaiting_reveal_form":
+    # ── Step: Crush form submission (unified — name/contact optional) ─────
+    if step == "awaiting_crush_form":
         info = _parse_crush_form(query, anonymous=False)
         r_name = info.get("name")
         r_contact = info.get("contact")
         r_message = info.get("message")
 
-        if r_name or r_contact:
-            display_name = r_name or "Someone"
-            safe_message = r_message or "(no message)"
-            safe_contact = r_contact or ""
+        # Determine if anonymous (no name AND no contact provided)
+        is_anonymous = not r_name and not r_contact
 
-            try:
-                from supabase import create_client
-                supabase = create_client(
-                    os.getenv("SUPABASE_URL"),
-                    os.getenv("SUPABASE_SERVICE_KEY"),
-                )
-                supabase.table("crush_confessions").insert({
-                    "session_id": session_id,
-                    "anonymous": False,
-                    "name": display_name,
-                    "contact": safe_contact,
-                }).execute()
-                logger.info(f"Revealed crush stored: {display_name}")
-            except Exception as e:
-                logger.error(f"Failed to store revealed crush: {e}")
-
-            # Mark capture in conversation analytics
-            try:
-                from assistant.analytics.supabase_analytics import supabase_analytics
-                supabase_analytics.mark_data_captured(
-                    session_id=session_id,
-                    capture_turn=state.get("message_count", 0),
-                    capture_type="crush_confession",
-                )
-            except Exception as analytics_err:
-                logger.error(f"Failed to mark crush capture in analytics: {analytics_err}")
-
-            _send_crush_notifications(
-                anonymous=False,
-                name=display_name,
-                contact=safe_contact,
-                message=safe_message,
+        # Need at least a message
+        if not r_name and not r_contact and not r_message:
+            state["answer"] = (
+                "I need at least a message for Noah. "
+                'Something like: "Tell him his portfolio convinced me."'
             )
+            state["pipeline_halt"] = True
+            return state
 
+        display_name = r_name or "Anonymous"
+        safe_message = r_message or "(no message)"
+        safe_contact = r_contact or ""
+
+        try:
+            from supabase import create_client
+            supabase = create_client(
+                os.getenv("SUPABASE_URL"),
+                os.getenv("SUPABASE_SERVICE_KEY"),
+            )
+            supabase.table("crush_confessions").insert({
+                "session_id": session_id,
+                "anonymous": is_anonymous,
+                "name": display_name,
+                "contact": safe_contact or None,
+            }).execute()
+            logger.info(f"Crush stored: name={display_name}, anonymous={is_anonymous}")
+        except Exception as e:
+            logger.error(f"Failed to store crush: {e}")
+
+        # Mark capture in conversation analytics
+        try:
+            from assistant.analytics.supabase_analytics import supabase_analytics
+            supabase_analytics.mark_data_captured(
+                session_id=session_id,
+                capture_turn=state.get("message_count", 0),
+                capture_type="crush_confession",
+            )
+        except Exception as analytics_err:
+            logger.error(f"Failed to mark crush capture in analytics: {analytics_err}")
+
+        _send_crush_notifications(
+            anonymous=is_anonymous,
+            alias=display_name if is_anonymous else None,
+            name=None if is_anonymous else display_name,
+            contact=safe_contact or None,
+            message=safe_message,
+        )
+
+        if is_anonymous:
+            state["answer"] = (
+                "Say less. Noah knows he's got a secret admirer, and he got your message.\n\n"
+                "Now that we've handled that, want to see what he actually builds?"
+            )
+        else:
             state["answer"] = (
                 f"Done. Noah just got notified that {display_name} visited his portfolio "
                 "and chose the bold option. Now that we've handled that, "
                 "want to see what he actually builds? Might add context to the decision."
             )
-            state["crush_flow_step"] = None
-            state["awaiting_crush_choice"] = False
-            state["pipeline_halt"] = True
-        else:
-            state["answer"] = (
-                "I need at least a name or a way to reach you. "
-                'Something like: "Sarah, @sarah_ig, tell him he seems cool."'
-            )
-            state["pipeline_halt"] = True
 
+        state["crush_flow_step"] = None
+        state["awaiting_crush_choice"] = False
+        state["pipeline_halt"] = True
         return state
 
     # Fallback — shouldn't reach here, but reset crush state

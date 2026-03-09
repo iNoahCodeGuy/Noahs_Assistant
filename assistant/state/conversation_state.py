@@ -116,10 +116,10 @@ class ConversationState(TypedDict, total=False):
     """True if message intent doesn't require RAG retrieval (small_talk, off_topic, etc.)."""
 
     awaiting_crush_choice: bool
-    """True when waiting for user's choice in crush confession flow (1=anonymous, 2=reveal)."""
+    """True when waiting for user's crush form submission."""
 
     crush_flow_step: str
-    """Current step in crush confession flow: 'awaiting_choice', 'awaiting_contact_info', or None."""
+    """Current step in crush confession flow: 'awaiting_crush_form' or None."""
 
     is_greeting: bool
     """True if query is a greeting (allows pipeline short-circuit)."""

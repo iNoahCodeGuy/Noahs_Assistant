@@ -98,11 +98,14 @@ def explain_enterprise_adaptation(state: ConversationState) -> ConversationState
 def show_certifications(state: ConversationState) -> ConversationState:
     """List Noah's technical certificates and link them back to enterprise readiness."""
     message = (
-        "Noah keeps sharpening the fundamentals and applied skills through focused credentials:\n\n"
-        "• DeepLearning.AI — *LangChain for LLM Application Development*\n"
-        "• DeepLearning.AI — *Building Systems with the ChatGPT API*\n"
-        "• AWS Machine Learning Foundations (Udacity x AWS)\n"
-        "• Google Cloud Skills Boost — *Generative AI for Developers*\n\n"
+        "Four certifications, each filling a different gap:\n\n"
+        "• IBM — *Fundamentals of Building AI Agents* (Jan 2026)\n"
+        "• IBM — *Building Generative AI-Powered Applications with Python* (Aug 2025)\n"
+        "• DeepLearning.AI — *AI For Everyone* (Aug 2025)\n"
+        "• Udemy — *100 Days of Code* (Apr 2025)\n\n"
+        "The certifications complement the shipped projects. "
+        "The projects prove he can build. The certifications show he "
+        "invested in formal foundations alongside the hands-on work.\n\n"
     )
 
     if state.get("relate_to_enterprise"):
