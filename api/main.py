@@ -65,11 +65,13 @@ def chat(req: ChatRequest):
     session_id = req.session_id or str(uuid.uuid4())
 
     # Retrieve or create session state
-    session = sessions.get(session_id, {
-        "chat_history": [],
-        "session_memory": {},
-        "role": "Just looking around",
-    })
+    if session_id not in sessions:
+        sessions[session_id] = {
+            "chat_history": [],
+            "session_memory": {},
+            "role": "Just looking around",
+        }
+    session = sessions[session_id]
 
     # Map menu button text to raw menu numbers
     MENU_MAP = {
@@ -87,9 +89,12 @@ def chat(req: ChatRequest):
         "Confess a crush": "Looking to confess crush",
     }
 
-    # Set role from menu selection, otherwise keep existing session role
+    # Set role from original button text BEFORE converting query
     original_message = req.message
     role = ROLE_MAP.get(original_message, session.get("role", "Just looking around"))
+    # Save role to session immediately so it persists across turns
+    session["role"] = role
+    # Then convert query for pipeline
     message = MENU_MAP.get(original_message, original_message)
 
     # Build pipeline state — deepcopy to prevent the pipeline from mutating stored state
@@ -104,11 +109,9 @@ def chat(req: ChatRequest):
     result = run_conversation_flow(state, rag_engine, session_id=session_id)
 
     # Persist updated session state
-    sessions[session_id] = {
-        "chat_history": result.get("chat_history", []),
-        "session_memory": result.get("session_memory", {}),
-        "role": result.get("role", session["role"]),
-    }
+    session["chat_history"] = result.get("chat_history", [])
+    session["session_memory"] = result.get("session_memory", {})
+    session["role"] = result.get("role", role)
 
     return ChatResponse(
         response=result.get("answer", ""),
