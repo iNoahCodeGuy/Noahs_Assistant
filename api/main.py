@@ -73,7 +73,7 @@ def chat(req: ChatRequest):
 
     # Map menu button text to descriptive queries for KB retrieval
     MENU_MAP = {
-        "Learn more about Noah": "Tell me about Noah's professional background and what he has built",
+        "Learn more about Noah": "Noah's professional background, career, and projects",
         "See what Noah has built": "What technical projects has Noah built?",
         "Just looking around": "Just looking around",
         "Confess a crush": "4",
