@@ -71,14 +71,16 @@ def chat(req: ChatRequest):
         "role": "Just looking around",
     })
 
-    # Map menu button text to queries that match KB content
-    MENU_QUERY_MAP = {
-        "Learn more about Noah": "What is Noah's professional background and what projects has he built?",
-        "See what Noah has built": "What technical projects has Noah built?",
-        "Just looking around": "Just looking around",
-        "Confess a crush": "Confess a crush",
+    # Map menu button text to the menu number the pipeline expects
+    MENU_MAP = {
+        "Learn more about Noah": "1",
+        "See what Noah has built": "2",
+        "Just looking around": "3",
+        "Confess a crush": "4",
     }
-    message = MENU_QUERY_MAP.get(req.message, req.message)
+
+    # Convert menu button text to number
+    message = MENU_MAP.get(req.message, req.message)
 
     # Build pipeline state — deepcopy to prevent the pipeline from mutating stored state
     state = {
