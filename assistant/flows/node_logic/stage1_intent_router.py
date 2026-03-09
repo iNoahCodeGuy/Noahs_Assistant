@@ -755,6 +755,18 @@ def classify_intent(state: ConversationState) -> ConversationState:
         "i am from instagram", "i'm from instagram",
     ]
     if any(phrase in query_lower for phrase in _traffic_source_phrases):
+        # Save traffic source to session_memory regardless of routing
+        session_memory = state.get("session_memory") or {}
+        session_memory["traffic_source"] = query.strip()
+        state["session_memory"] = session_memory
+
+        # If the message also contains a knowledge query, route through RAG
+        _knowledge_signals = ("?", "what", "how", "tell me", "show me", "projects", "built")
+        if any(sig in query_lower for sig in _knowledge_signals):
+            logger.info(f"Traffic source with knowledge query — routing to RAG: {query[:50]}")
+            state["message_intent"] = "knowledge_query"
+            return state
+
         logger.info(f"Traffic source detected (not capture/crush): {query[:50]}")
         state["message_intent"] = "small_talk"
         state["skip_rag"] = True
