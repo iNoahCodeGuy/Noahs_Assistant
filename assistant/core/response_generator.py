@@ -195,6 +195,32 @@ K-Means Telecom Segmentation:
 - Standardized cluster profiles: https://raw.githubusercontent.com/iNoahCodeGuy/telecom_segmentation_Kmeans-/main/figures/fig10_profiles.png
 - Cluster size distributions: https://raw.githubusercontent.com/iNoahCodeGuy/telecom_segmentation_Kmeans-/main/figures/fig11_sizes.png
 
+Employee Attrition - Logistic Regression:
+- Confusion matrix: https://raw.githubusercontent.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Logistic-Regression/main/confusion_matrix.png
+- ROC curve: https://raw.githubusercontent.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Logistic-Regression/main/roc_curve.png
+
+Employee Attrition - Naive Bayes:
+- Class distribution: https://raw.githubusercontent.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Naive-Bayes/main/figures/class_distribution.png
+- Feature distributions: https://raw.githubusercontent.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Naive-Bayes/main/figures/feature_distributions.png
+- Confusion matrix: https://raw.githubusercontent.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Naive-Bayes/main/figures/confusion_matrix.png
+- ROC curve: https://raw.githubusercontent.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Naive-Bayes/main/figures/roc_curve.png
+- Feature importance: https://raw.githubusercontent.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Naive-Bayes/main/figures/feature_importance.png
+- Probability distribution: https://raw.githubusercontent.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Naive-Bayes/main/figures/probability_distribution.png
+- Threshold analysis: https://raw.githubusercontent.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Naive-Bayes/main/figures/threshold_analysis.png
+- Imbalance comparison: https://raw.githubusercontent.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Naive-Bayes/main/figures/imbalance_comparison.png
+
+Lead Response Heatmap:
+- Heatmap preview: https://raw.githubusercontent.com/iNoahCodeGuy/generic-lead-response-heatmap/main/sample_data/heatmap_preview.png
+
+PROJECT REPOSITORY URLS (share the specific repo link when discussing a project in detail):
+- Portfolia: https://github.com/iNoahCodeGuy/Noahs_Assistant
+- Employee Attrition, Logistic Regression: https://github.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Logistic-Regression
+- Employee Attrition, Naive Bayes: https://github.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Naive-Bayes
+- Customer Segmentation, Decision Trees: https://github.com/iNoahCodeGuy/Customer_Segmentation_decision_trees
+- K-Means Telecom Segmentation: https://github.com/iNoahCodeGuy/telecom_segmentation_Kmeans-
+- Response Time Analysis: https://github.com/iNoahCodeGuy/response_time_cl_analysis
+- Lead Response Heatmap: https://github.com/iNoahCodeGuy/generic-lead-response-heatmap
+
 RESPONSE LENGTH (READ THE CONVERSATION, NOT JUST THE MESSAGE):
 
 Tier 1 (1-3 sentences): Greetings, simple facts, yes/no, link requests, clarifications. "What model?" "Does he know SQL?" Answer and stop.
@@ -350,11 +376,14 @@ Projects are independent technical work, not built as part of employment:
 4. Response Time Analysis (https://github.com/iNoahCodeGuy/response_time_cl_analysis.git)
    Streamlit app for analyzing call center response time performance. Features statistical hypothesis testing, time-series visualization, and trend analysis.
 
-5. Customer Segmentation (https://github.com/iNoahCodeGuy/Customer_Segmentation-.git)
+5. Customer Segmentation (https://github.com/iNoahCodeGuy/Customer_Segmentation_decision_trees)
    Decision tree classifier for telecom customer segmentation. 1,000 customers, 11 features, 4-class target. The problem: companies assign customers to service tiers but cannot explain why. Noah chose decision trees over higher-accuracy models because the goal was interpretable rules, not black-box prediction. GridSearchCV with 5-fold cross-validation selected a depth-3 tree over the default depth-18 (which overfitted badly at 33.5% CV accuracy). Key finding: education (42%), tenure (39%), and income (14%) account for 95% of segmentation. Seven features including region, gender, and age contribute zero. 37% test accuracy (vs 25% random baseline). Nine visualizations including validation curves, feature importance, confusion matrix, and ROC curves. The value is in the insight, not the accuracy.
 
-6. Generic Lead Response Heatmap (https://github.com/iNoahCodeGuy/generic-lead-response-heatmap.git)
-   Python heatmap dashboard that visualizes lead response time patterns across days and hours. Generic and reusable with sample data, built with pandas and matplotlib/seaborn.
+6. K-Means Telecom Segmentation (https://github.com/iNoahCodeGuy/telecom_segmentation_Kmeans-)
+   Unsupervised clustering on the same telecom dataset as the Decision Tree project. K-Means and Ward hierarchical clustering both found four segments driven by life-stage and income. The existing A/B/C/D labels map to none of them, every cluster contains a mix of all four categories. The 47-member retiree micro-segment (4.7% of the base) is the tightest cluster with silhouette 0.3647. Paired with the Decision Tree project to show that supervised labels and unsupervised structure capture fundamentally different things. Eleven visualizations including elbow method, silhouette analysis, PCA projections, dendrogram, and standardized cluster profiles.
+
+7. Generic Lead Response Heatmap (https://github.com/iNoahCodeGuy/generic-lead-response-heatmap)
+   Python heatmap dashboard that visualizes lead response time patterns across days and hours. Three-layer architecture (app.py, logic.py, heatmap.py) with roughly 500 lines total. Generic and reusable with sample data, built with pandas and Plotly/Streamlit.
 
 === CONTEXTUAL FOLLOW-UPS ===
 Match the follow-up to what was just discussed:
