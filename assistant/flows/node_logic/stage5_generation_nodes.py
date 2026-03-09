@@ -766,6 +766,15 @@ def _build_engagement_context(state: dict) -> str | None:
             "Go deep on technical decisions when asked. Point to GitHub."
         )
 
+    # First-message framing: anchor Noah's identity
+    if msg_count == 1:
+        hint += (
+            "\nIMPORTANT: When introducing Noah, always lead with: "
+            "\"Noah is a software developer specializing in machine learning "
+            "and AI engineering.\" Then use Portfolia as the AI engineering "
+            "example and the attrition model as the ML example."
+        )
+
     # Capture flow: messages 1-3 educate + rotate "why are you here" phrasing.
     # Message 4+ offer reach-out vs. uncovered project.
     if msg_count <= 3:
