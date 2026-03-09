@@ -106,6 +106,7 @@ def chat(req: ChatRequest):
         "session_memory": deepcopy(session["session_memory"]),
     }
 
+    print(f"DEBUG API: role={state['role']}, query={state['query']}, session_id={session_id}")
     result = run_conversation_flow(state, rag_engine, session_id=session_id)
 
     # Persist updated session state
