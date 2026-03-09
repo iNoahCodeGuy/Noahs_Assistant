@@ -440,9 +440,9 @@ def _remove_chunk_citations(text: str) -> str:
         # Remove the citation phrase, preserving the rest of the sentence
         result = re.sub(pattern, '', result, flags=re.IGNORECASE)
 
-    # Clean up any double spaces or punctuation issues
-    result = re.sub(r'\s+', ' ', result)
-    result = re.sub(r'\s+([,.!?])', r'\1', result)
+    # Clean up any double spaces or punctuation issues (preserve newlines for markdown)
+    result = re.sub(r'[^\S\n]+', ' ', result)
+    result = re.sub(r' +([,.!?])', r'\1', result)
 
     return result.strip()
 
