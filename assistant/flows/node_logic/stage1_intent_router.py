@@ -799,6 +799,22 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["visitor_type"] = "crush"
         return state
 
+    # ── Direct contact / reach-out request detection ─────────────────────
+    _contact_phrases = [
+        "reach out", "have noah reach out", "contact", "get in touch",
+        "take my info", "take my data", "yes reach out",
+    ]
+    if any(phrase in query_lower for phrase in _contact_phrases):
+        logger.info(f"Direct contact request detected via keywords: {query[:50]}")
+        state["message_intent"] = "connect"
+        state["skip_rag"] = True
+        state["answer"] = (
+            "I can have Noah reach out — fill this out so we can best assist you:"
+            "\n\nName:\nNumber:\nEmail:\nCompany:\nAdditional information:"
+        )
+        state["pipeline_halt"] = True
+        return state
+
     # Skip if this is explicitly marked as a greeting (e.g., just "hi" or "hello")
     if state.get("is_greeting"):
         state["message_intent"] = "greeting"
