@@ -775,18 +775,12 @@ def _build_engagement_context(state: dict) -> str | None:
             "he built from scratch. The attrition model is the ML example."
         )
 
-    # Capture flow: messages 1-3 educate + rotate "why are you here" phrasing.
-    # Message 4+ offer reach-out vs. uncovered project.
-    if msg_count <= 3:
-        why_questions = {
-            1: "What brings you here?",
-            2: "What caught your eye?",
-            3: "Are you exploring for yourself or someone else?",
-        }
-        why_q = why_questions.get(msg_count, "What brings you here?")
+    # Capture flow: message 1 asks "What brings you here?",
+    # message 2+ offers reach-out vs. uncovered project.
+    if msg_count == 1:
         hint += (
             "\nREQUIRED ENDING: End with TWO lines:"
-            f"\n1. A 'why are you here' question: \"{why_q}\""
+            "\n1. A 'why are you here' question: \"What brings you here?\""
             "\n2. A knowledge hook about an uncovered project."
             "\nDo NOT include any links (GitHub, LinkedIn, or otherwise) in this response."
         )
@@ -795,7 +789,7 @@ def _build_engagement_context(state: dict) -> str | None:
             "\nREQUIRED ENDING: End with an offer: \"Want Noah to reach out, "
             "or want to hear about [specific uncovered project with one-line "
             "description]?\""
-            "\nIf the user has already declined this offer, just end with a "
+            "\nIf the user has already declined this offer twice, just end with a "
             "knowledge hook — no reach-out offer."
         )
 
