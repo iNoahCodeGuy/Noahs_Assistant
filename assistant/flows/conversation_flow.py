@@ -291,6 +291,28 @@ def _maybe_append_discovery_question(state: dict) -> dict:
     # Single capture question for all phases
     capture = _CAPTURE_QUESTIONS[0]  # "What brings you here?"
 
+    # ── Dedup: skip capture question if a similar phrase already appeared
+    # in the last 2 assistant messages in chat_history ──
+    if not has_capture:
+        _capture_fragments = [
+            "what brings you", "what caught your eye",
+            "are you exploring for yourself", "what's your angle",
+            "hiring, building", "hiring, curiosity", "hiring, exploring",
+            "want to share what you", "want noah to reach out",
+        ]
+        chat_history = state.get("chat_history", [])
+        recent_assistant_msgs = [
+            msg.get("content", "").lower()
+            for msg in chat_history
+            if isinstance(msg, dict)
+            and (msg.get("role") or msg.get("type", "")) in ("assistant", "ai")
+        ][-2:]
+        for prev in recent_assistant_msgs:
+            if any(frag in prev for frag in _capture_fragments):
+                has_capture = True
+                logger.info("Discovery hook: skipping capture — similar phrase in recent history")
+                break
+
     # Pick a knowledge hook (cycle through them based on msg_count)
     hook = _KNOWLEDGE_HOOKS[msg_count % len(_KNOWLEDGE_HOOKS)]
 
