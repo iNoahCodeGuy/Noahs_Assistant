@@ -769,10 +769,13 @@ def _build_engagement_context(state: dict) -> str | None:
     # First-message framing: anchor Noah's identity
     if msg_count == 1:
         hint += (
-            "\nIMPORTANT: Noah is a software developer specializing in "
-            "machine learning and AI engineering. "
-            "I'm the AI engineering example — a production RAG pipeline "
-            "he built from scratch. The attrition model is the ML example."
+            "\nCRITICAL FIRST LINE: Your response MUST begin with "
+            "'Noah is a software developer specializing in machine learning "
+            "models and generative AI applications.' Do not paraphrase "
+            "this — use these exact words as your opening sentence. "
+            "Then explain: I'm the generative AI example (a production "
+            "RAG pipeline he built from scratch), and the attrition model "
+            "is the ML example."
         )
 
     # Capture flow: message 1 asks "What brings you here?",
