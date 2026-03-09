@@ -158,6 +158,13 @@ _KNOWLEDGE_HOOKS = (
     "about how he thinks through statistical problems.",
 )
 
+_REACH_OUT_OFFERS = (
+    "Want Noah to reach out? Say the word and I'll set it up.",
+    "If you want Noah to follow up directly, just let me know.",
+    "Noah can reach out if you're interested — just say the word.",
+    "Want to connect with Noah directly? I can set that up.",
+)
+
 
 def _pick_knowledge_hook(state: ConversationState) -> str:
     """Select a knowledge hook that hasn't been used in the conversation yet.
@@ -186,6 +193,54 @@ def _pick_knowledge_hook(state: ConversationState) -> str:
         return random.choice(unused)
     # All hooks used — return a neutral closing statement
     return "There's more to the story if you're curious."
+
+
+def _should_include_reach_out(state: ConversationState) -> bool:
+    """Determine whether this turn should include a reach-out offer.
+
+    Rules:
+    - Never on message 1-2 (too early; message 1 asks "what brings you here")
+    - Starting at message 3, offer every other message (3, 5, 7, ...)
+    - Skip if a reach-out offer appeared in the last 2 assistant messages
+    - Skip if user already declined twice or is in capture flow
+    """
+    msg_count = state.get("message_count", 0)
+    if msg_count < 3:
+        return False
+
+    # Skip if already in capture flow
+    if state.get("hm_capture_step"):
+        return False
+
+    # Offer on odd messages (3, 5, 7, ...) — gives breathing room
+    if msg_count % 2 == 0:
+        return False
+
+    # Check if a reach-out offer was already in the last 2 assistant messages
+    chat_history = state.get("chat_history", [])
+    recent_assistant_msgs = [
+        msg.get("content", "").lower()
+        for msg in chat_history
+        if isinstance(msg, dict)
+        and (msg.get("role") or msg.get("type", "")) in ("assistant", "ai")
+    ][-2:]
+
+    _offer_fragments = [
+        "want noah to reach out", "noah can follow up",
+        "noah can reach out", "want to connect with noah",
+        "say the word", "just let me know and i'll set it up",
+        "fill this out so we can best assist",
+    ]
+    for prev in recent_assistant_msgs:
+        if any(frag in prev for frag in _offer_fragments):
+            return False
+
+    return True
+
+
+def _pick_reach_out_offer() -> str:
+    """Return a random reach-out offer string."""
+    return random.choice(_REACH_OUT_OFFERS)
 
 
 # Patterns that identify menu-style questions (multi-option "or" questions).
@@ -297,6 +352,7 @@ def _maybe_append_discovery_question(state: dict) -> dict:
             "hiring, curiosity", "hiring, exploring",
             "want to share what you",
             "want noah to reach out", "noah can follow up",
+            "noah can reach out", "want to connect with noah",
             "say the word", "just let me know",
         ]
     )
@@ -319,33 +375,24 @@ def _maybe_append_discovery_question(state: dict) -> dict:
         return state
 
     if msg_count >= 2:
-        # ── Message 2+: knowledge hook about uncovered project ──
-        _reach_out_offer = _pick_knowledge_hook(state)
-        if not has_capture:
-            # Dedup: skip if a similar phrase already appeared recently
-            _capture_fragments = [
-                "want noah to reach out", "noah can follow up",
-                "say the word", "just let me know",
-            ]
-            chat_history = state.get("chat_history", [])
-            recent_assistant_msgs = [
-                msg.get("content", "").lower()
-                for msg in chat_history
-                if isinstance(msg, dict)
-                and (msg.get("role") or msg.get("type", "")) in ("assistant", "ai")
-            ][-2:]
-            for prev in recent_assistant_msgs:
-                if any(frag in prev for frag in _capture_fragments):
-                    has_capture = True
-                    logger.info("Discovery hook: skipping reach-out offer — similar phrase in recent history")
-                    break
+        # ── Message 2+: knowledge hook + optional reach-out offer ──
+        suffix_parts = []
 
-        if not has_capture:
-            state["answer"] = answer + "\n\n" + _reach_out_offer
+        # Reach-out offer: starting at message 3, every other message
+        include_reach_out = _should_include_reach_out(state) and not has_capture
+        if include_reach_out:
+            suffix_parts.append(_pick_reach_out_offer())
+
+        # Knowledge hook (always, if not already present)
+        if not has_hook:
+            suffix_parts.append(_pick_knowledge_hook(state))
+
+        if suffix_parts:
+            state["answer"] = answer + "\n\n" + "\n\n".join(suffix_parts)
             state["_discovery_injected"] = True
             logger.info(
-                "Discovery hook appended reach-out offer (msg_count=%d)",
-                msg_count,
+                "Discovery hook appended (msg_count=%d): reach_out=%s hook=%s",
+                msg_count, include_reach_out, not has_hook,
             )
     else:
         # ── Message 1: "What brings you here?" + knowledge hook ──
@@ -576,6 +623,24 @@ def run_conversation_flow(
             chat_history.append({"role": "user", "content": state["query"]})
         chat_history.append({"role": "assistant", "content": state["answer"]})
         state["chat_history"] = chat_history
+
+    # ── Universal em-dash removal (final gate) ─────────────────────────
+    # Runs LAST, after all hooks and modifications, so em-dashes never
+    # reach the user regardless of which branch produced the answer.
+    from assistant.flows.node_logic.stage6_formatting_nodes import _strip_em_dashes
+    final_answer = state.get("answer") or ""
+    if final_answer:
+        cleaned = _strip_em_dashes(final_answer)
+        if cleaned != final_answer:
+            state["answer"] = cleaned
+            # Also update chat_history if the answer was already appended
+            chat_history = state.get("chat_history", [])
+            for i in range(len(chat_history) - 1, -1, -1):
+                msg = chat_history[i]
+                if isinstance(msg, dict) and (msg.get("role") or msg.get("type", "")) in ("assistant", "ai"):
+                    if msg.get("content") == final_answer:
+                        msg["content"] = cleaned
+                    break
 
     elapsed_ms = int((time.time() - start) * 1000)
     state = log_and_notify(state, session_id=session_id, latency_ms=elapsed_ms)

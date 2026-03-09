@@ -93,7 +93,7 @@ _HM_SOFT_OFFER_MARKER = "just let me know and I'll set it up"
 # as interactive form fields below Portfolia's message, not as plain text in the chat bubble.
 # Terminal client uses plain text as fallback.
 _CONTACT_FORM_MARKER = "fill this out so we can best assist you"
-_CONTACT_FORM_DETAILS_MARKER = "Name:\nNumber:\nEmail:\nCompany:\nAdditional information:"
+_CONTACT_FORM_DETAILS_MARKER = "Name:\nNumber:\nEmail:\nCompany:\nHow did you find this website?:\nAdditional information:"
 
 # Phrases in last assistant message that indicate a capture question was asked
 _CAPTURE_QUESTION_FRAGMENTS = [
@@ -101,7 +101,9 @@ _CAPTURE_QUESTION_FRAGMENTS = [
     "hiring, building, or just curious", "hiring, curiosity",
     "want to share what you're working on",
     "noah can follow up", "want noah to reach out",
+    "noah can reach out", "want to connect with noah",
     "say the word", "just let me know",
+    "i'll set it up", "i can set that up",
 ]
 
 
@@ -386,7 +388,7 @@ def _parse_hm_contact_info(query: str) -> dict:
     Returns dict with keys: name, email, phone, company, message.
     Any value can be None if not detected.
     """
-    info = {"name": None, "email": None, "phone": None, "company": None, "message": None}
+    info = {"name": None, "email": None, "phone": None, "company": None, "referral_source": None, "message": None}
 
     # Extract email
     email_match = re.search(r'[\w.+-]+@[\w-]+\.[\w.-]+', query)
@@ -419,9 +421,17 @@ def _parse_hm_contact_info(query: str) -> dict:
     if company_match:
         info["company"] = company_match.group(1).strip()
 
+    # Extract referral source — "How did you find this website?: ..."
+    referral_match = re.search(
+        r'(?:how did you find|found (?:this|you|the site|the website)|referral)[:\s]+(.+?)(?:\n|$)',
+        query, re.IGNORECASE,
+    )
+    if referral_match:
+        info["referral_source"] = referral_match.group(1).strip()
+
     # Remaining text is the message
     remaining = query
-    for val in [info["email"], info["phone"], info["name"]]:
+    for val in [info["email"], info["phone"], info["name"], info["referral_source"]]:
         if val:
             remaining = remaining.replace(val, "").strip()
     remaining = re.sub(r'^[\s,.-]+|[\s,.-]+$', '', remaining)
@@ -442,6 +452,7 @@ def _save_recruiter_lead(session_id: str, info: dict, state: ConversationState) 
             'email': info.get('email'),
             'phone': info.get('phone'),
             'company': info.get('company'),
+            'referral_source': info.get('referral_source'),
             'message': info.get('message'),
             'visitor_type': state.get('visitor_type', 'hiring_manager'),
             'buying_signals_count': state.get('buying_signals_count', 0),
@@ -470,6 +481,7 @@ def _send_hm_lead_sms(info: dict) -> bool:
         company = info.get('company') or 'Unknown company'
         email = info.get('email') or ''
         phone = info.get('phone') or ''
+        referral = info.get('referral_source') or ''
         msg = info.get('message') or ''
 
         sms_body = f"💼 Portfolia Lead: {name} at {company}"
@@ -477,6 +489,8 @@ def _send_hm_lead_sms(info: dict) -> bool:
             sms_body += f"\nEmail: {email}"
         if phone:
             sms_body += f"\nPhone: {phone}"
+        if referral:
+            sms_body += f"\nFound via: {referral[:100]}"
         if msg:
             sms_body += f"\nMessage: {msg[:200]}"
 
@@ -601,7 +615,7 @@ def handle_hm_capture_continuation(state: ConversationState) -> ConversationStat
             # User said yes — always present the contact form, never parse info here
             state["answer"] = (
                 "I can have Noah reach out — fill this out so we can best assist you:\n\n"
-                "Name:\nNumber:\nEmail:\nCompany:\nAdditional information:"
+                "Name:\nNumber:\nEmail:\nCompany:\nHow did you find this website?:\nAdditional information:"
                 "\n\nOnce you submit, I can walk you through the rest of Noah's projects."
             )
             state["hm_capture_step"] = "awaiting_hm_details"
@@ -822,7 +836,7 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["skip_rag"] = True
         state["answer"] = (
             "I can have Noah reach out — fill this out so we can best assist you:"
-            "\n\nName:\nNumber:\nEmail:\nCompany:\nAdditional information:"
+            "\n\nName:\nNumber:\nEmail:\nCompany:\nHow did you find this website?:\nAdditional information:"
             "\n\nOnce you submit, I can walk you through the rest of Noah's projects."
         )
         state["pipeline_halt"] = True
@@ -1310,6 +1324,7 @@ def classify_intent(state: ConversationState) -> ConversationState:
             "Number:\n"
             "Email:\n"
             "Company:\n"
+            "How did you find this website?:\n"
             "Additional information:"
         )
         state["hm_capture_step"] = "awaiting_hm_details"
@@ -1327,7 +1342,7 @@ def classify_intent(state: ConversationState) -> ConversationState:
             and _is_capture_question_response(query, state)):
         state["answer"] = (
             "I can have Noah reach out — fill this out so we can best assist you:\n\n"
-            "Name:\nNumber:\nEmail:\nCompany:\nAdditional information:"
+            "Name:\nNumber:\nEmail:\nCompany:\nHow did you find this website?:\nAdditional information:"
             "\n\nOnce you submit, I can walk you through the rest of Noah's projects."
         )
         state["hm_capture_step"] = "awaiting_hm_details"
@@ -1336,16 +1351,16 @@ def classify_intent(state: ConversationState) -> ConversationState:
         logger.info("Contact form presented: user responded to capture question with intent")
         return state
 
-    # Soft offer at message 10+ for hiring managers with no buying signal
-    if (vtype == "hiring_manager"
-            and msg_count >= 10
+    # Soft offer at message 5+ for any visitor with no buying signal
+    if (msg_count >= 5
             and buying == 0
             and not state.get("hm_soft_offer_made")
-            and not state.get("hm_capture_step")):
+            and not state.get("hm_capture_step")
+            and vtype != "crush"):
         # Don't halt the pipeline — just mark that we should inject the soft offer
         # The soft offer text will be injected in the generation prompt
         state["hm_soft_offer_made"] = True
-        logger.info("HM soft offer flagged for injection at message 10+")
+        logger.info("Soft offer flagged for injection at message %d (visitor=%s)", msg_count, vtype)
 
     # Persist visitor_type to session_memory so it survives across turns
     # (history-based recovery can't detect gatekeeper/student classifications)

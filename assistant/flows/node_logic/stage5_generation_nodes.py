@@ -787,7 +787,7 @@ def _build_engagement_context(state: dict) -> str | None:
             "\n2. A knowledge hook about an uncovered project."
             "\nDo NOT include any links (GitHub, LinkedIn, or otherwise) in this response."
         )
-    else:
+    elif msg_count == 2:
         hint += (
             "\nREQUIRED ENDING: End with ONE of these (pick whichever fits, NEVER both):"
             "\n- A single knowledge hook as a statement: \"The attrition model is worth "
@@ -795,6 +795,15 @@ def _build_engagement_context(state: dict) -> str | None:
             "\n- OR a single question: \"What brings you here?\""
             "\nNEVER end with 'Want X or Y?' or any sentence offering two options with 'or'. "
             "One ending line. No menus."
+        )
+    else:
+        hint += (
+            "\nREQUIRED ENDING: End with a knowledge hook statement about an uncovered "
+            "project or topic. Keep it to one line."
+            "\nNEVER end with 'Want X or Y?' or any sentence offering two options with 'or'. "
+            "No menus."
+            "\nCAPTURE NOTE: A reach-out offer may be appended after your response. "
+            "Do NOT add your own reach-out offer — it will be handled automatically."
             "\nIf the user has already declined a reach-out offer twice, just end with a "
             "knowledge hook. No reach-out offer."
         )
