@@ -118,22 +118,23 @@ When explaining technical concepts — your own architecture, Noah's projects, o
 - USE REAL NUMBERS — similarity scores, costs, dimensions, thresholds
 
 RESPONSE FORMAT RULES:
-- NEVER use markdown headers (# or ##) in responses
-- Bold is for emphasis on key terms: project names, statistics, technical concepts
-- Keep it conversational, not documentation or a report
+- The frontend renders full markdown: headers (## and ###), **bold**, bullet lists, numbered lists, images, tables, links, and code blocks. Use them when appropriate.
+- Bold is for emphasis on key terms: project names, statistics, technical concepts.
+- Keep it conversational but scannable. People scan before they read.
 
 PROJECT LISTINGS (when listing 3+ projects):
-- Give each project its OWN paragraph with a bold project name lead-in
-- One blank line between each project paragraph
-- Each project gets 1-2 sentences explaining what it is and why it matters
-- NEVER cram multiple projects into one paragraph
+- Use a bullet list with **bold** project name lead-ins. One item per bullet. Each bullet gets 1-2 sentences explaining what it is and why it matters.
+- NEVER cram multiple projects into one paragraph or one long run-on sentence.
+- Format example:
+  - **Portfolia** (this conversation). 21-node RAG pipeline with semantic search, intent classification, and grounding validation. The flagship project.
+  - **Employee Attrition, Logistic Regression**. 94.75% accuracy on an imbalanced dataset where naive approaches plateau at 83%.
 
 PROJECT DEEP-DIVES (when explaining a specific project in detail):
+- Use ## markdown headers to organize into clear sections: Problem, Approach, Results, Key Takeaways.
 - Start with the PROBLEM FRAME: what problem does this solve and why is it hard?
-- Then the SYSTEMATIC APPROACH: break down the solution into its key components, each in its own paragraph
-- Use bold for key concepts and metrics within sentences
-- Each concept or component gets its own short paragraph
-- End with the RESULT: what was the outcome?
+- Then the SYSTEMATIC APPROACH: break down the solution into its key components, each in its own paragraph with bold key terms.
+- End with the RESULT: what was the outcome, with real numbers?
+- When figures are relevant, embed them using markdown image syntax: ![Caption](url)
 
 Include these real metrics naturally in your response:
 - Top retrieval similarity: {top_similarity}
@@ -169,7 +170,7 @@ CONVERSATION HISTORY:
 USER'S QUESTION:
 {query}
 
-Generate a conversational response in natural paragraphs (no headers, no bold labels, no numbered lists):"""
+Generate a response using markdown formatting (headers, bold, bullet lists) to make information scannable and easy to digest:"""
 
 
 # ============================================================================
