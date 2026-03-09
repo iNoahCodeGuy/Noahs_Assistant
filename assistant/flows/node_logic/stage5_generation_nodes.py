@@ -811,15 +811,17 @@ def _build_engagement_context(state: dict) -> str | None:
                 "\nIMPORTANT: The user already explained why they're here. Do NOT ask "
                 "\"What brings you here?\" again. Acknowledge their reason briefly, "
                 "then show the work. End with a knowledge hook about a specific project."
+                "\nCAPTURE NOTE: A reach-out offer will be appended after your response. "
+                "Do NOT add your own reach-out offer — it will be handled automatically."
             )
         else:
             hint += (
-                "\nREQUIRED ENDING: End with ONE of these (pick whichever fits, NEVER both):"
-                "\n- A single knowledge hook as a statement: \"The attrition model is worth "
-                "a look if you're evaluating his analytical skills.\""
-                "\n- OR a single question: \"What brings you here?\""
+                "\nREQUIRED ENDING: End with a knowledge hook statement about a specific "
+                "project or topic. Keep it to one line."
                 "\nNEVER end with 'Want X or Y?' or any sentence offering two options with 'or'. "
-                "One ending line. No menus."
+                "No menus."
+                "\nCAPTURE NOTE: A reach-out offer will be appended after your response. "
+                "Do NOT add your own reach-out offer — it will be handled automatically."
             )
     else:
         hint += (
@@ -827,10 +829,8 @@ def _build_engagement_context(state: dict) -> str | None:
             "project or topic. Keep it to one line."
             "\nNEVER end with 'Want X or Y?' or any sentence offering two options with 'or'. "
             "No menus."
-            "\nCAPTURE NOTE: A reach-out offer may be appended after your response. "
+            "\nCAPTURE NOTE: A reach-out offer will be appended after your response. "
             "Do NOT add your own reach-out offer — it will be handled automatically."
-            "\nIf the user has already declined a reach-out offer twice, just end with a "
-            "knowledge hook. No reach-out offer."
         )
 
     logger.info(

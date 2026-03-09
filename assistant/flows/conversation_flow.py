@@ -199,58 +199,70 @@ def _should_include_reach_out(state: ConversationState) -> bool:
     """Determine whether this turn should include a reach-out offer.
 
     Rules:
-    - Normally starts at message 3, every other message (3, 5, 7, ...)
-    - For warm referrals (user said Noah sent them), starts at message 2
-    - Skip if a reach-out offer appeared in the last 2 assistant messages
-    - Skip if user already declined twice or is in capture flow
+    - Starts at message 2 (every message, not just odd ones)
+    - Skip if user has explicitly declined twice
+    - Skip if a reach-out offer was in the immediately preceding assistant message
+    - Skip if already in capture flow or capture is complete
     """
     msg_count = state.get("message_count", 0)
 
-    # Detect warm referral — user said Noah/someone sent them here
-    _query = (state.get("original_query", "") or state.get("query", "") or "").lower()
-    _history_text = ""
-    for _m in (state.get("chat_history") or [])[-4:]:
-        _c = _m.get("content", "") if isinstance(_m, dict) else getattr(_m, "content", "")
-        _history_text += " " + _c.lower()
-    _combined = f"{_query} {_history_text}"
-    _is_warm_referral = any(phrase in _combined for phrase in [
-        "told me to", "sent me", "check this out", "check it out",
-        "noah told", "noah sent", "referred me", "recommended",
-        "friend told", "someone told",
-    ])
-
-    # Warm referrals get capture offers starting at message 2
-    min_message = 2 if _is_warm_referral else 3
-    if msg_count < min_message:
+    if msg_count < 2:
+        logger.debug("_should_include_reach_out: False (msg_count=%d < 2)", msg_count)
         return False
 
     # Skip if already in capture flow
     if state.get("hm_capture_step"):
+        logger.debug("_should_include_reach_out: False (in capture flow)")
         return False
 
-    # Offer on odd messages (3, 5, 7, ...) or message 2 for referrals
-    if msg_count >= 3 and msg_count % 2 == 0:
-        return False
-
-    # Check if a reach-out offer was already in the last 2 assistant messages
     chat_history = state.get("chat_history", [])
+
+    # Count explicit declines from user messages that follow a reach-out offer
+    _offer_fragments = [
+        "want noah to reach out", "noah can follow up",
+        "noah can reach out", "want to connect with noah",
+        "say the word", "just let me know",
+        "fill this out so we can best assist",
+    ]
+    _decline_phrases = [
+        "no thanks", "no thank you", "not right now", "not now",
+        "maybe later", "i'm good", "im good", "nah", "pass",
+        "not interested", "no need", "i'll pass", "ill pass",
+        "just browsing", "just looking", "not yet",
+    ]
+
+    decline_count = 0
+    prev_was_offer = False
+    for msg in chat_history:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role") or msg.get("type", "")
+        content = (msg.get("content") or "").lower()
+        if role in ("assistant", "ai"):
+            prev_was_offer = any(frag in content for frag in _offer_fragments)
+        elif role in ("user", "human") and prev_was_offer:
+            if any(phrase in content for phrase in _decline_phrases):
+                decline_count += 1
+            prev_was_offer = False
+
+    if decline_count >= 2:
+        logger.debug("_should_include_reach_out: False (declined %d times)", decline_count)
+        return False
+
+    # Skip if the immediately preceding assistant message already has an offer
     recent_assistant_msgs = [
         msg.get("content", "").lower()
         for msg in chat_history
         if isinstance(msg, dict)
         and (msg.get("role") or msg.get("type", "")) in ("assistant", "ai")
-    ][-2:]
+    ][-1:]  # Only check the LAST assistant message (not last 2)
 
-    _offer_fragments = [
-        "want noah to reach out", "noah can follow up",
-        "noah can reach out", "want to connect with noah",
-        "say the word", "just let me know and i'll set it up",
-        "fill this out so we can best assist",
-    ]
     for prev in recent_assistant_msgs:
         if any(frag in prev for frag in _offer_fragments):
+            logger.debug("_should_include_reach_out: False (offer in previous message)")
             return False
 
+    logger.debug("_should_include_reach_out: True (msg_count=%d, declines=%d)", msg_count, decline_count)
     return True
 
 
@@ -364,9 +376,13 @@ def _maybe_append_discovery_question(state: dict) -> dict:
     answer_tail = answer[-200:].lower()
     has_capture = any(
         frag in answer_tail for frag in [
-            "what brings you", "what's your angle", "hiring, building",
-            "hiring, curiosity", "hiring, exploring",
+            "what brings you", "what caught your eye", "what's your angle",
+            "hiring, building", "hiring, curiosity", "hiring, exploring",
             "want to share what you",
+        ]
+    )
+    has_reach_out = any(
+        frag in answer_tail for frag in [
             "want noah to reach out", "noah can follow up",
             "noah can reach out", "want to connect with noah",
             "say the word", "just let me know",
@@ -381,21 +397,21 @@ def _maybe_append_discovery_question(state: dict) -> dict:
         ]
     )
 
-    # If both already present, nothing to do
+    # If all three already present, nothing to do
     logger.info(
-        "DIAG _maybe_append: ends_with_q=%s has_capture=%s has_hook=%s tail=%r",
-        answer.endswith("?"), has_capture, has_hook, answer_tail,
+        "DIAG _maybe_append: ends_with_q=%s has_capture=%s has_reach_out=%s has_hook=%s tail=%r",
+        answer.endswith("?"), has_capture, has_reach_out, has_hook, answer_tail,
     )
-    if has_capture and has_hook:
+    if (has_capture or has_reach_out) and has_hook:
         state["_discovery_injected"] = True
         return state
 
     if msg_count >= 2:
-        # ── Message 2+: knowledge hook + optional reach-out offer ──
+        # ── Message 2+: knowledge hook + reach-out offer ──
         suffix_parts = []
 
-        # Reach-out offer: starting at message 3, every other message
-        include_reach_out = _should_include_reach_out(state) and not has_capture
+        # Reach-out offer: every message from 2+ until declined twice
+        include_reach_out = _should_include_reach_out(state) and not has_reach_out
         if include_reach_out:
             suffix_parts.append(_pick_reach_out_offer())
 
