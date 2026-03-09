@@ -105,40 +105,42 @@ class DataMigration:
         logger.info(f"   Found {len(rows)} rows")
         return rows
     
-    def create_chunks(self, rows: List[Dict[str, str]]) -> List[Dict[str, Any]]:
+    def create_chunks(self, rows: List[Dict[str, str]], doc_id: str = 'career_kb', source: str = 'career_kb.csv') -> List[Dict[str, Any]]:
         """Convert CSV rows into chunks for embedding.
-        
+
         Why this structure:
         - Each Q&A pair becomes one chunk
         - Combines question + answer for better context
         - Adds metadata for filtering and debugging
-        
+
         Args:
             rows: List of question/answer dicts
-            
+            doc_id: Document identifier for grouping chunks
+            source: Source filename for metadata
+
         Returns:
             List of chunk dicts with doc_id, section, content, metadata
         """
         logger.info("🔢 Creating chunks...")
-        
+
         chunks = []
         for idx, row in enumerate(rows):
             # Combine question and answer for richer context
             content = f"Q: {row['question']}\nA: {row['answer']}"
-            
+
             chunk = {
-                'doc_id': 'career_kb',
+                'doc_id': doc_id,
                 'section': row['question'][:100],  # Use question as section name
                 'content': content,
                 'metadata': {
-                    'source': 'career_kb.csv',
+                    'source': source,
                     'row_index': idx,
                     'question': row['question'],
                     'migrated_at': datetime.utcnow().isoformat()
                 }
             }
             chunks.append(chunk)
-        
+
         self.stats['chunks_created'] = len(chunks)
         logger.info(f"   Created {len(chunks)} chunks")
         return chunks
@@ -327,36 +329,42 @@ class DataMigration:
     
     def run(self, csv_path: str, force: bool = False):
         """Execute the full migration pipeline.
-        
+
         Args:
-            csv_path: Path to career_kb.csv
+            csv_path: Path to CSV file (any KB CSV with Question,Answer columns)
             force: If True, delete existing chunks and re-import
         """
+        # Derive doc_id from filename (e.g., "data/customer_segmentation_kb.csv" -> "customer_segmentation_kb")
+        source_filename = os.path.basename(csv_path)
+        doc_id = os.path.splitext(source_filename)[0]
+
         logger.info("🚀 Starting data migration to Supabase...")
+        logger.info(f"   Source: {source_filename}")
+        logger.info(f"   Doc ID: {doc_id}")
         logger.info(f"   Embedding model: {EMBEDDING_MODEL}")
         logger.info(f"   Dimensions: {EMBEDDING_DIMENSIONS}")
         logger.info("")
-        
+
         # Check for existing data
-        existing_count = self.check_existing_chunks('career_kb')
+        existing_count = self.check_existing_chunks(doc_id)
         if existing_count > 0 and not force:
-            logger.warning(f"⚠️  Found {existing_count} existing chunks for 'career_kb'")
+            logger.warning(f"⚠️  Found {existing_count} existing chunks for '{doc_id}'")
             logger.warning("   Use --force flag to delete and re-import")
             logger.warning("   Skipping migration...")
             return
-        
+
         if existing_count > 0 and force:
             logger.info(f"🗑️  Deleting {existing_count} existing chunks...")
-            self.supabase_client.table('kb_chunks').delete().eq('doc_id', 'career_kb').execute()
+            self.supabase_client.table('kb_chunks').delete().eq('doc_id', doc_id).execute()
             logger.info("   ✅ Deleted existing chunks")
-        
+
         try:
             # Step 1: Read CSV
             rows = self.read_career_kb(csv_path)
-            
+
             # Step 2: Create chunks
-            chunks = self.create_chunks(rows)
-            
+            chunks = self.create_chunks(rows, doc_id=doc_id, source=source_filename)
+
             # Step 3: Generate embeddings
             chunks = self.generate_all_embeddings(chunks)
             
@@ -392,12 +400,12 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description='Migrate career KB data to Supabase with embeddings'
+        description='Migrate KB CSV data to Supabase with embeddings'
     )
     parser.add_argument(
         '--csv',
         default='data/career_kb.csv',
-        help='Path to career_kb.csv (default: data/career_kb.csv)'
+        help='Path to KB CSV file with Question,Answer columns (default: data/career_kb.csv)'
     )
     parser.add_argument(
         '--force',
