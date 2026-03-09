@@ -73,9 +73,9 @@ def chat(req: ChatRequest):
 
     # Map menu button text to the menu number the pipeline expects
     MENU_MAP = {
-        "Learn more about Noah": "1",
-        "See what Noah has built": "2",
-        "Just looking around": "3",
+        "Learn more about Noah": "Tell me about Noah's professional background and what he has built",
+        "See what Noah has built": "What technical projects has Noah built?",
+        "Just looking around": "Just looking around",
         "Confess a crush": "4",
     }
 
