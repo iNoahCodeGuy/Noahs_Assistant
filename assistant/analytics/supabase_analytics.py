@@ -221,6 +221,93 @@ class SupabaseAnalytics:
             logger.error(f"Failed to log feedback: {e}")
             return None
 
+    def upsert_conversation_session(
+        self,
+        session_id: str,
+        turn_count: int,
+        role: str = "",
+        visitor_type: str = "unknown",
+        topics_discussed: Optional[List[str]] = None,
+        projects_asked_about: Optional[List[str]] = None,
+        max_depth_level: int = 1,
+    ) -> bool:
+        """Create or update a conversation session record.
+
+        Called every turn to keep turn_count, topics, projects, and depth current.
+        """
+        try:
+            row: Dict[str, Any] = {
+                "session_id": session_id,
+                "turn_count": turn_count,
+                "role": role,
+                "visitor_type": visitor_type,
+                "max_depth_level": max_depth_level,
+                "last_active_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if topics_discussed is not None:
+                row["topics_discussed"] = topics_discussed
+            if projects_asked_about is not None:
+                row["projects_asked_about"] = projects_asked_about
+            self.client.table("conversation_sessions").upsert(
+                row,
+                on_conflict="session_id",
+            ).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to upsert conversation session: {e}")
+            return False
+
+    def log_conversation_message(
+        self,
+        session_id: str,
+        turn_number: int,
+        role: str,
+        content: str,
+        message_intent: Optional[str] = None,
+    ) -> bool:
+        """Log a single message (user or assistant) to conversation_messages."""
+        try:
+            self.client.table("conversation_messages").insert(
+                {
+                    "session_id": session_id,
+                    "turn_number": turn_number,
+                    "role": role,
+                    "content": content,
+                    "message_intent": message_intent,
+                }
+            ).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to log conversation message: {e}")
+            return False
+
+    def mark_data_captured(
+        self,
+        session_id: str,
+        capture_turn: int,
+        capture_type: str = "recruiter_lead",
+        referral_source: Optional[str] = None,
+    ) -> bool:
+        """Mark a conversation session as having captured data."""
+        try:
+            update = {
+                "data_captured": True,
+                "capture_turn": capture_turn,
+                "capture_type": capture_type,
+            }
+            if referral_source:
+                update["referral_source"] = referral_source
+            self.client.table("conversation_sessions").update(update).eq(
+                "session_id", session_id
+            ).execute()
+            logger.info(
+                f"Marked data captured for session {session_id} at turn {capture_turn} ({capture_type})"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to mark data captured: {e}")
+            return False
+
     def get_user_behavior_insights(self, days: int = 30) -> Dict[str, Any]:
         """Generate user behavior insights for the last N days.
 

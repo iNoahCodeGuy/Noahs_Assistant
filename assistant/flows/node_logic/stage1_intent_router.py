@@ -460,6 +460,20 @@ def _save_recruiter_lead(session_id: str, info: dict, state: ConversationState) 
             'capture_trigger': 'intent_to_connect',
         }).execute()
         logger.info(f"Recruiter lead saved for session {session_id}: {info.get('name')}")
+
+        # Mark capture in conversation analytics
+        try:
+            from assistant.analytics.supabase_analytics import supabase_analytics
+            turn_count = state.get("message_count", 0)
+            supabase_analytics.mark_data_captured(
+                session_id=session_id,
+                capture_turn=turn_count,
+                capture_type="recruiter_lead",
+                referral_source=info.get("referral_source"),
+            )
+        except Exception as analytics_err:
+            logger.error(f"Failed to mark capture in analytics: {analytics_err}")
+
         return True
     except Exception as e:
         logger.error(f"Failed to save recruiter lead: {e}")
@@ -2002,6 +2016,17 @@ def handle_crush_flow_continuation(state: ConversationState) -> ConversationStat
             except Exception as e:
                 logger.error(f"Failed to store anonymous crush: {e}")
 
+            # Mark capture in conversation analytics
+            try:
+                from assistant.analytics.supabase_analytics import supabase_analytics
+                supabase_analytics.mark_data_captured(
+                    session_id=session_id,
+                    capture_turn=state.get("message_count", 0),
+                    capture_type="crush_confession",
+                )
+            except Exception as analytics_err:
+                logger.error(f"Failed to mark crush capture in analytics: {analytics_err}")
+
             _send_crush_notifications(
                 anonymous=True, alias=display_alias, message=safe_message,
             )
@@ -2049,6 +2074,17 @@ def handle_crush_flow_continuation(state: ConversationState) -> ConversationStat
                 logger.info(f"Revealed crush stored: {display_name}")
             except Exception as e:
                 logger.error(f"Failed to store revealed crush: {e}")
+
+            # Mark capture in conversation analytics
+            try:
+                from assistant.analytics.supabase_analytics import supabase_analytics
+                supabase_analytics.mark_data_captured(
+                    session_id=session_id,
+                    capture_turn=state.get("message_count", 0),
+                    capture_type="crush_confession",
+                )
+            except Exception as analytics_err:
+                logger.error(f"Failed to mark crush capture in analytics: {analytics_err}")
 
             _send_crush_notifications(
                 anonymous=False,

@@ -180,9 +180,71 @@ def log_and_notify(
             state["analytics_metadata"] = {}
         state["analytics_metadata"]["logged_at"] = False
 
+    # ── Conversation-level analytics ──────────────────────────────────
+    try:
+        turn_count = state.get("message_count", 0) or _compute_turn_count(state)
+        visitor_type = state.get("visitor_type", "unknown")
+
+        # Extract topics from session_memory
+        session_memory = state.get("session_memory", {})
+        topics_discussed = session_memory.get("topics", [])
+
+        # Extract projects asked about from explored pillars + retrieved chunk doc_ids
+        projects_asked_about = list(set(
+            session_memory.get("explored_pillars", [])
+            + [
+                chunk.get("doc_id", "")
+                for chunk in state.get("retrieved_chunks", [])
+                if chunk.get("doc_id")
+            ]
+        ))
+
+        # Depth level (1=quick, 2=medium, 3=deep-dive)
+        max_depth = state.get("depth_level", 1) or 1
+
+        # Upsert session record (creates on first turn, updates on subsequent)
+        supabase_analytics.upsert_conversation_session(
+            session_id=session_id,
+            turn_count=turn_count,
+            role=role,
+            visitor_type=visitor_type,
+            topics_discussed=topics_discussed,
+            projects_asked_about=projects_asked_about,
+            max_depth_level=max_depth,
+        )
+
+        # Log user message + assistant response
+        if query:
+            supabase_analytics.log_conversation_message(
+                session_id=session_id,
+                turn_number=turn_count,
+                role="user",
+                content=query,
+                message_intent=state.get("message_intent"),
+            )
+        if answer:
+            supabase_analytics.log_conversation_message(
+                session_id=session_id,
+                turn_number=turn_count,
+                role="assistant",
+                content=answer,
+            )
+    except Exception as exc:
+        logger.error("Failed logging conversation analytics: %s", exc)
+
     # Note: update dict no longer needed since we write directly to state
     # When we migrate to LangGraph StateGraph, this will return partial dict only
     return state
+
+
+def _compute_turn_count(state: ConversationState) -> int:
+    """Compute turn count from chat_history when message_count isn't set."""
+    chat_history = state.get("chat_history", [])
+    return sum(
+        1 for m in chat_history
+        if (isinstance(m, dict) and m.get("role") == "user")
+        or (hasattr(m, "type") and m.type == "human")
+    )
 
 
 def suggest_followups(state: ConversationState) -> ConversationState:
