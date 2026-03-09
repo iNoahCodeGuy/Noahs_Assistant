@@ -71,11 +71,11 @@ def chat(req: ChatRequest):
         "role": "Just looking around",
     })
 
-    # Map menu button text to descriptive queries for KB retrieval
+    # Map menu button text to raw menu numbers
     MENU_MAP = {
-        "Learn more about Noah": "Noah's professional background, career, and projects",
-        "See what Noah has built": "What technical projects has Noah built?",
-        "Just looking around": "Just looking around",
+        "Learn more about Noah": "1",
+        "See what Noah has built": "2",
+        "Just looking around": "3",
         "Confess a crush": "4",
     }
 
