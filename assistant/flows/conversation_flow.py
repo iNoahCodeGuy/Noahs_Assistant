@@ -288,48 +288,77 @@ def _maybe_append_discovery_question(state: dict) -> dict:
         state["_discovery_injected"] = True
         return state
 
-    # Single capture question for all phases
-    capture = _CAPTURE_QUESTIONS[0]  # "What brings you here?"
-
-    # ── Dedup: skip capture question if a similar phrase already appeared
-    # in the last 2 assistant messages in chat_history ──
-    if not has_capture:
-        _capture_fragments = [
-            "what brings you", "what caught your eye",
-            "are you exploring for yourself", "what's your angle",
-            "hiring, building", "hiring, curiosity", "hiring, exploring",
-            "want to share what you", "want noah to reach out",
-        ]
-        chat_history = state.get("chat_history", [])
-        recent_assistant_msgs = [
-            msg.get("content", "").lower()
-            for msg in chat_history
-            if isinstance(msg, dict)
-            and (msg.get("role") or msg.get("type", "")) in ("assistant", "ai")
-        ][-2:]
-        for prev in recent_assistant_msgs:
-            if any(frag in prev for frag in _capture_fragments):
-                has_capture = True
-                logger.info("Discovery hook: skipping capture — similar phrase in recent history")
-                break
-
-    # Pick a knowledge hook (cycle through them based on msg_count)
-    hook = _KNOWLEDGE_HOOKS[msg_count % len(_KNOWLEDGE_HOOKS)]
-
-    # Append whichever parts are missing
-    suffix_parts = []
-    if not has_capture:
-        suffix_parts.append(capture)
-    if not has_hook:
-        suffix_parts.append(hook)
-
-    if suffix_parts:
-        state["answer"] = answer + "\n\n" + "\n".join(suffix_parts)
-        state["_discovery_injected"] = True
-        logger.info(
-            "Discovery hook appended (msg_count=%d): capture=%s hook=%s",
-            msg_count, not has_capture, not has_hook,
+    if msg_count >= 2:
+        # ── Message 2+: static reach-out offer ──
+        _reach_out_offer = (
+            "Want Noah to reach out? Or I can walk you through another"
+            " project — just say the word."
         )
+        if not has_capture:
+            # Dedup: skip if a similar phrase already appeared recently
+            _capture_fragments = [
+                "want noah to reach out", "noah can follow up",
+                "say the word", "just let me know",
+            ]
+            chat_history = state.get("chat_history", [])
+            recent_assistant_msgs = [
+                msg.get("content", "").lower()
+                for msg in chat_history
+                if isinstance(msg, dict)
+                and (msg.get("role") or msg.get("type", "")) in ("assistant", "ai")
+            ][-2:]
+            for prev in recent_assistant_msgs:
+                if any(frag in prev for frag in _capture_fragments):
+                    has_capture = True
+                    logger.info("Discovery hook: skipping reach-out offer — similar phrase in recent history")
+                    break
+
+        if not has_capture:
+            state["answer"] = answer + "\n\n" + _reach_out_offer
+            state["_discovery_injected"] = True
+            logger.info(
+                "Discovery hook appended reach-out offer (msg_count=%d)",
+                msg_count,
+            )
+    else:
+        # ── Message 1: "What brings you here?" + knowledge hook ──
+        capture = _CAPTURE_QUESTIONS[0]  # "What brings you here?"
+
+        if not has_capture:
+            _capture_fragments = [
+                "what brings you", "what caught your eye",
+                "are you exploring for yourself", "what's your angle",
+                "hiring, building", "hiring, curiosity", "hiring, exploring",
+                "want to share what you", "want noah to reach out",
+            ]
+            chat_history = state.get("chat_history", [])
+            recent_assistant_msgs = [
+                msg.get("content", "").lower()
+                for msg in chat_history
+                if isinstance(msg, dict)
+                and (msg.get("role") or msg.get("type", "")) in ("assistant", "ai")
+            ][-2:]
+            for prev in recent_assistant_msgs:
+                if any(frag in prev for frag in _capture_fragments):
+                    has_capture = True
+                    logger.info("Discovery hook: skipping capture — similar phrase in recent history")
+                    break
+
+        hook = _KNOWLEDGE_HOOKS[msg_count % len(_KNOWLEDGE_HOOKS)]
+
+        suffix_parts = []
+        if not has_capture:
+            suffix_parts.append(capture)
+        if not has_hook:
+            suffix_parts.append(hook)
+
+        if suffix_parts:
+            state["answer"] = answer + "\n\n" + "\n".join(suffix_parts)
+            state["_discovery_injected"] = True
+            logger.info(
+                "Discovery hook appended (msg_count=%d): capture=%s hook=%s",
+                msg_count, not has_capture, not has_hook,
+            )
 
     return state
 
