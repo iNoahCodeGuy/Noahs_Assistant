@@ -789,10 +789,13 @@ def _build_engagement_context(state: dict) -> str | None:
         )
     else:
         hint += (
-            "\nREQUIRED ENDING: End with an offer: \"Want Noah to reach out, "
-            "or want to hear about [specific uncovered project with one-line "
-            "description]?\""
-            "\nIf the user has already declined this offer twice, just end with a "
+            "\nREQUIRED ENDING: End with ONE of these (pick whichever fits, NEVER both):"
+            "\n- A single knowledge hook as a statement: \"The attrition model is worth "
+            "a look if you're evaluating his analytical skills.\""
+            "\n- OR a single question: \"What brings you here?\""
+            "\nNEVER end with 'Want X or Y?' or any sentence offering two options with 'or'. "
+            "One ending line. No menus."
+            "\nIf the user has already declined a reach-out offer twice, just end with a "
             "knowledge hook — no reach-out offer."
         )
 

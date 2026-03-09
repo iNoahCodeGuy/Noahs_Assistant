@@ -1,9 +1,9 @@
-"""LangGraph-style orchestrator with 22-node pipeline including quality validation and phase tracking.
+"""LangGraph-style orchestrator with 21-node pipeline including quality validation and phase tracking.
 
 Educational mission: make every conversation a live case study of production RAG
 patterns with clear node boundaries, traceability, and cinematic-yet-grounded tone.
 
-Enhanced Pipeline (18→22 nodes with quality assurance + phase tracking):
+Enhanced Pipeline (18→21 nodes with quality assurance + phase tracking):
 1. initialize_conversation_state → normalize state containers and load memory
 2. handle_greeting → warm intro without RAG cost for first-turn hellos
 3. classify_role_mode → role detection + technical HM onboarding routing
@@ -62,12 +62,13 @@ Performance characteristics:
 - Greeting short-circuit <50ms
 - Cold start ~3s on Vercel
 - p95 latency <3.2s with tracing enabled
-- Recursion depth: 22 nodes (quality gates are lightweight)
+- Recursion depth: 21 nodes (quality gates are lightweight)
 """
 
 from __future__ import annotations
 
 import logging
+import random
 import re
 import time
 from typing import Callable, Optional, Sequence, TYPE_CHECKING, Any
@@ -156,6 +157,35 @@ _KNOWLEDGE_HOOKS = (
     "The Response Time Analysis app is worth asking about if you care "
     "about how he thinks through statistical problems.",
 )
+
+
+def _pick_knowledge_hook(state: ConversationState) -> str:
+    """Select a knowledge hook that hasn't been used in the conversation yet.
+
+    Scans assistant messages in chat_history for fragments of each hook.
+    Returns a random unused hook, or falls back to a generic one if all
+    have been used.
+    """
+    chat_history = state.get("chat_history", [])
+    past_assistant_text = " ".join(
+        msg.get("content", "").lower()
+        for msg in chat_history
+        if isinstance(msg, dict)
+        and (msg.get("role") or msg.get("type", "")) in ("assistant", "ai")
+    )
+
+    # Filter to hooks whose key phrase hasn't appeared in past messages
+    unused = []
+    for hook in _KNOWLEDGE_HOOKS:
+        # Use first 40 chars as a fingerprint — enough to detect reuse
+        fingerprint = hook[:40].lower()
+        if fingerprint not in past_assistant_text:
+            unused.append(hook)
+
+    if unused:
+        return random.choice(unused)
+    # All hooks used — return a neutral closing statement
+    return "There's more to the story if you're curious."
 
 
 # Patterns that identify menu-style questions (multi-option "or" questions).
@@ -289,11 +319,8 @@ def _maybe_append_discovery_question(state: dict) -> dict:
         return state
 
     if msg_count >= 2:
-        # ── Message 2+: static reach-out offer ──
-        _reach_out_offer = (
-            "Want Noah to reach out? Or I can walk you through another"
-            " project — just say the word."
-        )
+        # ── Message 2+: knowledge hook about uncovered project ──
+        _reach_out_offer = _pick_knowledge_hook(state)
         if not has_capture:
             # Dedup: skip if a similar phrase already appeared recently
             _capture_fragments = [
@@ -570,7 +597,7 @@ def _build_langgraph() -> Any:
     # Create StateGraph with ConversationState schema
     workflow = StateGraph(ConversationState)
 
-    # Add all nodes with RAG engine injected (22-node pipeline with quality validation)
+    # Add all nodes with RAG engine injected (21-node pipeline with quality validation)
     workflow.add_node("initialize", initialize_conversation_state)
     workflow.add_node("role_prompt", prompt_for_role_selection)
     workflow.add_node("greeting", lambda s: handle_greeting(s, rag_engine))

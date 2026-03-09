@@ -520,6 +520,13 @@ def _strip_menu_endings(text: str) -> str:
         re.compile(r'\bwould you rather\b.*?\?', re.IGNORECASE),
         # "What would you like" / "Which" with explicit option list
         re.compile(r'\b(?:What would you like|Which (?:one|topic|area))\b.*?\bor\b.*?\?', re.IGNORECASE),
+        # Cross-sentence menu: "Want X? Or Y" — the "or" starts a new sentence
+        # e.g. "Want Noah to reach out? Or I can walk you through another project"
+        re.compile(
+            r'(?:Want|Shall I|Should I|Would you like).*?\?'
+            r'\s+[Oo]r\b.*?(?:\.|!|\?|$)',
+            re.IGNORECASE,
+        ),
     ]
 
     logger.info(
@@ -544,6 +551,7 @@ def _strip_menu_endings(text: str) -> str:
         "or+modal+?",
         "would_you_rather",
         "what_which+or+?",
+        "cross_sentence_or",
     ]
 
     for start_pos in check_starts:
@@ -562,7 +570,10 @@ def _strip_menu_endings(text: str) -> str:
             )
             if match:
                 # Preserve capture-flow endings (discovery questions + reach-out offer)
+                # BUT if the match contains "or" after a "?", it's a menu ending
+                # even if it starts with a capture phrase like "Want Noah to reach out?"
                 matched_text = match.group().lower()
+                has_cross_sentence_or = bool(re.search(r'\?\s+or\b', matched_text, re.IGNORECASE))
                 _capture_phrases = [
                     "what brings you here",
                     "what caught your eye",
@@ -570,7 +581,7 @@ def _strip_menu_endings(text: str) -> str:
                     "want noah to reach out",
                     "reach out",
                 ]
-                if any(p in matched_text for p in _capture_phrases):
+                if any(p in matched_text for p in _capture_phrases) and not has_cross_sentence_or:
                     logger.info(
                         "_strip_menu_endings: skipping capture-flow ending: '%s'",
                         match.group()[:80],
@@ -1417,19 +1428,11 @@ def _generate_synthesis_response(state: ConversationState) -> str:
     # Synthesize topics
     topics_text = ", ".join(topics[-5:]) if topics else "various topics"
 
-    response = f"""**Connecting the Dots**
+    response = f"""We have covered a lot of ground. Here is how it connects.
 
-We've covered a lot of ground! Let me synthesize:
+{chr(10).join(turn_summaries[-5:]) if turn_summaries else "We have explored several topics."}
 
-{chr(10).join(turn_summaries[-5:]) if turn_summaries else "We've explored several topics."}
-
-**The Big Picture:**
-We've explored {topics_text}. These topics connect because [synthesis explanation].
-
-**What's Left to Explore:**
-- [Suggest 3 natural next steps based on conversation arc]
-
-Want me to dive deeper into any of these?"""
+The through-line across {topics_text} is [synthesis explanation]. The most interesting thread to pull on next is [suggest one natural next step based on conversation arc]."""
 
     return response
 
@@ -1890,6 +1893,43 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
         body_text[-120:] if body_text else "(empty)",
     )
     body_text = _strip_menu_endings(body_text)
+
+    # Second pass: catch ANY trailing text with "? Or" or ", or" menu pattern.
+    # The boundary-based stripper above splits on sentence boundaries and misses
+    # cross-sentence patterns like "Want X? Or I can do Y."
+    if body_text:
+        # Find the last occurrence of "? Or " or ", or " near the end
+        # and strip from the sentence start before it
+        for or_pattern in [r'\?\s+[Oo]r\s', r',\s+or\s+(?:want|would|shall|should|I can|hear|see)\b']:
+            or_match = re.search(or_pattern, body_text[max(0, len(body_text)-300):], re.IGNORECASE)
+            if or_match:
+                # Found "? Or" or ", or" in the last 300 chars
+                abs_pos = max(0, len(body_text)-300) + or_match.start()
+                # For "? Or", find the start of the sentence containing the "?"
+                if '?' in or_pattern:
+                    # Walk backward from the "?" to find the sentence start
+                    q_pos = abs_pos  # position of the "?"
+                    # Find the previous sentence-ending punctuation + space or newline
+                    search_region = body_text[:q_pos]
+                    last_boundary = max(
+                        search_region.rfind('. '),
+                        search_region.rfind('.\n'),
+                        search_region.rfind('!\n'),
+                        search_region.rfind('! '),
+                    )
+                    cut_pos = last_boundary + 1 if last_boundary >= 0 else q_pos
+                else:
+                    # For ", or", cut at the comma
+                    cut_pos = abs_pos
+                trimmed = body_text[:cut_pos].rstrip()
+                if trimmed and len(trimmed) > 50:
+                    logger.info(
+                        "Cross-sentence menu stripped at pos %d: '%s'",
+                        cut_pos, body_text[cut_pos:cut_pos+80],
+                    )
+                    body_text = trimmed
+                    break
+
     logger.info(
         "DIAG format_answer AFTER  _strip_menu_endings | last_120: '%s'",
         body_text[-120:] if body_text else "(empty)",

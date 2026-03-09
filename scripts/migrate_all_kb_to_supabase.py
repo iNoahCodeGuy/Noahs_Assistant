@@ -52,15 +52,18 @@ KNOWLEDGE_BASES = {
         'doc_id': 'technical_kb',
         'format': 'csv'
     },
-    # architecture_kb REMOVED: Multi-line CSV produces 550+ broken chunks that
-    # contaminate search results. Its content is covered by technical_kb and
-    # noah_career_md. If re-enabling, convert to markdown format first.
-    # 'architecture_kb': {
-    #     'path': 'data/architecture_kb.csv',
-    #     'description': 'System architecture, diagrams, code examples',
-    #     'doc_id': 'architecture_kb',
-    #     'format': 'csv'
-    # },
+    'architecture_kb': {
+        'path': 'data/architecture_kb.csv',
+        'description': 'System architecture, pipeline details, retrieval, generation, formatting',
+        'doc_id': 'architecture_kb',
+        'format': 'csv'
+    },
+    'imports_kb': {
+        'path': 'data/imports_kb.csv',
+        'description': 'Technology trade-offs and stack justifications',
+        'doc_id': 'imports_kb',
+        'format': 'csv'
+    },
     'noah_career_md': {
         'path': 'data/noah_career_kb.md',
         'description': 'Detailed career narrative, projects, coaching, Tesla day-to-day',
@@ -125,19 +128,44 @@ class EnhancedMigration:
     def read_kb_csv(self, csv_path: str) -> List[Dict[str, str]]:
         """Read knowledge base CSV."""
         logger.info(f"📄 Reading {csv_path}...")
-        
+
         rows = []
         with open(csv_path, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
-                # Handle different CSV formats
-                question = row.get('Question') or row.get('question') or ''
-                answer = row.get('Answer') or row.get('answer') or row.get('content') or ''
-                
-                rows.append({
-                    'question': question.strip(),
-                    'answer': answer.strip()
-                })
+                # Handle imports_kb format (import, category, tier, audience, explanation, ...)
+                if 'import' in row and 'tier' in row:
+                    import_name = row.get('import', '').strip()
+                    category = row.get('category', '').strip()
+                    tier = row.get('tier', '').strip()
+                    audience = row.get('audience', '').strip()
+                    explanation = row.get('explanation', '').strip()
+                    enterprise_concern = row.get('enterprise_concern', '').strip()
+                    enterprise_alt = row.get('enterprise_alternative', '').strip()
+                    when_to_switch = row.get('when_to_switch', '').strip()
+
+                    question = f"Why does Portfolia use {import_name}? ({audience} perspective)"
+                    answer = f"{explanation}"
+                    if enterprise_concern:
+                        answer += f" Enterprise concern: {enterprise_concern}"
+                    if enterprise_alt:
+                        answer += f" Alternative: {enterprise_alt}"
+                    if when_to_switch:
+                        answer += f" When to switch: {when_to_switch}"
+
+                    rows.append({
+                        'question': question,
+                        'answer': answer.strip()
+                    })
+                else:
+                    # Standard Question/Answer format
+                    question = row.get('Question') or row.get('question') or ''
+                    answer = row.get('Answer') or row.get('answer') or row.get('content') or ''
+
+                    rows.append({
+                        'question': question.strip(),
+                        'answer': answer.strip()
+                    })
         
         logger.info(f"   ✅ Read {len(rows)} rows")
         return rows

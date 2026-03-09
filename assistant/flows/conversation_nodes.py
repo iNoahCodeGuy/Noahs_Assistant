@@ -111,9 +111,9 @@ def handle_greeting(state, rag_engine):
     return state
 
 
-# Export all nodes for use in conversation_flow.py (22-node consolidated pipeline)
+# Export all nodes for use in conversation_flow.py (21-node consolidated pipeline)
 __all__ = [
-    # Core pipeline nodes (22 active)
+    # Core pipeline nodes (21 active)
     "initialize_conversation_state",
     "prompt_for_role_selection",
     "classify_role_mode",  # Now includes HM technical routing
