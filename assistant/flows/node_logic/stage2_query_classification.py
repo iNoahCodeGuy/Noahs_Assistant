@@ -263,15 +263,29 @@ def _expand_vague_query(query: str) -> str:
     Returns:
         Expanded query if match found, otherwise original query
     """
+    lowered = query.lower().strip()
+    clean_query = re.sub(r'[^\w\s]', '', lowered)
+
     # Check if query is very short (likely vague)
     if len(query.split()) <= 2:
-        lowered = query.lower().strip()
-        # Remove punctuation for matching
-        clean_query = re.sub(r'[^\w\s]', '', lowered)
-
         if clean_query in VAGUE_QUERY_EXPANSIONS:
             expanded = VAGUE_QUERY_EXPANSIONS[clean_query]
             return expanded
+
+    # Also expand conversational phrases that boil down to a vague topic
+    # e.g., "tell me about his projects" → extract "projects" → expand
+    _conversational_prefixes = [
+        r"^(?:tell me about|what about|show me|talk about|explain)\s+(?:his|her|noah'?s?\s+)?",
+        r"^(?:what are|what were|what's)\s+(?:his|her|noah'?s?\s+)?",
+        r"^(?:the\s+)?(?:projects?|work)\s+(?:he'?s?\s+)?(?:completed|built|done|made|finished)",
+    ]
+    for pattern in _conversational_prefixes:
+        match = re.match(pattern, clean_query, re.IGNORECASE)
+        if match:
+            remainder = clean_query[match.end():].strip()
+            if remainder in VAGUE_QUERY_EXPANSIONS:
+                expanded = VAGUE_QUERY_EXPANSIONS[remainder]
+                return expanded
 
     return query
 
@@ -688,7 +702,7 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
     # Strategy 1: Keyword matching
     if any(kw in lowered for kw in ["code", "implementation", "show me"]):
         confidence_scores["keyword_match"] = 0.8
-    elif any(kw in lowered for kw in ["how", "what", "explain"]):
+    elif any(kw in lowered for kw in ["how", "what", "explain", "tell me about", "tell me", "his projects", "her projects", "the projects", "noah's"]):
         confidence_scores["keyword_match"] = 0.6
     else:
         confidence_scores["keyword_match"] = 0.4

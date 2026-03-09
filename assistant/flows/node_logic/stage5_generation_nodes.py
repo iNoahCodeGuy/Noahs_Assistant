@@ -774,8 +774,10 @@ def _build_engagement_context(state: dict) -> str | None:
             "models and generative AI applications.' Do not paraphrase "
             "this. Use these exact words as your opening sentence. "
             "Then explain: I'm the generative AI example (a production "
-            "RAG pipeline he built from scratch), and the attrition model "
-            "is the ML example."
+            "RAG pipeline he built from scratch), and the ML examples "
+            "include two attrition models, two customer segmentation "
+            "studies, and statistical analysis tools. Mention he earned "
+            "IBM and DeepLearning.AI certifications along the way."
         )
 
     # Capture flow: message 1 asks "What brings you here?",
@@ -788,14 +790,30 @@ def _build_engagement_context(state: dict) -> str | None:
             "\nDo NOT include any links (GitHub, LinkedIn, or otherwise) in this response."
         )
     elif msg_count == 2:
-        hint += (
-            "\nREQUIRED ENDING: End with ONE of these (pick whichever fits, NEVER both):"
-            "\n- A single knowledge hook as a statement: \"The attrition model is worth "
-            "a look if you're evaluating his analytical skills.\""
-            "\n- OR a single question: \"What brings you here?\""
-            "\nNEVER end with 'Want X or Y?' or any sentence offering two options with 'or'. "
-            "One ending line. No menus."
-        )
+        # Detect if user already explained why they're here (referral, purpose, etc.)
+        _user_query = (state.get("original_query", "") or state.get("query", "") or "").lower()
+        _answered_why = any(phrase in _user_query for phrase in [
+            "told me to", "sent me", "check this out", "check it out",
+            "referred me", "recommended", "noah told", "noah sent",
+            "friend told", "someone told", "heard about",
+            "looking for", "hiring", "we're evaluating", "evaluating candidates",
+            "interested in", "want to see", "came from", "found you on",
+        ])
+        if _answered_why:
+            hint += (
+                "\nIMPORTANT: The user already explained why they're here. Do NOT ask "
+                "\"What brings you here?\" again. Acknowledge their reason briefly, "
+                "then show the work. End with a knowledge hook about a specific project."
+            )
+        else:
+            hint += (
+                "\nREQUIRED ENDING: End with ONE of these (pick whichever fits, NEVER both):"
+                "\n- A single knowledge hook as a statement: \"The attrition model is worth "
+                "a look if you're evaluating his analytical skills.\""
+                "\n- OR a single question: \"What brings you here?\""
+                "\nNEVER end with 'Want X or Y?' or any sentence offering two options with 'or'. "
+                "One ending line. No menus."
+            )
     else:
         hint += (
             "\nREQUIRED ENDING: End with a knowledge hook statement about an uncovered "

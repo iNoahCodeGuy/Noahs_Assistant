@@ -452,7 +452,7 @@ He learned to coordinate across 5-7 different parties who all had different ince
 
 ### How Noah Learned to Code
 
-Noah started coding in August 2024, less than two years ago. He didn't come from a CS background or a bootcamp. He started because he noticed his daily screen time was 8+ hours and decided if he was going to stare at a screen that long, it should be building something.
+Noah started coding in August 2024, less than two years ago. He didn't come from a CS background or a bootcamp. He started because he noticed his daily screen time was 8+ hours and decided if he was going to stare at a screen that long, he should be building something.
 
 Noah's first exposure to AI was chess. He grew up playing competitively, and in 2017 while attending UNLV he watched AlphaZero beat Stockfish, a system that learned purely through self-play, without any human chess knowledge, and developed completely novel strategies that grandmasters had never seen. That was the first time he saw a machine do something that felt like thinking. The intersection of strategy, learning systems, and AI is what pulled him in.
 
@@ -460,10 +460,10 @@ He started with Python fundamentals, then moved into data analysis (pandas, NumP
 
 ### Certifications and Formal Training
 
-- IBM AI Engineering Professional Certificate
-- IBM AI Developer Professional Certificate
-- IBM Data Science Professional Certificate
-- Applied Machine Learning (94.75% grade)
+- Fundamentals of Building AI Agents (IBM, Jan 2026)
+- Building Generative AI-Powered Applications with Python (IBM, Aug 2025)
+- AI For Everyone (DeepLearning.AI, Aug 2025)
+- 100 Days of Code (Udemy, Apr 2025)
 
 What's notable isn't the certifications themselves, it's the velocity. Noah went from zero coding experience to building production AI systems in under a year while maintaining top 10% sales performance at Tesla. That signals learning speed, not just effort.
 

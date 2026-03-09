@@ -1934,8 +1934,16 @@ def handle_crush_flow_continuation(state: ConversationState) -> ConversationStat
         "what", "huh", "pick what", "what do you mean",
         "what is this", "what are you", "i don't understand",
     }
+    # Crush/romantic signals — if present, don't escape even if "noah" appears
+    _crush_stay_signals = [
+        "crush", "love", "like", "cute", "hot", "fine", "sexy",
+        "date", "dating", "fuck", "hook up", "hookup", "hit on",
+        "admirer", "confession", "confess", "attracted", "marry",
+        "tryna", "wanna", "kiss", "flirt",
+    ]
     q_low = query.lower().strip()
-    is_noah_query = any(kw in q_low for kw in _escape_noah_kw)
+    has_crush_signal = any(sig in q_low for sig in _crush_stay_signals)
+    is_noah_query = not has_crush_signal and any(kw in q_low for kw in _escape_noah_kw)
     is_confused = (
         q_low in _escape_confusion
         or q_low.startswith("show me")

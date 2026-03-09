@@ -199,21 +199,37 @@ def _should_include_reach_out(state: ConversationState) -> bool:
     """Determine whether this turn should include a reach-out offer.
 
     Rules:
-    - Never on message 1-2 (too early; message 1 asks "what brings you here")
-    - Starting at message 3, offer every other message (3, 5, 7, ...)
+    - Normally starts at message 3, every other message (3, 5, 7, ...)
+    - For warm referrals (user said Noah sent them), starts at message 2
     - Skip if a reach-out offer appeared in the last 2 assistant messages
     - Skip if user already declined twice or is in capture flow
     """
     msg_count = state.get("message_count", 0)
-    if msg_count < 3:
+
+    # Detect warm referral — user said Noah/someone sent them here
+    _query = (state.get("original_query", "") or state.get("query", "") or "").lower()
+    _history_text = ""
+    for _m in (state.get("chat_history") or [])[-4:]:
+        _c = _m.get("content", "") if isinstance(_m, dict) else getattr(_m, "content", "")
+        _history_text += " " + _c.lower()
+    _combined = f"{_query} {_history_text}"
+    _is_warm_referral = any(phrase in _combined for phrase in [
+        "told me to", "sent me", "check this out", "check it out",
+        "noah told", "noah sent", "referred me", "recommended",
+        "friend told", "someone told",
+    ])
+
+    # Warm referrals get capture offers starting at message 2
+    min_message = 2 if _is_warm_referral else 3
+    if msg_count < min_message:
         return False
 
     # Skip if already in capture flow
     if state.get("hm_capture_step"):
         return False
 
-    # Offer on odd messages (3, 5, 7, ...) — gives breathing room
-    if msg_count % 2 == 0:
+    # Offer on odd messages (3, 5, 7, ...) or message 2 for referrals
+    if msg_count >= 3 and msg_count % 2 == 0:
         return False
 
     # Check if a reach-out offer was already in the last 2 assistant messages
