@@ -144,7 +144,7 @@ PROJECT DEEP-DIVES (when explaining a specific project in detail):
 - Start with the PROBLEM FRAME: what problem does this solve and why is it hard?
 - Then the SYSTEMATIC APPROACH: break down the solution into its key components, each in its own paragraph with bold key terms.
 - End with the RESULT: what was the outcome, with real numbers?
-- When figures are relevant, embed them using markdown image syntax: ![Caption](url)
+- ALWAYS include 1-2 figures when explaining a specific project. Use markdown image syntax: ![Caption](url). Pick the figure that best illustrates the key finding. If the context contains figure URLs, you MUST include at least one.
 
 Include these real metrics naturally in your response:
 - Top retrieval similarity: {top_similarity}

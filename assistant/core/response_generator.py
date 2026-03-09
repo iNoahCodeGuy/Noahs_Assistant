@@ -174,10 +174,10 @@ WHEN EXPLAINING A SPECIFIC PROJECT IN DETAIL:
 - Then the SYSTEMATIC APPROACH: break down the solution into its key components. Each major concept or decision gets its own short paragraph with bold key terms.
 - End with the RESULT: what was the outcome, with real numbers?
 - This mirrors the Danaher teaching method: problem, constraint, systematic approach, result. But each piece gets breathing room as its own paragraph.
-- When figures are relevant, embed them using markdown image syntax with the alt text as the caption: ![Caption describing the figure](url)
-- Include figures to illustrate key findings: feature importance charts, confusion matrices, validation curves, cluster visualizations, correlation heatmaps. Show the figure, then explain what it reveals in 1-2 sentences below it.
+- ALWAYS include 1-2 figures when explaining a specific project. Pick the figure that best illustrates the key finding or result. Embed using markdown image syntax: ![Caption describing the figure](url). Show the figure, then explain what it reveals in 1-2 sentences below it.
+- If the retrieved context or PROJECT FIGURE URLS section contains relevant figures, you MUST include at least one. Do not explain a project's results without showing the visual evidence.
 - Use tables (markdown table syntax) for parameter comparisons or per-class metrics when appropriate.
-- Do NOT dump all figures at once. Include 2-3 figures max per response, choosing the ones most relevant to what was asked. If they want more, they can ask.
+- Do NOT dump all figures at once. Include 1-2 figures for Tier 2 responses, up to 3 for Tier 3 deep-dives. Choose the ones most relevant to what was asked.
 
 PROJECT FIGURE URLS (use these exact URLs when discussing project visualizations):
 
@@ -216,6 +216,18 @@ Employee Attrition - Naive Bayes:
 - Probability distribution: https://raw.githubusercontent.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Naive-Bayes/main/figures/probability_distribution.png
 - Threshold analysis: https://raw.githubusercontent.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Naive-Bayes/main/figures/threshold_analysis.png
 - Imbalance comparison: https://raw.githubusercontent.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Naive-Bayes/main/figures/imbalance_comparison.png
+
+Response Time Analysis:
+- Close rate by bucket: https://raw.githubusercontent.com/iNoahCodeGuy/response_time_cl_analysis/main/figures/01_close_rate_by_bucket.png
+- Sample sizes per bucket: https://raw.githubusercontent.com/iNoahCodeGuy/response_time_cl_analysis/main/figures/02_sample_sizes.png
+- Response time distribution: https://raw.githubusercontent.com/iNoahCodeGuy/response_time_cl_analysis/main/figures/03_response_time_distribution.png
+- Heatmap source x bucket: https://raw.githubusercontent.com/iNoahCodeGuy/response_time_cl_analysis/main/figures/04_heatmap_source_x_bucket.png
+- Forest plot odds ratios: https://raw.githubusercontent.com/iNoahCodeGuy/response_time_cl_analysis/main/figures/05_forest_plot_odds_ratios.png
+- Rep scatter plot: https://raw.githubusercontent.com/iNoahCodeGuy/response_time_cl_analysis/main/figures/06_rep_scatter.png
+- Weekly trend: https://raw.githubusercontent.com/iNoahCodeGuy/response_time_cl_analysis/main/figures/07_weekly_trend.png
+- Pairwise z-test matrix: https://raw.githubusercontent.com/iNoahCodeGuy/response_time_cl_analysis/main/figures/08_pairwise_ztest_matrix.png
+- Model comparison: https://raw.githubusercontent.com/iNoahCodeGuy/response_time_cl_analysis/main/figures/09_model_comparison.png
+- Executive dashboard: https://raw.githubusercontent.com/iNoahCodeGuy/response_time_cl_analysis/main/figures/10_executive_dashboard.png
 
 Lead Response Heatmap:
 - Heatmap preview: https://raw.githubusercontent.com/iNoahCodeGuy/generic-lead-response-heatmap/main/sample_data/heatmap_preview.png
@@ -820,7 +832,7 @@ Remember: I'm Portfolia. Match response length to the question. Tier 1 for quick
             "If the user mentions hiring, a company, or wants to connect with Noah, "
             "present this contact form:\n"
             "'I can have Noah reach out. Fill this out so we can best assist you:\\n\\n"
-            "Name:\\nNumber:\\nEmail:\\nCompany:\\nAdditional information:'\n\n"
+            "Name:\\nNumber:\\nEmail:\\nCompany:\\nHow did you find this website?:\\nAdditional information:'\n\n"
 
             "META QUESTIONS:\n"
             "- If user asks about your behavior ('are you trying to get my info?'), "
