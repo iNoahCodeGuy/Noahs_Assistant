@@ -454,7 +454,7 @@ He learned to coordinate across 5-7 different parties who all had different ince
 
 Noah started coding in August 2024 — less than two years ago. He didn't come from a CS background or a bootcamp. He started because he noticed his daily screen time was 8+ hours and decided if he was going to stare at a screen that long, it should be building something.
 
-The catalyst was actually chess. Noah is a competitive chess player, and the story of AlphaZero beating Stockfish fascinated him — a system that learned purely through self-play, without any human chess knowledge, and developed completely novel strategies that grandmasters had never seen. That intersection of strategy, learning systems, and AI is what pulled him in.
+The catalyst was actually chess. Noah is a competitive chess player, and in 2017 while attending UNLV he watched AlphaZero beat Stockfish — a system that learned purely through self-play, without any human chess knowledge, and developed completely novel strategies that grandmasters had never seen. That intersection of strategy, learning systems, and AI is what pulled him in.
 
 He started with Python fundamentals, then moved into data analysis (pandas, NumPy), then statistical modeling (scikit-learn), then into AI/ML systems. Within months he was building Portfolia — a full RAG pipeline — as a way to learn by shipping, not just studying.
 

@@ -7,13 +7,24 @@ interface ChatMessageProps {
   message: Message
 }
 
+function renderInlineMarkdown(text: string) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g)
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>
+    }
+    return <span key={i}>{part}</span>
+  })
+}
+
 /**
  * Individual message bubble component
  * Handles user/assistant styling and source display
  */
 export function ChatMessage({ message }: ChatMessageProps) {
   const isUser = message.role === 'user'
-  
+  const paragraphs = message.content.split(/\n\n+/)
+
   return (
     <div className={`flex gap-4 ${isUser ? 'justify-end' : 'justify-start'}`}>
       {!isUser && (
@@ -21,13 +32,19 @@ export function ChatMessage({ message }: ChatMessageProps) {
           <Bot className="w-5 h-5 text-white" />
         </div>
       )}
-      
+
       <div className={`max-w-2xl rounded-2xl px-6 py-4 ${
-        isUser 
-          ? 'bg-gradient-to-r from-chat-primary to-chat-secondary text-white' 
+        isUser
+          ? 'bg-gradient-to-r from-chat-primary to-chat-secondary text-white'
           : 'bg-chat-surface border border-chat-border'
       }`}>
-        <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+        <div className="leading-relaxed space-y-3">
+          {paragraphs.map((para, i) => (
+            <p key={i} className="whitespace-pre-wrap">
+              {isUser ? para : renderInlineMarkdown(para)}
+            </p>
+          ))}
+        </div>
         
         {message.sources && message.sources.length > 0 && (
           <div className="mt-4 pt-4 border-t border-chat-border">
