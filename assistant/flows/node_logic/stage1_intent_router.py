@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 # Used to reconstruct crush flow state from chat_history when state fields
 # don't persist across API calls (serverless/stateless architecture).
 _CRUSH_INITIAL_MARKER = "What's it gonna be?"
-_CRUSH_ANON_FORM_MARKER = "Alias:\nMessage for Noah:"
-_CRUSH_REVEAL_FORM_MARKER = "Name:\nNumber or social:\nMessage for Noah:"
+_CRUSH_ANON_FORM_MARKER = "Alias:"
+_CRUSH_REVEAL_FORM_MARKER = "Number or social:"
 _CRUSH_COMPLETE_MARKERS = ["Message sent", "Say less", "Noah knows"]
 
 # Pattern to detect contact form submissions in chat history.
@@ -1301,19 +1301,21 @@ def classify_intent(state: ConversationState) -> ConversationState:
     buying = state.get("buying_signals_count", 0)
     vtype = state.get("visitor_type", "unknown")
 
-    if (vtype == "hiring_manager"
-            and msg_count >= 6
-            and buying >= 1
-            and _is_connect_intent(query)
-            and not state.get("hm_capture_step")):
+    if (_is_connect_intent(query)
+            and not state.get("hm_capture_step")
+            and msg_count >= 2):
         state["answer"] = (
-            "Absolutely. Would you like me to pass your info along to Noah? "
-            "He's responsive and usually follows up within a day."
+            "I can have Noah reach out. Fill this out so we can best assist you:\n\n"
+            "Name:\n"
+            "Number:\n"
+            "Email:\n"
+            "Company:\n"
+            "Additional information:"
         )
-        state["hm_capture_step"] = "awaiting_hm_response"
+        state["hm_capture_step"] = "awaiting_hm_details"
         state["pipeline_halt"] = True
         state["skip_rag"] = True
-        logger.info("HM capture flow triggered: eligible hiring manager expressed connect intent")
+        logger.info(f"Capture form triggered: connect intent at msg_count={msg_count}")
         return state
 
     # ── Contact form capture trigger (all visitor types) ────────────────
@@ -1485,7 +1487,7 @@ def handle_non_knowledge_intent(state: ConversationState, rag_engine: Any) -> Co
                              "impressed", "really good", "this is cool", "i'm impressed"]
         if any(w in query_lower for w in _compliment_words):
             state["answer"] = (
-                "Noted. There's more under the hood than what you've seen so far -- "
+                "Noted. There's more under the hood than what you've seen so far. "
                 "the retrieval system and grounding validation are worth a look "
                 "if you want to see how the engineering holds up."
             )
@@ -1498,7 +1500,7 @@ def handle_non_knowledge_intent(state: ConversationState, rag_engine: Any) -> Co
                       "what am i looking at", "what does this do", "who is this"}
         if _q_stripped in _confusion or _q_stripped == "what":
             state["answer"] = (
-                "I'm Portfolia -- an AI assistant Noah built from scratch "
+                "I'm Portfolia, an AI assistant Noah built from scratch "
                 "to demo his engineering. Ask me about his projects, "
                 "his background, or how I work."
             )
@@ -1557,8 +1559,8 @@ def handle_crush_confession(state: ConversationState) -> ConversationState:
     state["answer"] = (
         "Didn't expect anyone to actually pick this one. Respect the commitment though.\n\n"
         "I can let Noah know someone came through with intentions. Two options:\n\n"
-        "**1.** Stay anonymous -- I tell him he's got a secret admirer. You still get to leave a message.\n"
-        "**2.** Reveal yourself -- drop your name and how to reach you.\n\n"
+        "**1.** Stay anonymous. I tell him he's got a secret admirer. You still get to leave a message.\n"
+        "**2.** Reveal yourself. Drop your name and how to reach you.\n\n"
         "What's it gonna be?"
     )
 
@@ -1932,9 +1934,9 @@ def handle_crush_flow_continuation(state: ConversationState) -> ConversationStat
 
         elif _is_anonymous_choice(query):
             state["answer"] = (
-                "Anonymous it is. Still letting you leave a message though -- "
-                "Noah should know what he's working with.\n\n"
-                "Alias:\nMessage for Noah:"
+                "Anonymous it is. Still letting you leave a message though.\n\n"
+                "Alias:\n"
+                "Message for Noah:"
             )
             state["crush_flow_step"] = "awaiting_anon_form"
             state["awaiting_crush_choice"] = True
@@ -1944,7 +1946,9 @@ def handle_crush_flow_continuation(state: ConversationState) -> ConversationStat
         elif _is_reveal_choice(query):
             state["answer"] = (
                 "Full send. Go ahead and fill this out.\n\n"
-                "Name:\nNumber or social:\nMessage for Noah:"
+                "Name:\n"
+                "Number or social:\n"
+                "Message for Noah:"
             )
             state["crush_flow_step"] = "awaiting_reveal_form"
             state["awaiting_crush_choice"] = True
@@ -1988,7 +1992,7 @@ def handle_crush_flow_continuation(state: ConversationState) -> ConversationStat
             )
 
             state["answer"] = (
-                "Say less. Noah knows he's got a secret admirer -- and he got your message.\n\n"
+                "Say less. Noah knows he's got a secret admirer, and he got your message.\n\n"
                 "Now that we've handled that, want to see what he actually builds?"
             )
             state["crush_flow_step"] = None
@@ -2040,7 +2044,7 @@ def handle_crush_flow_continuation(state: ConversationState) -> ConversationStat
 
             state["answer"] = (
                 f"Done. Noah just got notified that {display_name} visited his portfolio "
-                "and chose the bold option. Now that we've handled that -- "
+                "and chose the bold option. Now that we've handled that, "
                 "want to see what he actually builds? Might add context to the decision."
             )
             state["crush_flow_step"] = None
