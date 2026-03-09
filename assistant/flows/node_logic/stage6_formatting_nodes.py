@@ -1064,10 +1064,10 @@ MAIN_PILLARS = {
     "hiring_manager_technical": {
         "pillars": [
             # 5 pillars for technical hiring managers
-            ("orchestration", "Explore the orchestration layer — how nodes, states, and safeguards work together"),
-            ("tech_stack", "See my full tech stack — frontend, backend, observability"),
+            ("orchestration", "Explore the orchestration layer: how nodes, states, and safeguards work together"),
+            ("tech_stack", "See my full tech stack: frontend, backend, observability"),
             ("enterprise", "See how this architecture adapts for enterprise use cases"),
-            ("data_pipeline", "Learn about data pipeline management — embeddings, vector storage, analytics"),
+            ("data_pipeline", "Learn about data pipeline management: embeddings, vector storage, analytics"),
             ("noahs_background", "Learn about Noah's technical background and projects"),
         ],
         "topic_to_pillar": {
@@ -1106,8 +1106,8 @@ MAIN_PILLARS = {
     "software_developer": {
         "pillars": [
             # Lead with implementation (code-focused users want to see code first)
-            ("implementation", "Explore the LangGraph implementation — nodes, state, pgvector queries"),
-            ("architecture", "See the code architecture — modules, flows, design patterns"),
+            ("implementation", "Explore the LangGraph implementation: nodes, state, pgvector queries"),
+            ("architecture", "See the code architecture: modules, flows, design patterns"),
             ("debugging", "See the debugging and testing strategies"),
             ("noahs_background", "Learn about Noah's technical background"),
         ],
@@ -2126,7 +2126,7 @@ def build_conversation_graph():
     # Resume offer prompt (before sending)
     if "offer_resume_prompt" in action_types and not state.get("offer_sent"):
         sections.append("")
-        sections.append("If it would help, I can share Noah's résumé or LinkedIn—just let me know.")
+        sections.append("If it would help, I can share Noah's résumé or LinkedIn. Just let me know.")
 
     # Reach out prompt
     if "ask_reach_out" in action_types:
@@ -2226,6 +2226,21 @@ def build_conversation_graph():
             logger.info(f"📌 Added subtle availability mention (engagement={engagement_score}, depth={depth_level})")
 
     enriched_answer = "\n".join(section for section in sections if section is not None)
+
+    # ── Em-dash removal ───────────────────────────────────────────────
+    # The system prompt bans dashes as punctuation but the LLM still uses
+    # them. Replace em dashes (—) and double hyphens (--) with periods or
+    # commas depending on context.
+    # Pattern: " — " between clauses → ". " (new sentence) when followed
+    # by a capital letter, else ", ".
+    def _replace_dash(m: re.Match) -> str:
+        after = m.group(1)
+        if after and after[0].isupper():
+            return ". " + after
+        return ", " + (after or "")
+
+    enriched_answer = re.sub(r'\s*[—–]\s*(\S)', _replace_dash, enriched_answer)
+    enriched_answer = re.sub(r'\s*--\s*(\S)', _replace_dash, enriched_answer)
 
     # ── Link throttling ───────────────────────────────────────────────
     # Count recent assistant responses that already contained a link.

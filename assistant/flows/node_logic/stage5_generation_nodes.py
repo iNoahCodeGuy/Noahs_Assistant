@@ -757,12 +757,12 @@ def _build_engagement_context(state: dict) -> str | None:
     # Visitor-type-specific guidance
     if visitor_type == "gatekeeper":
         hint += (
-            "\nVISITOR NOTE: Gatekeeper — screening for a decision-maker. "
+            "\nVISITOR NOTE: Gatekeeper, screening for a decision-maker. "
             "Keep answers concise and easy to forward. Lead with results and outcomes."
         )
     elif visitor_type == "student":
         hint += (
-            "\nVISITOR NOTE: Student/learner — here to learn from the architecture. "
+            "\nVISITOR NOTE: Student/learner, here to learn from the architecture. "
             "Go deep on technical decisions when asked. Point to GitHub."
         )
 
@@ -772,7 +772,7 @@ def _build_engagement_context(state: dict) -> str | None:
             "\nCRITICAL FIRST LINE: Your response MUST begin with "
             "'Noah is a software developer specializing in machine learning "
             "models and generative AI applications.' Do not paraphrase "
-            "this — use these exact words as your opening sentence. "
+            "this. Use these exact words as your opening sentence. "
             "Then explain: I'm the generative AI example (a production "
             "RAG pipeline he built from scratch), and the attrition model "
             "is the ML example."
@@ -796,7 +796,7 @@ def _build_engagement_context(state: dict) -> str | None:
             "\nNEVER end with 'Want X or Y?' or any sentence offering two options with 'or'. "
             "One ending line. No menus."
             "\nIf the user has already declined a reach-out offer twice, just end with a "
-            "knowledge hook — no reach-out offer."
+            "knowledge hook. No reach-out offer."
         )
 
     logger.info(
@@ -1443,7 +1443,7 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     if state.get("is_continuation") and not _situational_added:
         extra_instructions.append(
             f"CONTINUATION: User said \"{state.get('original_query', '')}\". "
-            "Go deeper — new details only, do not repeat previous answer."
+            "Go deeper. New details only, do not repeat previous answer."
         )
         logger.info(f"Continuation hint for: '{state.get('original_query', '')[:50]}'")
         _situational_added = True

@@ -373,6 +373,16 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         "contact": ["contact", "reach out", "get in touch", "call me", "email me"],
     }
 
+    # ── Traffic source exclusion ──────────────────────────────────────
+    # If the user mentions a platform as a traffic source (e.g. "I came from
+    # LinkedIn"), that is NOT a request for the link — skip action detection.
+    _traffic_source_patterns = [
+        r'\b(?:came|coming|come)\s+(?:from|via|through)\s+(?:linkedin|instagram|github|upwork)',
+        r'\b(?:found|saw|seen)\s+(?:you|this|noah|the portfolio)\s+(?:on|via|through)\s+(?:linkedin|instagram|github|upwork)',
+        r'\b(?:from|via|through)\s+(?:linkedin|instagram|github|upwork)\b',
+    ]
+    _is_traffic_source = any(re.search(p, lowered_query) for p in _traffic_source_patterns)
+
     # Check for action request patterns
     action_patterns = [
         r'\b(send|show|share|give|get|see|view|provide)\b.*\b(resume|cv|linkedin|github|profile|repo)\b',
@@ -391,7 +401,7 @@ def classify_intent(state: ConversationState) -> Dict[str, Any]:
         for keywords in action_keywords.values()
     )
 
-    if is_action_request or (has_action_verb and has_resource_keyword):
+    if not _is_traffic_source and (is_action_request or (has_action_verb and has_resource_keyword)):
         update["query_type"] = "action_request"
         update["intent_confidence"] = 1.0
         update["is_ambiguous"] = False
