@@ -139,6 +139,16 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
             persona_hints: Dict[str, str] = state["session_memory"].setdefault("persona_hints", {})
             persona_hints.setdefault("role_mode", normalized)
 
+            # Show role-specific welcome on first role detection
+            # (frontend may pre-set role from button click)
+            if not persona_hints.get("role_welcome_shown"):
+                persona_hints["role_welcome_shown"] = True
+                welcome_msg = _get_role_welcome_message(normalized)
+                if welcome_msg:
+                    state["answer"] = welcome_msg
+                    state["pipeline_halt"] = True
+                    return state
+
             # Clear pipeline_halt if it exists (from previous welcome message)
             # Menu selections after role selection should proceed normally
             if state.get("pipeline_halt") and persona_hints.get("role_welcome_shown"):
