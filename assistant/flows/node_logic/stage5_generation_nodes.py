@@ -1488,6 +1488,30 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     if should_gather_job_details(state):
         extra_instructions.append(get_job_details_prompt())
 
+    # ── PIPELINE TELEMETRY — inject live request data for self-referential queries
+    if state.get("is_self_referential"):
+        retrieval_scores = state.get("retrieval_scores", [])
+        top_score = max(retrieval_scores) if retrieval_scores else 0.0
+        chunk_sources = []
+        for c in retrieved_chunks[:5]:
+            src = c.get("metadata", {}).get("source", "unknown") if isinstance(c, dict) else "unknown"
+            chunk_sources.append(src)
+        telemetry = (
+            "LIVE PIPELINE DATA FOR THIS REQUEST (use this to walk the user "
+            "through what just happened, referencing their actual conversation):\n"
+            f"- Intent classified as: {state.get('message_intent', 'knowledge_query')}\n"
+            f"- Chunks retrieved: {len(retrieved_chunks)}\n"
+            f"- Top similarity score: {top_score:.3f}\n"
+            f"- Chunk sources: {', '.join(chunk_sources) if chunk_sources else 'none'}\n"
+            f"- Chain-of-thought triggered: {state.get('cot_triggered', False)}\n"
+            f"- Grounding status: {state.get('grounding_status', 'unknown')}\n"
+            f"- Message count this session: {len(chat_history) // 2 if chat_history else 0}\n"
+            f"- Role mode: {state.get('role_mode', 'unknown')}\n"
+            f"- Self-knowledge injection: {any(c.get('metadata', {{}}).get('source') == 'self_knowledge' for c in retrieved_chunks if isinstance(c, dict))}\n"
+        )
+        extra_instructions.append(telemetry)
+        logger.info("Pipeline telemetry injected for self-referential query")
+
     logger.info("DIAG generate_draft extra_instructions=%s", extra_instructions)
     # Build the instruction suffix
     instruction_suffix = " ".join(extra_instructions) if extra_instructions else None

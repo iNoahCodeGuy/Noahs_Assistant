@@ -619,8 +619,28 @@ Remember: I'm Portfolia. Match response length to the question. Tier 1 for quick
         # Build conversation history string for context continuity
         history_context = ""
         if chat_history and len(chat_history) > 0:
-            # Get last 4 messages for context (last 2 exchanges)
-            recent_history = chat_history[-4:] if len(chat_history) > 4 else chat_history
+            # Widen history window for self-referential queries so Portfolia can
+            # reference the full conversation when explaining how she works
+            query_lower = query.lower()
+            _self_ref_keywords = [
+                "how do you generate", "how do you work", "how did you",
+                "how were you", "how are you built", "your pipeline",
+                "your architecture", "how does your", "walk me through",
+                "explain how you", "what just happened", "what did you do",
+                "how did you answer", "how did you respond", "this conversation",
+                "our conversation", "what you said", "what i asked",
+            ]
+            is_self_ref = any(kw in query_lower for kw in _self_ref_keywords)
+
+            if is_self_ref:
+                # Full history (up to 20 messages), larger truncation for assistant
+                recent_history = chat_history[-20:] if len(chat_history) > 20 else chat_history
+                truncate_len = 600
+            else:
+                # Default: last 4 messages (2 exchanges), 300-char truncation
+                recent_history = chat_history[-4:] if len(chat_history) > 4 else chat_history
+                truncate_len = 300
+
             history_parts = []
             for msg in recent_history:
                 # Handle both LangChain message format (type: "human"/"ai") and simple dict format (role: "user"/"assistant")
@@ -645,13 +665,20 @@ Remember: I'm Portfolia. Match response length to the question. Tier 1 for quick
                     if msg_role == "user" and msg_content:
                         history_parts.append(f"User: {msg_content}")
                     elif msg_role == "assistant" and msg_content:
-                        content = msg_content[:300] + "..." if len(msg_content) > 300 else msg_content
+                        content = msg_content[:truncate_len] + "..." if len(msg_content) > truncate_len else msg_content
                         history_parts.append(f"Assistant: {content}")
                 except Exception as msg_err:
                     logger.debug(f"Skipping malformed chat_history message: {type(msg_err).__name__}")
                     continue
             if history_parts:
-                history_context = "\n\nPrevious conversation:\n" + "\n".join(history_parts) + "\n"
+                if is_self_ref:
+                    history_context = (
+                        "\n\nFULL CONVERSATION SO FAR (use this to reference specific "
+                        "exchanges when explaining how you work):\n"
+                        + "\n".join(history_parts) + "\n"
+                    )
+                else:
+                    history_context = "\n\nPrevious conversation:\n" + "\n".join(history_parts) + "\n"
 
         # Add extra instructions if provided (for display intelligence)
         instruction_addendum = ""
