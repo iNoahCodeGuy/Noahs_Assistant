@@ -1507,7 +1507,7 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
             f"- Grounding status: {state.get('grounding_status', 'unknown')}\n"
             f"- Message count this session: {len(chat_history) // 2 if chat_history else 0}\n"
             f"- Role mode: {state.get('role_mode', 'unknown')}\n"
-            f"- Self-knowledge injection: {any(c.get('metadata', {{}}).get('source') == 'self_knowledge' for c in retrieved_chunks if isinstance(c, dict))}\n"
+            f"- Self-knowledge injection: {any(c.get('metadata', dict()).get('source') == 'self_knowledge' for c in retrieved_chunks if isinstance(c, dict))}\n"
         )
         extra_instructions.append(telemetry)
         logger.info("Pipeline telemetry injected for self-referential query")

@@ -526,25 +526,37 @@ def _detect_reformulation_loop(chat_history: list, threshold: float = 0.2) -> bo
                 if overlaps and all(overlap >= 0.5 for overlap in overlaps):
                     similar_detected = True
 
-    # CRITICAL CHECK: If similar queries detected, verify the previous answer addressed the topic
+    # CRITICAL CHECK: If similar queries detected, verify it's a genuine reformulation
     if similar_detected and len(user_message_indices) >= 2:
         first_similar_query = user_messages[0]
+        current_query = user_messages[-1]
         first_query_index = user_message_indices[0]
 
-        # Extract topic words from the query
-        query_topics = _extract_query_topic_words(first_similar_query)
+        # Extract topic words from BOTH queries
+        first_topics = _extract_query_topic_words(first_similar_query)
+        current_topics = _extract_query_topic_words(current_query)
+
+        # If the current query introduces multiple distinct topic words not in the first query,
+        # this is a topic pivot (e.g., "ML projects" → "data viz projects"), not a reformulation.
+        # Require 2+ new topics to avoid false negatives from single filler words like "work".
+        new_topics = current_topics - first_topics - stop_words
+        shared_topics = current_topics & first_topics - stop_words
+        if len(new_topics) >= 2 and len(new_topics) >= len(shared_topics):
+            logger.info(
+                f"Similar query detected but current query has distinct topics. "
+                f"Shared: {shared_topics}, New: {new_topics}. Not a reformulation."
+            )
+            return False
 
         # Get the answer that followed the first similar query
         previous_answer = _get_answer_after_query(chat_history, first_query_index)
 
         if previous_answer:
-            # Check if the previous answer actually addressed the query topic
-            # Pass the original query for enterprise-specific validation
-            if not _answer_addresses_topic(previous_answer, query_topics, first_similar_query):
-                # The previous answer didn't address the topic - user is legitimately re-asking
+            # Check if the previous answer actually addressed the first query's topic
+            if not _answer_addresses_topic(previous_answer, first_topics, first_similar_query):
                 logger.info(
                     f"Similar query detected but previous answer didn't address topic. "
-                    f"Query topics: {query_topics}. Not triggering reformulation."
+                    f"Query topics: {first_topics}. Not triggering reformulation."
                 )
                 return False
         else:
@@ -552,7 +564,7 @@ def _detect_reformulation_loop(chat_history: list, threshold: float = 0.2) -> bo
             logger.info("Similar query detected but no previous answer found. Not triggering reformulation.")
             return False
 
-        # Previous answer DID address the topic - this is a genuine reformulation
+        # Previous answer addressed BOTH queries' topics - genuine reformulation
         logger.info(f"Reformulation loop detected: similar queries and previous answer addressed topic")
         return True
 
