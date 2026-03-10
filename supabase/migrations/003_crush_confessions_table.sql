@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS crush_confessions (
     anonymous BOOLEAN NOT NULL DEFAULT true,
     name TEXT,
     contact TEXT,
+    message TEXT,
     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

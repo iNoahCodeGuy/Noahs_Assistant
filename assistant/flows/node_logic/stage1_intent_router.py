@@ -2023,6 +2023,7 @@ def handle_crush_flow_continuation(state: ConversationState) -> ConversationStat
                 "anonymous": is_anonymous,
                 "name": display_name,
                 "contact": safe_contact or None,
+                "message": r_message or None,
             }).execute()
             logger.info(f"Crush stored: name={display_name}, anonymous={is_anonymous}")
         except Exception as e:
