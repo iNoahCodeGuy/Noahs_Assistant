@@ -678,7 +678,7 @@ _BANNED_OPENERS: List[re.Pattern] = [
     re.compile(r'^Good\s+question[.!]?\s*', re.IGNORECASE),
     re.compile(r'^Interesting\s+question[.!]?\s*', re.IGNORECASE),
     re.compile(r'^(?:I\'d\s+)?(?:love|be\s+happy)\s+to\s+(?:help|show|walk|break|explain|tell)\b[^.!?]*[.!]?\s*', re.IGNORECASE),
-    re.compile(r'^(?:Let\s+me\s+(?:break\s+that\s+down|walk\s+you\s+through|explain))[.!]?\s*', re.IGNORECASE),
+    re.compile(r'^(?:Let\s+me\s+(?:break\s+that\s+down|walk\s+you\s+through|explain))\b[^.!?]*[.!]?\s*', re.IGNORECASE),
     re.compile(r'^Here\'s\s+the\s+(?:breakdown|thing|cool\s+part|magic)[.!:]?\s*', re.IGNORECASE),
     re.compile(r'^(?:Ha|Haha|Hah)[,!.]?\s+', re.IGNORECASE),
     re.compile(r'^LOL[.!,]?\s*', re.IGNORECASE),

@@ -390,12 +390,15 @@ def _parse_hm_contact_info(query: str) -> dict:
     if phone_match:
         info["phone"] = phone_match.group()
 
-    # Extract name — "my name is X", "I'm X", "this is X", "Name, ..."
+    # Extract name — "Name: X", "my name is X", "I'm X", "this is X", "Name, ..."
+    label_name_match = re.search(r'(?:^|\n)\s*name\s*[:=]\s*(.+)', query, re.IGNORECASE)
     name_match = re.match(
         r"(?:my name is|i'm|i am|this is|it's)\s+(\w+(?:\s+\w+)?)",
         query, re.IGNORECASE,
     )
-    if name_match:
+    if label_name_match and label_name_match.group(1).strip():
+        info["name"] = label_name_match.group(1).strip()
+    elif name_match:
         info["name"] = name_match.group(1).strip()
     elif not info["email"] and not info["phone"]:
         # If first words look like a name (1-3 capitalized words before a comma)
@@ -403,12 +406,15 @@ def _parse_hm_contact_info(query: str) -> dict:
         if len(parts) == 2 and len(parts[0].strip().split()) <= 3:
             info["name"] = parts[0].strip()
 
-    # Extract company — "at X", "from X", "X company"
+    # Extract company — "Company: X", "at X", "from X", "X company"
+    label_company_match = re.search(r'(?:^|\n)\s*company\s*[:=]\s*(.+)', query, re.IGNORECASE)
     company_match = re.search(
         r'(?:at|from|with)\s+([A-Z][\w\s&.-]{1,30}?)(?:\s*[,.]|\s+(?:and|we|our|i|my|looking|hiring)|\s*$)',
         query, re.IGNORECASE,
     )
-    if company_match:
+    if label_company_match and label_company_match.group(1).strip():
+        info["company"] = label_company_match.group(1).strip()
+    elif company_match:
         info["company"] = company_match.group(1).strip()
 
     # Extract referral source — "How did you find this website?: ..."

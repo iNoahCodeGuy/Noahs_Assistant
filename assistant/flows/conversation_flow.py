@@ -152,7 +152,7 @@ _KNOWLEDGE_HOOKS = (
     "that powers the attrition model.",
     "Noah's biology degree is the least obvious and most important part "
     "of the technical foundation.",
-    "The MMA coaching story connects to the professional background "
+    "The MMA fighter story connects to the professional background "
     "in a way most people don't expect.",
     "The Response Time Analysis app is worth asking about if you care "
     "about how he thinks through statistical problems.",
@@ -393,9 +393,28 @@ def _maybe_append_discovery_question(state: dict) -> dict:
             "worth a look", "same math that powers",
             "statistical foundation", "architecture behind this",
             "attrition model", "if you want to see",
-            "ask me how i work",
+            "ask me how i work", "worth understanding",
+            "worth knowing", "segmentation", "k-means",
+            "decision tree", "gap is worth", "patterns the",
+            "if you're evaluating", "opposite direction",
         ]
     )
+
+    # If the LLM wrote content AFTER a capture question, treat it as a hook.
+    # This prevents double-appending when the LLM already ended with
+    # "What brings you here?\n\n<hook sentence>".
+    if not has_hook and has_capture:
+        _capture_pos = max(
+            answer_tail.rfind("what brings you"),
+            answer_tail.rfind("what caught your eye"),
+            answer_tail.rfind("what's your angle"),
+        )
+        if _capture_pos >= 0:
+            _after_capture = answer_tail[_capture_pos:].strip()
+            # If there's substantial text after the capture question line,
+            # the LLM already wrote a hook.
+            if "\n" in _after_capture and len(_after_capture.split("\n", 1)[1].strip()) > 20:
+                has_hook = True
 
     # If all three already present, nothing to do
     logger.info(

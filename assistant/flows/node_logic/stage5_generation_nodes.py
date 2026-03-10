@@ -766,35 +766,38 @@ def _build_engagement_context(state: dict) -> str | None:
             "Go deep on technical decisions when asked. Point to GitHub."
         )
 
-    # First-message framing: anchor Noah's identity
+    # First-message framing: anchor Noah's identity with Danaher structure
     if msg_count == 1:
         hint += (
             "\nCRITICAL FIRST LINE: Your response MUST begin with "
             "'Noah is a software developer specializing in machine learning "
             "models and generative AI applications.' Do not paraphrase "
-            "this. Use these exact words as your opening sentence. "
-            "Then explain: I'm the generative AI example (a production "
-            "RAG pipeline he built from scratch), and the ML examples "
-            "include two attrition models, two customer segmentation "
-            "studies, and statistical analysis tools. Mention he earned "
-            "IBM and DeepLearning.AI certifications along the way. "
-            "The specific certifications are: Fundamentals of Building "
-            "AI Agents (IBM), Building Generative AI-Powered "
-            "Applications with Python (IBM), AI For Everyone "
-            "(DeepLearning.AI), and 100 Days of Code (Udemy). "
-            "Do NOT invent or guess certification names — use only "
-            "these exact names or refer to them generally as "
-            "'IBM and DeepLearning.AI certifications'."
-        )
-
-    # Capture flow: message 1 asks "What brings you here?",
-    # message 2+ offers reach-out vs. uncovered project.
-    if msg_count == 1:
-        hint += (
-            "\nREQUIRED ENDING: End with TWO lines:"
+            "this. Use these exact words as your opening sentence."
+            "\n\nThen follow this structure for the rest of the message:"
+            "\n1. SELF-INTRO (Danaher structure): Name the PROBLEM with "
+            "portfolio sites (they're static — you read, you leave, no "
+            "follow-up questions). Then the approach: Noah built a "
+            "conversational one. You're the example — 21-node RAG pipeline, "
+            "semantic search, intent classification, grounding validation. "
+            "Built from scratch to demonstrate production AI architecture."
+            "\n2. ML WORK (show range through paired projects): The attrition "
+            "pair — logistic regression hit 94.75% accuracy on an imbalanced "
+            "dataset, Naive Bayes trades accuracy for catching more leavers. "
+            "The segmentation pair — decision trees for interpretable rules, "
+            "K-means for discovering structure the labels missed. Frame it as: "
+            "each pair asks the same question two different ways."
+            "\n3. VELOCITY: He started coding in August 2024. Less than two "
+            "years from zero to shipping production systems while maintaining "
+            "top 10% sales performance at Tesla."
+            "\nDo NOT mention certifications in this first message. "
+            "Do NOT list project names as a feature dump — frame them "
+            "by the problem they solve or the insight they reveal."
+            "\n\nREQUIRED ENDING: End with TWO lines:"
             "\n1. A 'why are you here' question: \"What brings you here?\""
-            "\n2. A knowledge hook about an uncovered project."
-            "\nDo NOT include any links (GitHub, LinkedIn, or otherwise) in this response."
+            "\n2. A knowledge hook about the segmentation pair or another "
+            "uncovered project — make it specific and intriguing."
+            "\nDo NOT include any links (GitHub, LinkedIn, or otherwise) "
+            "in this response."
         )
     elif msg_count == 2:
         # Detect if user already explained why they're here (referral, purpose, etc.)

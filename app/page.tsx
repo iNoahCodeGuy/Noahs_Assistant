@@ -35,9 +35,10 @@ export default function Home() {
         onRoleChange={setSelectedRole} 
       />
       
-      <ChatMessages 
-        messages={messages} 
-        loading={loading} 
+      <ChatMessages
+        messages={messages}
+        loading={loading}
+        onSendMessage={(content) => sendMessage(content)}
       />
       
       <ChatInput
