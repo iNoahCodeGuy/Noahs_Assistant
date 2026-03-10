@@ -215,14 +215,16 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
         persona_hints.setdefault("role_mode", normalized)
 
         # Show role-specific welcome message on first role detection —
-        # BUT only if the query was a simple menu selection (e.g. "1", "2").
+        # BUT only if the query was a simple menu selection (e.g. "1", "2")
+        # or a direct role alias match (e.g. "See what Noah has built").
         # If the user typed a substantive question, skip the welcome and let
         # it proceed through RAG so the question actually gets answered.
         query_raw = state.get("query", "").strip()
         is_menu_number = query_raw in _ROLE_SELECTION_MAP
+        is_role_alias = query_raw.lower().strip() in _ROLE_ALIASES
         if not persona_hints.get("role_welcome_shown"):
             persona_hints["role_welcome_shown"] = True  # Mark shown regardless
-            if is_menu_number:
+            if is_menu_number or is_role_alias:
                 welcome_msg = _get_role_welcome_message(normalized)
                 if welcome_msg:
                     state["answer"] = welcome_msg
