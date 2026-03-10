@@ -47,6 +47,7 @@ INTENT_CLASSIFICATION_PROMPT = """Classify the user's message into TWO values se
 
 2. Visitor signal (one of):
 - hiring: mentions hiring, role, team, position, resume, interviewing, company, "we are building", availability, compensation, "looking for", "our stack", "opening"
+- client: wants to hire Noah to BUILD something for them, "build this for us", "need an AI system", "looking for a developer", "freelance", "contract", "upwork", "can you build", "build something like this", "hire noah to build", "need something similar", "looking for someone to build", "consulting"
 - crush: romantic language, heart emojis, "you're cute", flirting, attracted
 - gatekeeper: screening for someone else, "my boss", "our hiring manager asked", "evaluating for my team", "forwarding this", "sharing with", "on behalf of"
 - student: learning, studying, "I'm a student", "learning about RAG", "studying AI", "trying to understand", "building something similar", "class project", "school"
@@ -76,6 +77,12 @@ Examples:
 - "I'm learning about RAG and found this" → knowledge_query|student
 - "this is for a class project" → knowledge_query|student
 - "evaluating this for our hiring manager" → knowledge_query|gatekeeper
+- "can Noah build something like this for my company?" → knowledge_query|client
+- "I need someone to build an AI assistant" → knowledge_query|client
+- "we're looking for someone to build an agentic system" → knowledge_query|client
+- "is Noah available for freelance work?" → knowledge_query|client
+- "found this on upwork" → knowledge_query|client
+- "I want to hire Noah to build something similar" → knowledge_query|client
 
 Respond with ONLY the two values separated by |, nothing else."""
 

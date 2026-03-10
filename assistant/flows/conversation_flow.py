@@ -156,6 +156,8 @@ _KNOWLEDGE_HOOKS = (
     "in a way most people don't expect.",
     "The Response Time Analysis app is worth asking about if you care "
     "about how he thinks through statistical problems.",
+    "This system doesn't just answer questions — it writes to databases, "
+    "sends SMS, and fires emails. Ask about the agentic architecture.",
 )
 
 _REACH_OUT_OFFERS = (
