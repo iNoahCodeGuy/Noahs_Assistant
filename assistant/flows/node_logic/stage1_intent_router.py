@@ -476,43 +476,71 @@ def _save_recruiter_lead(session_id: str, info: dict, state: ConversationState) 
         return False
 
 
-def _send_hm_lead_sms(info: dict) -> bool:
-    """Send Twilio SMS to Noah about a new hiring manager lead."""
+def _send_hm_lead_notifications(info: dict) -> bool:
+    """Send SMS and email notifications to Noah about a new hiring manager lead."""
+    name = info.get('name') or 'Unknown'
+    company = info.get('company') or 'Unknown company'
+    email = info.get('email') or ''
+    phone = info.get('phone') or ''
+    referral = info.get('referral_source') or ''
+    msg = info.get('message') or ''
+
+    # ── SMS ──
     try:
         from assistant.services.twilio_service import get_twilio_service
         twilio = get_twilio_service()
         noah_phone = os.getenv("NOAH_PHONE_NUMBER")
 
-        if not noah_phone or not twilio or not twilio.enabled:
-            logger.warning("Twilio not configured — skipping HM lead SMS")
-            return False
+        if noah_phone and twilio and twilio.enabled:
+            sms_body = f"Portfolia Lead: {name} at {company}"
+            if email:
+                sms_body += f"\nEmail: {email}"
+            if phone:
+                sms_body += f"\nPhone: {phone}"
+            if referral:
+                sms_body += f"\nFound via: {referral[:100]}"
+            if msg:
+                sms_body += f"\nMessage: {msg[:200]}"
 
-        name = info.get('name') or 'Unknown'
-        company = info.get('company') or 'Unknown company'
-        email = info.get('email') or ''
-        phone = info.get('phone') or ''
-        referral = info.get('referral_source') or ''
-        msg = info.get('message') or ''
+            if len(sms_body) > 1600:
+                sms_body = sms_body[:1597] + "..."
 
-        sms_body = f"💼 Portfolia Lead: {name} at {company}"
-        if email:
-            sms_body += f"\nEmail: {email}"
-        if phone:
-            sms_body += f"\nPhone: {phone}"
-        if referral:
-            sms_body += f"\nFound via: {referral[:100]}"
-        if msg:
-            sms_body += f"\nMessage: {msg[:200]}"
-
-        if len(sms_body) > 1600:
-            sms_body = sms_body[:1597] + "..."
-
-        result = twilio.send_sms(to_phone=noah_phone, message=sms_body)
-        logger.info(f"HM lead SMS sent to Noah: {result.get('status', 'unknown')}")
-        return True
+            result = twilio.send_sms(to_phone=noah_phone, message=sms_body)
+            logger.info(f"HM lead SMS sent to Noah: {result.get('status', 'unknown')}")
+        else:
+            logger.warning("Twilio not configured -- skipping HM lead SMS")
     except Exception as e:
-        logger.error(f"Failed to send HM lead SMS: {e}")
-        return False
+        logger.error(f"HM lead SMS failed: {e}")
+
+    # ── Email ──
+    try:
+        from assistant.services.resend_service import get_resend_service
+        resend_svc = get_resend_service()
+
+        if resend_svc and resend_svc.enabled:
+            subject = f"Portfolia Lead: {name} at {company}"
+            html = (
+                "<h2>New Recruiter/Hiring Manager Lead</h2>"
+                f"<p><strong>Name:</strong> {name}</p>"
+                f"<p><strong>Company:</strong> {company}</p>"
+                f"<p><strong>Email:</strong> {email or '(not provided)'}</p>"
+                f"<p><strong>Phone:</strong> {phone or '(not provided)'}</p>"
+                f"<p><strong>Referral Source:</strong> {referral or '(not provided)'}</p>"
+                f"<p><strong>Message:</strong> {msg or '(none)'}</p>"
+                "<p><em>Captured via Portfolia recruiter lead flow</em></p>"
+            )
+            resend_svc.send_email(
+                to_email=resend_svc.admin_email,
+                subject=subject,
+                html=html,
+            )
+            logger.info("HM lead email sent to Noah")
+        else:
+            logger.warning("Resend not configured -- skipping HM lead email")
+    except Exception as e:
+        logger.error(f"HM lead email failed: {e}")
+
+    return True
 
 
 def _is_connect_intent(query: str) -> bool:
@@ -644,7 +672,7 @@ def handle_hm_capture_continuation(state: ConversationState) -> ConversationStat
 
         if info.get("name") or info.get("email") or info.get("phone"):
             _save_recruiter_lead(session_id, info, state)
-            _send_hm_lead_sms(info)
+            _send_hm_lead_notifications(info)
             display = info.get("name") or info.get("email") or "your info"
             state["answer"] = (
                 f"I'll make sure Noah sees this. {display}'s details have been forwarded — "
@@ -1206,7 +1234,7 @@ def classify_intent(state: ConversationState) -> ConversationState:
         _save_recruiter_lead(session_id, info, state)
 
         # Send SMS to Noah
-        _send_hm_lead_sms(info)
+        _send_hm_lead_notifications(info)
 
         # Build confirmation response
         display = info.get("name") or info.get("email") or info.get("phone") or "your info"

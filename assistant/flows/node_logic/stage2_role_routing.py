@@ -46,28 +46,17 @@ def _get_role_welcome_message(role_mode: str) -> str:
         """),
 
         "software_developer": dedent("""\
-            Great! Let's dive into the technical details.
-
-            I have access to:
-            • Code samples and architecture patterns
-            • Implementation details of Noah's projects
-            • Technical decision-making and trade-offs
-            • System design and infrastructure choices
-            • This very codebase (I'm built with LangGraph, RAG, pgvector, and Supabase!)
-
-            Want to see code, discuss architecture, or ask about specific technical implementations?
+            The flagship is what you're talking to — a 21-node RAG pipeline with pgvector semantic search, Claude Sonnet 4.5 for generation, and intent classification that runs before retrieval so greetings don't trigger a vector search. Beyond that: a logistic regression model that hit 94.75% on imbalanced attrition data, a Naive Bayes variant that trades accuracy for recall on the class that actually matters, a K-Means clustering study where unsupervised structure contradicted every supervised label, and a decision tree segmentation where two features explained 81% of the variance. Pick one and I'll walk you through the architecture decisions.
         """),
 
         "explorer": dedent("""\
-            Awesome! I'm here to show you whatever interests you.
+            Noah is a software developer who builds machine learning models and generative AI applications. He designed and shipped a RAG-powered conversational assistant — you're using it — along with predictive models (logistic regression, Naive Bayes, K-Means clustering) and data visualization tools. The technical foundation comes from a Biology degree at UNLV, where biostatistics and experimental design did the heavy lifting.
 
-            I can share:
-            • Career stories and professional highlights
-            • Technical projects and how they work
-            • Behind-the-scenes of how I'm built
-            • Fun facts and personal interests (including MMA!)
+            If you'd like Noah to reach out, I can set that up. Otherwise, ask me anything about what he's built. The architecture behind this conversation is a good place to start.
+        """),
 
-            What sounds interesting to you?
+        "casual": dedent("""\
+            No agenda required. I know about Noah's projects, his career background, his technical stack, and there's an MMA coaching story that's better than you'd expect. Ask whatever you want.
         """),
 
         "confession": dedent("""\
@@ -90,7 +79,7 @@ _ROLE_ALIASES = {
     "hiring manager (nontechnical)": "hiring_manager_nontechnical",
     "hiring manager (non-technical)": "hiring_manager_nontechnical",
     "software developer": "software_developer",
-    "just looking around": "explorer",
+    "just looking around": "casual",
     "looking to confess crush": "confession",
     # New 4-option menu aliases
     "learn more about noah": "explorer",
@@ -103,6 +92,7 @@ _ROLE_DISPLAY = {
     "hiring_manager_nontechnical": "Hiring Manager (nontechnical)",
     "software_developer": "See what Noah has built",
     "explorer": "Learn more about Noah",
+    "casual": "Just looking around",
     "confession": "Confess a crush",
 }
 
@@ -111,8 +101,8 @@ _ROLE_SELECTION_MAP = {
     "1️⃣": "explorer",
     "2": "software_developer",
     "2️⃣": "software_developer",
-    "3": "explorer",
-    "3️⃣": "explorer",
+    "3": "casual",
+    "3️⃣": "casual",
     "4": "confession",
     "4️⃣": "confession",
 }
@@ -143,6 +133,15 @@ def classify_role_mode(state: ConversationState) -> ConversationState:
             # (frontend may pre-set role from button click)
             if not persona_hints.get("role_welcome_shown"):
                 persona_hints["role_welcome_shown"] = True
+
+                # Confession role: delegate to handle_crush_confession so the
+                # form is shown and crush flow state is properly initialized.
+                if normalized == "confession":
+                    from assistant.flows.node_logic.stage1_intent_router import handle_crush_confession
+                    state["message_intent"] = "crush_confession"
+                    state["visitor_type"] = "crush"
+                    return handle_crush_confession(state)
+
                 welcome_msg = _get_role_welcome_message(normalized)
                 if welcome_msg:
                     state["answer"] = welcome_msg
