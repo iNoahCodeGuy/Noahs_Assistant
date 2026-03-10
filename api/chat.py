@@ -109,10 +109,11 @@ class handler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(data).encode('utf-8'))
 
     def _send_error(self, status_code: int, message: str):
-        """Send error response."""
+        """Send error response with answer field for frontend compatibility."""
         self._send_json(status_code, {
             'success': False,
-            'error': message
+            'error': message,
+            'answer': 'Something went wrong. Try again in a moment.'
         })
 
     def _send_cors_headers(self):

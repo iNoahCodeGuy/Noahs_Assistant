@@ -858,40 +858,45 @@ def handle_grounding_gap(state: ConversationState) -> ConversationState:
 
     # Combine both sources for keyword matching
     _sk_query_lower = f"{_sk_query_from_history} {_sk_query_from_state}".lower()
+    # NOTE: The is_self_referential flag (set in stage1) is the primary path for
+    # "tell me about you", "how do you work", etc. This keyword fallback only
+    # catches queries the flag misses. Keywords must be SPECIFIC to Portfolia's
+    # architecture — broad words like "built", "error", "github" match normal
+    # project/career queries and cause false-positive self-knowledge injection.
     self_knowledge_keywords = [
-        "built", "build", "retrieval", "pipeline", "architecture", "rag",
-        "langgraph", "pgvector", "embedding", "vector", "node", "generation",
+        # Architecture-specific terms (unlikely in normal project queries)
+        "retrieval pipeline", "pipeline architecture", "rag pipeline",
+        "langgraph", "pgvector", "embedding model", "vector search",
+        "21 node", "21-node", "node pipeline",
         "how do you work", "how you work", "how you were built", "how this works",
-        "how does your", "how were you", "how are you built",
-        "what model", "which model", "tech stack", "supabase", "intent",
-        "classification", "how does this work", "how were", "how was", "how did",
-        "similarity", "threshold", "hallucination", "routing", "crush flow", "crush",
-        "error", "handle error", "graceful", "degradation", "grounding",
-        "how do you handle", "what happens when", "quality", "validation",
-        "github", "repo", "source code", "see the code", "show me the code",
-        "self-knowledge", "self knowledge", "memory", "bounded",
+        "how does your", "how were you built", "how are you built",
+        "how does this assistant", "how does this chatbot", "how does portfolia",
+        "what model do you use", "which model", "your tech stack",
+        "supabase", "intent classification",
+        "similarity threshold", "hallucination check", "grounding validation",
+        "crush flow", "crush state machine",
+        "how do you handle error", "graceful degradation",
+        "self-knowledge", "self knowledge", "bounded memory",
         "stage 1", "stage 2", "stage 3", "stage 4", "stage 5", "stage 6", "stage 7",
-        "go deeper on", "explain how", "tell me about your",
+        "tell me about your pipeline", "explain your architecture",
         # Self-referential markers (belt-and-suspenders with stage1)
         "about you", "about yourself", "tell me about you", "yourself",
         "who are you", "what are you", "describe yourself", "explain yourself",
-        "your design", "your system", "your tech stack",
-        # Personality / behavior / decision-making questions
-        "personality", "voice", "tone", "designed after", "who designed",
+        "your design", "your system",
+        # Personality / behavior questions
+        "your personality", "your voice", "your tone", "who designed you",
         "your behavior", "why don't you", "why aren't you", "your style",
         "how do you decide", "your purpose", "what are you for",
         # Meta / limitations questions
         "your limitation", "your limitations", "what can't you do",
         "what cant you do", "what are you bad at", "what don't you know",
-        "what dont you know", "what can you not do", "your weakness",
-        "your weaknesses", "where do you fall short", "what are you missing",
+        "what dont you know", "what can you not do",
         # Data handling / privacy questions
         "your data", "my data", "collect data", "store data", "track data",
-        "my information", "my info", "personal data", "personal information",
-        "do you collect", "do you track", "do you store",
+        "my information", "do you collect", "do you track", "do you store",
         "what data do you", "what information do you",
         "what do you store", "what do you collect", "what do you track",
-        "what happens to", "privacy", "cookies",
+        "privacy", "cookies",
     ]
     if any(kw in _sk_query_lower for kw in self_knowledge_keywords):
         logger.info(

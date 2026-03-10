@@ -382,7 +382,7 @@ def _detect_hm_capture_flow_from_history(state: ConversationState) -> str | None
 def _parse_hm_contact_info(query: str) -> dict:
     """Parse hiring manager contact info from free-form input.
 
-    Returns dict with keys: name, email, phone, company, message.
+    Returns dict with keys: name, email, phone, company, referral_source, message.
     Any value can be None if not detected.
     """
     info = {"name": None, "email": None, "phone": None, "company": None, "referral_source": None, "message": None}
@@ -392,13 +392,18 @@ def _parse_hm_contact_info(query: str) -> dict:
     if email_match:
         info["email"] = email_match.group()
 
-    # Extract phone
+    # Extract phone (digit-pattern OR "Number/Phone: X" label)
     phone_match = re.search(r'(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', query)
     if phone_match:
         info["phone"] = phone_match.group()
+    else:
+        label_phone = re.search(r'(?:^|\n)\s*(?:number|phone)\s*[:=][ \t]*([^\n]+)', query, re.IGNORECASE)
+        if label_phone and label_phone.group(1).strip():
+            info["phone"] = label_phone.group(1).strip()
 
     # Extract name — "Name: X", "my name is X", "I'm X", "this is X", "Name, ..."
-    label_name_match = re.search(r'(?:^|\n)\s*name\s*[:=]\s*(.+)', query, re.IGNORECASE)
+    # Use [^\n]+ (not .+) and [ \t]* (not \s*) to avoid crossing newlines
+    label_name_match = re.search(r'(?:^|\n)\s*name\s*[:=][ \t]*([^\n]+)', query, re.IGNORECASE)
     name_match = re.match(
         r"(?:my name is|i'm|i am|this is|it's)\s+(\w+(?:\s+\w+)?)",
         query, re.IGNORECASE,
@@ -414,7 +419,7 @@ def _parse_hm_contact_info(query: str) -> dict:
             info["name"] = parts[0].strip()
 
     # Extract company — "Company: X", "at X", "from X", "X company"
-    label_company_match = re.search(r'(?:^|\n)\s*company\s*[:=]\s*(.+)', query, re.IGNORECASE)
+    label_company_match = re.search(r'(?:^|\n)\s*company\s*[:=][ \t]*([^\n]+)', query, re.IGNORECASE)
     company_match = re.search(
         r'(?:at|from|with)\s+([A-Z][\w\s&.-]{1,30}?)(?:\s*[,.]|\s+(?:and|we|our|i|my|looking|hiring)|\s*$)',
         query, re.IGNORECASE,
@@ -424,22 +429,41 @@ def _parse_hm_contact_info(query: str) -> dict:
     elif company_match:
         info["company"] = company_match.group(1).strip()
 
-    # Extract referral source — "How did you find this website?: ..."
+    # Extract referral source — "How did you find this website?: X"
+    # Consume the full label (including "this website?") before capturing the value
     referral_match = re.search(
-        r'(?:how did you find|found (?:this|you|the site|the website)|referral)[:\s]+(.+?)(?:\n|$)',
+        r'(?:how did you find[^:\n]*[?]?\s*[:=]|found (?:this|you|the site|the website)\s*[:=]|referral\s*[:=])[ \t]*([^\n]+)',
         query, re.IGNORECASE,
     )
-    if referral_match:
+    if referral_match and referral_match.group(1).strip():
         info["referral_source"] = referral_match.group(1).strip()
 
-    # Remaining text is the message
+    # Extract additional info label value
+    additional_match = re.search(
+        r'(?:^|\n)\s*additional\s*(?:information|info)?\s*[:=][ \t]*([^\n]+)',
+        query, re.IGNORECASE,
+    )
+    additional_text = additional_match.group(1).strip() if additional_match and additional_match.group(1).strip() else None
+
+    # Build message from remaining text, stripping form labels
     remaining = query
-    for val in [info["email"], info["phone"], info["name"], info["referral_source"]]:
+    for val in [info["email"], info["phone"], info["name"], info["company"], info["referral_source"]]:
         if val:
-            remaining = remaining.replace(val, "").strip()
+            remaining = remaining.replace(val, "", 1).strip()
+    # Strip known form label lines (empty or already-extracted)
+    remaining = re.sub(
+        r'(?m)^\s*(?:name|phone|number|email|company|how did you find[^\n]*?|additional\s*(?:information|info)?)\s*[:=][ \t]*\n?',
+        '', remaining, flags=re.IGNORECASE,
+    )
     remaining = re.sub(r'^[\s,.-]+|[\s,.-]+$', '', remaining)
-    if remaining and len(remaining) > 3:
+
+    # Prefer additional_text if remaining is mostly form debris
+    if additional_text and (not remaining or len(remaining) <= 3):
+        info["message"] = additional_text
+    elif remaining and len(remaining) > 3:
         info["message"] = remaining
+    elif additional_text:
+        info["message"] = additional_text
 
     return info
 
@@ -856,6 +880,7 @@ def classify_intent(state: ConversationState) -> ConversationState:
             "\n\nName:\nNumber:\nEmail:\nCompany:\nHow did you find this website?:\nAdditional information:"
             "\n\nOnce you submit, I can walk you through the rest of Noah's projects."
         )
+        state["hm_capture_step"] = "awaiting_hm_details"
         state["pipeline_halt"] = True
         return state
 
