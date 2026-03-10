@@ -1111,9 +1111,34 @@ def classify_intent(state: ConversationState) -> ConversationState:
         "projects", "tesla", "coaching", "skills", "background",
         "experience", "resume", "education", "certifications", "certs",
         "mma", "bjj", "work", "career", "portfolio",
+        # Project-specific single words (prevent Haiku misclassification)
+        "attrition", "heatmap", "segmentation", "clustering",
+        "regression", "streamlit", "portfolia",
     }
     if query_lower in _single_topic_words:
         logger.info(f"Single-topic word classified as knowledge_query: {query}")
+        state["message_intent"] = "knowledge_query"
+        state["skip_rag"] = False
+        return state
+
+    # ── Project name detection ────────────────────────────────────────
+    # Noah's project names must always route to knowledge_query.
+    # Without this, Haiku misclassifies them as off_topic when the
+    # assistant welcome message (which lists projects) isn't in Haiku's context.
+    _project_name_phrases = [
+        # Full and partial project names
+        "lead response heatmap", "response heatmap", "lead heatmap",
+        "employee attrition", "attrition model", "attrition prediction",
+        "logistic regression", "naive bayes",
+        "customer segmentation", "decision tree", "decision trees",
+        "k-means", "kmeans", "k means",
+        "response time analysis", "response time",
+        "portfolia", "rag pipeline", "rag assistant",
+        # Standalone project keywords (catch "the heatmap", "tell me about attrition", etc.)
+        "heatmap", "attrition", "segmentation", "clustering",
+    ]
+    if any(phrase in query_lower for phrase in _project_name_phrases):
+        logger.info(f"Project name detected — classified as knowledge_query: {query}")
         state["message_intent"] = "knowledge_query"
         state["skip_rag"] = False
         return state

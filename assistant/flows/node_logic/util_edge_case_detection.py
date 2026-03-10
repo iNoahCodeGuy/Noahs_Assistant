@@ -211,7 +211,13 @@ def _is_off_topic(query: str, chat_history: list) -> bool:
         # Enterprise adaptation topics (NEW - these are ON-TOPIC)
         "adapt", "adapts", "adaptation", "customer support", "enterprise",
         "use case", "scales to", "applies to", "works for", "chatbot",
-        "internal docs", "sales enablement", "production", "deployment"
+        "internal docs", "sales enablement", "production", "deployment",
+
+        # Noah's project names (prevent off-topic false positives)
+        "heatmap", "lead response", "attrition", "segmentation",
+        "decision tree", "naive bayes", "logistic regression",
+        "k-means", "kmeans", "clustering", "response time",
+        "streamlit", "tableau", "matplotlib", "pandas",
     ]
 
     # Check if query contains any on-topic keywords
