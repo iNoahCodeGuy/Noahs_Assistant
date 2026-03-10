@@ -756,35 +756,7 @@ def classify_intent(state: ConversationState) -> ConversationState:
     state["questions_asked_about_visitor"] = _compute_questions_asked_about_visitor(chat_history)
     state["buying_signals_count"] = _compute_buying_signals(chat_with_current)
 
-    # Infer visitor_type from explicit role selection (most reliable signal)
-    if state.get("visitor_type", "unknown") == "unknown":
-        role = state.get("role", "").lower()
-        if "hiring" in role or "recruiter" in role:
-            state["visitor_type"] = "hiring_manager"
-            logger.info(f"Visitor type inferred from role: hiring_manager (role='{role}')")
-        elif "crush" in role:
-            state["visitor_type"] = "crush"
-            logger.info(f"Visitor type inferred from role: crush (role='{role}')")
-        elif role in ("just looking around", "explorer", "casual"):
-            state["visitor_type"] = "casual"
-            logger.info(f"Visitor type inferred from role: casual (role='{role}')")
-
-    # Recover visitor_type from session_memory (persists Haiku classifications
-    # like gatekeeper/student that history-based recovery can't detect)
-    if state.get("visitor_type", "unknown") == "unknown":
-        stored_vtype = session_memory.get("visitor_type")
-        if stored_vtype and stored_vtype != "unknown":
-            state["visitor_type"] = stored_vtype
-            logger.info(f"Visitor type recovered from session_memory: {stored_vtype}")
-
-    # Recover visitor_type from history if still unknown (serverless)
-    if state.get("visitor_type", "unknown") == "unknown" and chat_history:
-        recovered = _detect_visitor_type_from_history(chat_history)
-        if recovered != "unknown":
-            state["visitor_type"] = recovered
-            logger.info(f"Visitor type recovered from chat_history: {recovered}")
-
-    # Detect soft offer from history
+    # Detect soft offer from history (for reach-out offer dedup)
     if not state.get("hm_soft_offer_made"):
         for msg in chat_history:
             content = ""
@@ -1324,22 +1296,9 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["message_intent"] = intent
         state["skip_rag"] = (intent != "knowledge_query")
 
-        # Resolve visitor_type with sticky rules
-        current_vtype = state.get("visitor_type", "unknown")
-        state["visitor_type"] = _resolve_visitor_type(current_vtype, visitor_signal)
-
-        # Also check current query for buying signals
-        query_buying = 0
-        for pattern in _BUYING_SIGNAL_PATTERNS.values():
-            if re.search(pattern, query_lower):
-                query_buying += 1
-        if query_buying > 0 and state["visitor_type"] != "hiring_manager":
-            # Current query alone has hiring signals — upgrade
-            state["visitor_type"] = _resolve_visitor_type(state["visitor_type"], "hiring")
-
         logger.info(
             f"Intent classified as: {intent} (skip_rag={state['skip_rag']}) | "
-            f"visitor_type={state['visitor_type']} | msg_count={state.get('message_count', 0)} | "
+            f"visitor_signal={visitor_signal} | msg_count={state.get('message_count', 0)} | "
             f"buying_signals={state.get('buying_signals_count', 0)}"
         )
 
@@ -1348,11 +1307,9 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["message_intent"] = "knowledge_query"
         state["skip_rag"] = False
 
-    # ── HM data capture trigger ──────────────────────────────────────────
-    # Check if eligible hiring manager is expressing intent to connect
+    # ── Data capture trigger (universal) ─────────────────────────────────
     msg_count = state.get("message_count", 0)
     buying = state.get("buying_signals_count", 0)
-    vtype = state.get("visitor_type", "unknown")
 
     if (_is_connect_intent(query)
             and not state.get("hm_capture_step")
@@ -1394,18 +1351,9 @@ def classify_intent(state: ConversationState) -> ConversationState:
     if (msg_count >= 5
             and buying == 0
             and not state.get("hm_soft_offer_made")
-            and not state.get("hm_capture_step")
-            and vtype != "crush"):
-        # Don't halt the pipeline — just mark that we should inject the soft offer
-        # The soft offer text will be injected in the generation prompt
+            and not state.get("hm_capture_step")):
         state["hm_soft_offer_made"] = True
-        logger.info("Soft offer flagged for injection at message %d (visitor=%s)", msg_count, vtype)
-
-    # Persist visitor_type to session_memory so it survives across turns
-    # (history-based recovery can't detect gatekeeper/student classifications)
-    final_vtype = state.get("visitor_type", "unknown")
-    if final_vtype != "unknown":
-        state.setdefault("session_memory", {})["visitor_type"] = final_vtype
+        logger.info("Soft offer flagged for injection at message %d", msg_count)
 
     return state
 

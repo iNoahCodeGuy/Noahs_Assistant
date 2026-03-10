@@ -615,8 +615,6 @@ def _generate_conversation_logic_explanation(state: ConversationState) -> str:
     similarity_history = metrics.get("retrieval_similarity_history", [])
     depth_level = state.get("depth_level", 1)
     conversation_phase = state.get("conversation_phase", "discovery")
-    role = state.get("role", "Not set")
-    role_mode = state.get("role_mode", "unknown")
 
     # Build similarity progression text
     similarity_text = ""
@@ -657,7 +655,6 @@ def _generate_conversation_logic_explanation(state: ConversationState) -> str:
 
 **Current State:**
 - Turn Number: {current_turn}
-- Your Role: {role} ({role_mode})
 - Conversation Phase: {conversation_phase}
 - Depth Level: {depth_level} (1=overview, 2=guided detail, 3=deep dive)
 
@@ -669,22 +666,17 @@ def _generate_conversation_logic_explanation(state: ConversationState) -> str:
 {similarity_text}
 
 **How My Inference Has Improved:**
-1. **Turn 1**: I sent a greeting and detected your role → stored `role_mode: {role_mode}`
-2. **Each Turn**: I compose your query with role context, improving retrieval similarity
+1. **Turn 1**: I greeted you and started tracking context
+2. **Each Turn**: I compose your query with conversation context, improving retrieval similarity
 3. **Memory Accumulation**: Topics, entities, and affinity scores build up in `session_memory`
-4. **Progressive Depth**: As we talk more, `depth_level` increases → I provide more detail
+4. **Progressive Depth**: As we talk more, `depth_level` increases -- I provide more detail
 
 **What I'm Tracking:**
-- Conversation patterns (orchestration → enterprise, general → specific)
+- Conversation patterns (general → specific, surface → deep)
 - Quality flags (if answers get repetitive, I redirect)
 - Phase transitions (discovery → exploration → synthesis)
 
-This is the progressive inference that makes me smarter with each turn. The orchestration layer's intelligence comes from stateless nodes working with stateful memory - each node executes independently, but memory creates the thread that connects them into progressively smarter behavior.
-
-**Want to explore more?**
-- Ask about how I detect conversation patterns
-- See how my retrieval improves with context
-- Understand how I decide what to show you"""
+This is the progressive inference that makes me smarter with each turn. The orchestration layer's intelligence comes from stateless nodes working with stateful memory -- each node executes independently, but memory creates the thread that connects them into progressively smarter behavior."""
 
     return explanation
 
@@ -723,8 +715,6 @@ def _detect_abstraction_level(query: str, role: str, chat_history: List[Dict]) -
         return "function"
 
     # Default: architecture (teaching-first approach)
-    if role in ["Hiring Manager (technical)", "Software Developer"]:
-        return "architecture"
     return "architecture"
 
 
@@ -737,7 +727,6 @@ def _build_engagement_context(state: dict) -> str | None:
     """
     msg_count = state.get("message_count", 0)
     logger.info("DIAG _build_engagement_context CALLED msg_count=%d", msg_count)
-    visitor_type = state.get("visitor_type", "unknown")
 
     # Derive conversation phase
     if msg_count <= 2:
@@ -750,21 +739,8 @@ def _build_engagement_context(state: dict) -> str | None:
         phase = "sustained"
 
     hint = (
-        f"\nCONVERSATION STATE: message #{msg_count} | visitor: {visitor_type} "
-        f"| phase: {phase}"
+        f"\nCONVERSATION STATE: message #{msg_count} | phase: {phase}"
     )
-
-    # Visitor-type-specific guidance
-    if visitor_type == "gatekeeper":
-        hint += (
-            "\nVISITOR NOTE: Gatekeeper, screening for a decision-maker. "
-            "Keep answers concise and easy to forward. Lead with results and outcomes."
-        )
-    elif visitor_type == "student":
-        hint += (
-            "\nVISITOR NOTE: Student/learner, here to learn from the architecture. "
-            "Go deep on technical decisions when asked. Point to GitHub."
-        )
 
     # First-message framing: anchor Noah's identity with Danaher structure
     if msg_count == 1:
@@ -1395,61 +1371,55 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         state.update(update)
         return state
 
-    # RUNTIME AWARENESS: Detect technical deep dive requests (SOFTWARE DEVELOPER ONLY)
-    # Based on PORTFOLIA_LANGGRAPH_CONTEXT.md - Section: "When User Asks Technical Questions"
+    # RUNTIME AWARENESS: Detect technical deep dive requests (available to all visitors)
     runtime_awareness_triggered = False
     runtime_content_block = None
+    query_lower = query.lower()
 
-    if role == "Software Developer":
-        query_lower = query.lower()
-
-        # Architecture questions → Show conversation flow diagram or full stack
-        if any(kw in query_lower for kw in ["architecture", "how do you work", "how does this work", "system design", "how are you built"]):
-            if "rag" in query_lower or "retrieval" in query_lower or "search" in query_lower:
-                # RAG-specific architecture
-                runtime_content_block = content_blocks.rag_pipeline_explanation()
-                runtime_awareness_triggered = True
-                logger.info("Runtime awareness: RAG pipeline explanation triggered")
-            elif "flow" in query_lower or "pipeline" in query_lower or "nodes" in query_lower:
-                # Conversation flow
-                runtime_content_block = content_blocks.conversation_flow_diagram()
-                runtime_awareness_triggered = True
-                logger.info("Runtime awareness: Conversation flow diagram triggered")
-            else:
-                # General architecture
-                runtime_content_block = content_blocks.architecture_stack_explanation()
-                runtime_awareness_triggered = True
-                logger.info("Runtime awareness: Architecture stack explanation triggered")
-
-        # Performance questions → Show metrics table
-        elif any(kw in query_lower for kw in ["performance", "latency", "speed", "how fast", "metrics", "p95", "p99"]):
-            runtime_content_block = content_blocks.performance_metrics_table()
+    # Architecture questions
+    if any(kw in query_lower for kw in ["architecture", "how do you work", "how does this work", "system design", "how are you built"]):
+        if "rag" in query_lower or "retrieval" in query_lower or "search" in query_lower:
+            runtime_content_block = content_blocks.rag_pipeline_explanation()
             runtime_awareness_triggered = True
-            logger.info("Runtime awareness: Performance metrics table triggered")
-
-        # Code questions → Show actual retrieval code
-        elif any(kw in query_lower for kw in ["show me code", "show code", "show me the code", "retrieval code", "how do you retrieve"]):
-            runtime_content_block = content_blocks.code_example_retrieval_method()
+            logger.info("Runtime awareness: RAG pipeline explanation triggered")
+        elif "flow" in query_lower or "pipeline" in query_lower or "nodes" in query_lower:
+            runtime_content_block = content_blocks.conversation_flow_diagram()
             runtime_awareness_triggered = True
-            logger.info("Runtime awareness: Code example triggered")
-
-        # SQL/query questions → Show pgvector query
-        elif any(kw in query_lower for kw in ["sql", "query", "vector search", "pgvector", "how do you search"]):
-            runtime_content_block = content_blocks.pgvector_query_example()
+            logger.info("Runtime awareness: Conversation flow diagram triggered")
+        else:
+            runtime_content_block = content_blocks.architecture_stack_explanation()
             runtime_awareness_triggered = True
-            logger.info("Runtime awareness: pgvector query example triggered")
+            logger.info("Runtime awareness: Architecture stack explanation triggered")
 
-        # Cost questions → Show cost analysis
-        elif any(kw in query_lower for kw in ["cost", "expensive", "pricing", "how much", "budget"]):
-            runtime_content_block = content_blocks.cost_analysis_table()
-            runtime_awareness_triggered = True
-            logger.info("Runtime awareness: Cost analysis table triggered")
+    # Performance questions
+    elif any(kw in query_lower for kw in ["performance", "latency", "speed", "how fast", "metrics", "p95", "p99"]):
+        runtime_content_block = content_blocks.performance_metrics_table()
+        runtime_awareness_triggered = True
+        logger.info("Runtime awareness: Performance metrics table triggered")
 
-        # Scaling questions → Show enterprise scaling strategy
-        elif any(kw in query_lower for kw in ["scale", "scaling", "enterprise", "100k users", "production", "deployment"]):
-            runtime_content_block = content_blocks.enterprise_scaling_strategy()
-            runtime_awareness_triggered = True
-            logger.info("Runtime awareness: Enterprise scaling strategy triggered")
+    # Code questions
+    elif any(kw in query_lower for kw in ["show me code", "show code", "show me the code", "retrieval code", "how do you retrieve"]):
+        runtime_content_block = content_blocks.code_example_retrieval_method()
+        runtime_awareness_triggered = True
+        logger.info("Runtime awareness: Code example triggered")
+
+    # SQL/query questions
+    elif any(kw in query_lower for kw in ["sql", "query", "vector search", "pgvector", "how do you search"]):
+        runtime_content_block = content_blocks.pgvector_query_example()
+        runtime_awareness_triggered = True
+        logger.info("Runtime awareness: pgvector query example triggered")
+
+    # Cost questions
+    elif any(kw in query_lower for kw in ["cost", "expensive", "pricing", "how much", "budget"]):
+        runtime_content_block = content_blocks.cost_analysis_table()
+        runtime_awareness_triggered = True
+        logger.info("Runtime awareness: Cost analysis table triggered")
+
+    # Scaling questions
+    elif any(kw in query_lower for kw in ["scale", "scaling", "enterprise", "100k users", "production", "deployment"]):
+        runtime_content_block = content_blocks.enterprise_scaling_strategy()
+        runtime_awareness_triggered = True
+        logger.info("Runtime awareness: Enterprise scaling strategy triggered")
 
     # =====================================================================
     # BUILD EXTRA INSTRUCTIONS — max 3 blocks to avoid prompt bloat.
@@ -1507,21 +1477,6 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
         logger.warning(f"Retrieval mismatch for: {query[:50]}")
         _situational_added = True
 
-    # ── Kept as-is: runtime awareness (Software Developer only) ──────
-    is_menu_option_one = (
-        state.get("query_type") == "menu_selection" and
-        state.get("menu_choice") == "1" and
-        state.get("role_mode") == "hiring_manager_technical"
-    )
-
-    layer_outline: Optional[Dict[str, str]] = None
-
-    is_menu_option_two = (
-        state.get("query_type") == "menu_selection" and
-        state.get("menu_choice") == "2" and
-        state.get("role_mode") == "hiring_manager_technical"
-    )
-
     if runtime_awareness_triggered and runtime_content_block:
         extra_instructions.append(
             f"RUNTIME AWARENESS: Reference this self-referential data in your "
@@ -1544,13 +1499,7 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     # Store model selection in state for analytics
     state.setdefault("analytics_metadata", {})["selected_model"] = selected_model
 
-    # Generate response with LLM (Encapsulation - delegates to response generator)
-    attempt_label = "menu-option-1" if is_menu_option_one else ("menu-option-2" if is_menu_option_two else "generic-response")
-    attempt_counter = 0
-
-    if is_menu_option_one:
-        _log_instruction_preview(f"{attempt_label}-attempt-{attempt_counter}", instruction_suffix)
-
+    # Generate response with LLM
     logger.info(
         f"LLM call: model={selected_model or 'default'} "
         f"chunks={len(retrieved_chunks)} history={len(chat_history)} "
@@ -1571,211 +1520,12 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
 
     except Exception as e:
         logger.error(f"LLM generation failed: {type(e).__name__}: {e}", exc_info=True)
+        answer = (
+            "I'm having trouble generating a response right now. "
+            "Please try rephrasing your question or ask something else!"
+        )
 
-        # Specific handling for menu option 2
-        if is_menu_option_two:
-            logger.error(f"Menu option 2 generation failed: {e}")
-            answer = (
-                "I'm having trouble explaining my orchestration layer right now. "
-                "The conversation pipeline flows through 7 stages: Initialization → Role/Greeting → "
-                "Query Understanding → Query Refinement → Retrieval → Generation → Formatting → Logging. "
-                "Each stage has specific nodes that handle different concerns. Please try again or ask a more specific question!"
-            )
-        else:
-            # Fail-safe: Provide graceful error message (Defensibility)
-            answer = (
-                "I'm having trouble generating a response right now. "
-                "Please try rephrasing your question or ask something else!"
-            )
-
-    if is_menu_option_one:
-        _log_answer_snapshot(f"{attempt_label}-attempt-{attempt_counter}", answer)
-
-    # Validate structured output for menu option 1 (full tech stack)
-    if is_menu_option_one:
-        validation = _validate_menu_option_one_answer(answer)
-        retries = 0
-
-        while not validation["is_valid"] and retries < MENU_OPTION_ONE_MAX_RETRIES:
-            retries += 1
-            logger.warning(
-                f"⚠️ Menu option 1 validation failed (attempt {retries}): "
-                f"missing_layers={validation['missing_layers']}, words={validation['word_count']}"
-            )
-            retry_instructions = _build_retry_instruction(validation, retries, layer_outline)
-            combined_instructions = "\n\n".join(filter(None, [base_instruction_suffix, retry_instructions]))
-
-            _log_instruction_preview(f"{attempt_label}-attempt-{retries}", combined_instructions)
-
-            try:
-                answer = rag_engine.response_generator.generate_contextual_response(
-                    query=query,
-                    context=retrieved_chunks,
-                    role=role,
-                    chat_history=chat_history,
-                    extra_instructions=combined_instructions,
-                    model_name=selected_model
-                )
-            except Exception as retry_error:
-                logger.error(f"Retry generation failed: {retry_error}")
-                break
-
-            _log_answer_snapshot(f"{attempt_label}-attempt-{retries}", answer)
-            validation = _validate_menu_option_one_answer(answer)
-
-        if not validation["is_valid"]:
-            logger.error("❌ Menu option 1 output failed validation after retries — using deterministic fallback")
-            answer = _build_deterministic_menu_option_response(layer_outline, retrieved_chunks)
-            _log_answer_snapshot(f"{attempt_label}-fallback", answer)
-            validation = _validate_menu_option_one_answer(answer)
-            update["generation_quality_warning"] = "LLM fallback used for menu option 1"
-        else:
-            if retries:
-                state.setdefault("analytics_metadata", {})["menu_option_retries"] = retries
-
-        missing_layers = validation["missing_layers"]
-        word_count = validation["word_count"]
-
-        if missing_layers:
-            logger.warning(f"⚠️ Generated answer missing {len(missing_layers)} layers: {missing_layers}")
-            logger.warning(f"⚠️ Word count: {word_count} (target: 100-150)")
-            update["generation_quality_warning"] = f"Missing layers: {', '.join(missing_layers)}"
-        elif word_count < MENU_OPTION_ONE_MIN_WORDS:
-            logger.warning(f"⚠️ Generated answer too short: {word_count} words (target: 100-150)")
-            update["generation_quality_warning"] = f"Too short: {word_count} words"
-        elif word_count > 160:
-            logger.warning(f"⚠️ Generated answer too long: {word_count} words (target: 100-150)")
-            update["generation_quality_warning"] = f"Too long: {word_count} words"
-        else:
-            logger.info(f"✅ Structured output validated: All 4 layers present, {word_count} words")
-
-        # Post-generation processing for menu option 1 responses
-        # This ensures any third-person references from context are converted to first person
-        answer = rag_engine.response_generator._enforce_first_person(answer)
-        logger.debug("Applied post-generation first-person enforcement for menu option 1")
-
-        # Remove markdown asterisks as post-processing safety net
-        answer = _remove_markdown_asterisks(answer)
-        logger.debug("Removed markdown asterisks from menu option 1 response")
-
-        # Remove repeated chunk phrases
-        answer = _remove_repeated_chunk_phrases(answer)
-        logger.debug("Removed repeated chunk phrases from menu option 1 response")
-
-        # Ensure closing question is present and correct
-        required_question = "Would you like a detailed walkthrough of my architecture, or go into detail about a specific part?"
-        if required_question.lower() not in answer.lower():
-            # Check if there's any question at all
-            if "?" not in answer[-100:]:  # Check last 100 chars
-                answer = answer + "\n\n" + required_question
-                logger.info("Added missing closing question to menu option 1 response")
-            else:
-                # Replace existing question with correct one
-                answer = re.sub(
-                    r'Would you like.*\?',
-                    required_question,
-                    answer,
-                    flags=re.IGNORECASE | re.DOTALL
-                )
-                logger.info("Replaced closing question with correct format")
-
-    if is_menu_option_two:
-        # Validate and retry logic for menu option 2 (similar to menu option 1)
-        validation = _validate_menu_option_two_answer(answer)
-        retries = 0
-
-        # Extract context for retry instructions (same as initial generation)
-        session_memory = state.get("session_memory", {})
-        conversation_examples = _format_conversation_examples(chat_history)
-        memory_context = _format_memory_context(session_memory)
-
-        while not validation["is_valid"] and retries < MENU_OPTION_TWO_MAX_RETRIES:
-            retries += 1
-            logger.warning(
-                f"⚠️ Menu option 2 validation failed (attempt {retries}): "
-                f"missing_sections={validation['missing_sections']}, "
-                f"word_count={validation['word_count']}, "
-                f"has_turn_references={validation['has_turn_references']}, "
-                f"has_memory_demonstration={validation['has_memory_demonstration']}"
-            )
-
-            retry_instructions = _build_menu_option_two_retry_instruction(
-                validation, retries, conversation_examples, memory_context
-            )
-            combined_instructions = "\n\n".join(filter(None, [base_instruction_suffix, retry_instructions]))
-
-            try:
-                answer = rag_engine.response_generator.generate_contextual_response(
-                    query=query,
-                    context=retrieved_chunks,
-                    role=role,
-                    chat_history=chat_history,
-                    extra_instructions=combined_instructions,
-                    model_name=selected_model
-                )
-            except Exception as retry_error:
-                logger.error(f"Menu option 2 retry generation failed: {retry_error}")
-                break
-
-            validation = _validate_menu_option_two_answer(answer)
-
-        if not validation["is_valid"]:
-            logger.error("❌ Menu option 2 output failed validation after retries — using deterministic fallback")
-            answer = _build_deterministic_menu_option_two_response(conversation_examples, memory_context)
-            validation = _validate_menu_option_two_answer(answer)
-            update["generation_quality_warning"] = "LLM fallback used for menu option 2"
-        else:
-            if retries:
-                state.setdefault("analytics_metadata", {})["menu_option_two_retries"] = retries
-
-        # Log validation results
-        missing_sections = validation["missing_sections"]
-        word_count = validation["word_count"]
-        has_turn_references = validation["has_turn_references"]
-        has_memory_demonstration = validation["has_memory_demonstration"]
-
-        if missing_sections:
-            logger.warning(f"⚠️ Menu option 2 missing sections: {missing_sections}")
-            update["generation_quality_warning"] = f"Missing sections: {', '.join(missing_sections)}"
-        elif word_count < MENU_OPTION_TWO_MIN_WORDS:
-            logger.warning(f"⚠️ Menu option 2 too short: {word_count} words (target: {MENU_OPTION_TWO_MIN_WORDS}-{MENU_OPTION_TWO_MAX_WORDS})")
-            update["generation_quality_warning"] = f"Too short: {word_count} words"
-        elif word_count > MENU_OPTION_TWO_MAX_WORDS:
-            logger.warning(f"⚠️ Menu option 2 too long: {word_count} words (target: {MENU_OPTION_TWO_MIN_WORDS}-{MENU_OPTION_TWO_MAX_WORDS})")
-            update["generation_quality_warning"] = f"Too long: {word_count} words"
-        elif not has_turn_references:
-            logger.warning("⚠️ Menu option 2 missing turn references")
-            update["generation_quality_warning"] = "Missing turn references"
-        elif not has_memory_demonstration:
-            logger.warning("⚠️ Menu option 2 missing memory demonstration")
-            update["generation_quality_warning"] = "Missing memory demonstration"
-        else:
-            logger.info(f"✅ Menu option 2 validated: {word_count} words, all sections present, turn references and memory demonstration included")
-
-        # Post-generation processing for menu option 2
-        # Apply first-person enforcement as post-processing safety net
-        answer = rag_engine.response_generator._enforce_first_person(answer)
-        logger.debug("Applied post-generation first-person enforcement for menu option 2")
-
-        # Detect and remove verbatim copying (same as menu option 1)
-        if retrieved_chunks:
-            verbatim_check = _detect_verbatim_copying(answer, retrieved_chunks)
-            if verbatim_check["severity"] == "high":
-                logger.warning(f"⚠️ Menu option 2: High severity verbatim copying detected: {verbatim_check['detected_phrases']}")
-                answer = _remove_repeated_chunk_phrases(answer)
-                logger.debug("Removed repeated chunk phrases from menu option 2 response")
-                if not update.get("generation_quality_warning"):
-                    update["generation_quality_warning"] = "Verbatim copying detected and corrected"
-            elif verbatim_check["severity"] == "medium":
-                logger.info(f"📝 Menu option 2: Medium severity verbatim copying detected: {verbatim_check['detected_phrases']}")
-                answer = _remove_repeated_chunk_phrases(answer)
-                logger.debug("Removed repeated chunk phrases from menu option 2 response")
-
-        # Remove markdown asterisks (same as menu option 1)
-        answer = _remove_markdown_asterisks(answer)
-        logger.debug("Removed markdown asterisks from menu option 2 response")
-
-    # Apply post-processing to ALL generated answers (not just menu options)
+    # Apply post-processing to ALL generated answers
     # Skip for welcome/menu messages (they're intentionally formatted)
     is_welcome_message = any(indicator in answer.lower() for indicator in [
         "since you selected", "you can choose where to start",
@@ -1885,19 +1635,6 @@ def hallucination_check(state: ConversationState) -> ConversationState:
         >>> "Sources:" in state["draft_answer"]
         True
     """
-    # GUARD: Skip source attachment for menu option 1 (full tech stack walkthrough)
-    # Menu option 1 should not include sources to maintain clean presentation
-    is_menu_option_one = (
-        state.get("query_type") == "menu_selection" and
-        state.get("menu_choice") == "1" and
-        state.get("role_mode") == "hiring_manager_technical"
-    )
-
-    if is_menu_option_one:
-        # Set hallucination_safe flag but skip citation attachment
-        state["hallucination_safe"] = True
-        return state
-
     draft = state.get("draft_answer")
     chunks = state.get("retrieved_chunks", [])
 

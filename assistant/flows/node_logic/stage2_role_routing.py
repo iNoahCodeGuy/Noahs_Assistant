@@ -1,7 +1,8 @@
-"""Role classification and routing logic for the conversation pipeline.
+"""Welcome message routing for the conversation pipeline.
 
-Handles role detection, normalization, and technical hiring manager onboarding.
-Merged route_hiring_manager_technical logic for single-pass routing.
+Handles the initial welcome flow: user clicks one of 4 buttons (or types a
+number/alias), gets a tailored welcome message, then enters a single universal
+conversation pipeline. No role-based branching after the welcome.
 """
 
 from __future__ import annotations
@@ -16,80 +17,68 @@ from assistant.observability.langsmith_tracer import create_custom_span
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# Role-Specific Welcome Messages
+# Welcome Messages (one per button option)
 # ============================================================================
 
-def _get_role_welcome_message(role_mode: str) -> str:
-    """Return role-specific welcome message explaining available knowledge base."""
+def _get_welcome_message(role_mode: str) -> str:
+    """Return welcome message for the selected entry path."""
 
     messages = {
-        "hiring_manager_nontechnical": dedent("""\
-            Perfect! I'll focus on business value and career insights.
+        "explorer": dedent("""\
+            Noah is a software developer who builds machine learning models and generative AI applications. The flagship project is what you're talking to -- a RAG-powered conversational assistant with semantic search and intent classification. He also built predictive models (logistic regression, Naive Bayes), unsupervised clustering studies, and data visualization tools.
 
-            I have access to Noah's complete professional background including:
-            • Career progression and key achievements
-            • Business impact and leadership examples
-            • Team collaboration and soft skills
-            • Industry experience and domain knowledge
+            Professionally: Inside Sales Advisor at Tesla, top 10% performer. Before that, logistics operations at TQL and real estate transactions at Signature Real Estate Group. He's also been coaching BJJ and MMA at Xtreme Couture since 2021. The technical foundation comes from a Biology degree at UNLV -- biostatistics and experimental design, not computer science.
 
-            Where would you like to start?
-        """),
-
-        "hiring_manager_technical": dedent("""\
-            Since you selected 'Technical Hiring Manager', I can focus on 5 key areas:
-
-            1️⃣ The orchestration layer — how my nodes, states, and safeguards work together
-            2️⃣ My full tech stack — architecture overview (frontend → backend → observability)
-            3️⃣ Enterprise adaptation — how assistants like me are customized for large-scale deployments
-            4️⃣ Data pipeline management — embeddings, vector storage, chunking, and analytics
-            5️⃣ See Noah's technical background — certifications, GitHub projects, engineering foundation
-        """),
+            What brings you here?"""),
 
         "software_developer": dedent("""\
-            The flagship is what you're talking to — a 21-node RAG pipeline with pgvector semantic search, Claude Sonnet 4.5 for generation, and intent classification that runs before retrieval so greetings don't trigger a vector search. Beyond that: a logistic regression model that hit 94.75% on imbalanced attrition data, a Naive Bayes variant that trades accuracy for recall on the class that actually matters, a K-Means clustering study where unsupervised structure contradicted every supervised label, and a decision tree segmentation where two features explained 81% of the variance. Pick one and I'll walk you through the architecture decisions.
-        """),
+            Seven projects. Each one started with a problem worth solving.
 
-        "explorer": dedent("""\
-            Noah is a software developer who builds machine learning models and generative AI applications. He designed and shipped a RAG-powered conversational assistant — you're using it — along with predictive models (logistic regression, Naive Bayes, K-Means clustering) and data visualization tools. The technical foundation comes from a Biology degree at UNLV, where biostatistics and experimental design did the heavy lifting.
+            **Portfolia AI Assistant** -- Most portfolio sites are static pages you skim and forget. This is a 21-node RAG pipeline with pgvector semantic search, Claude Sonnet 4.5 for generation, and intent classification before retrieval so greetings don't waste a vector search. You're using it.
 
-            If you'd like Noah to reach out, I can set that up. Otherwise, ask me anything about what he's built. The architecture behind this conversation is a good place to start.
-        """),
+            **Employee Attrition -- Logistic Regression** -- HR teams can't predict who's leaving until it's too late. Feature engineering on imbalanced data, cross-validation, ROC analysis. 94.75% accuracy where naive approaches plateau around 83%.
+
+            **Employee Attrition -- Naive Bayes** -- Same dataset, different question. Logistic regression maximizes overall accuracy but misses leavers. Naive Bayes trades that for 10% higher recall on the class that actually costs money -- 58% vs 48%. Five class imbalance variants tested.
+
+            **Customer Segmentation -- Decision Trees** -- A telecom company's customer labels don't explain behavior. Supervised classification found education and tenure drive 81% of segmentation. Region, gender, and age contribute nothing. Interpretable rules over raw accuracy.
+
+            **Customer Segmentation -- K-Means Clustering** -- Same dataset, opposite approach. Forget the labels -- what structure actually exists? Two algorithms independently found four natural segments driven by life-stage and income. The existing labels mapped to none of them.
+
+            **Response Time Analysis** -- No quick way to test whether response time differences are real or noise. A Streamlit app with statistical hypothesis testing and time-series visualization.
+
+            **Lead Response Heatmap** -- Sales teams can't see when leads go unanswered. A reusable Python dashboard using pandas and matplotlib to visualize coverage gaps.
+
+            Pick one and I'll walk you through the architecture decisions."""),
 
         "casual": dedent("""\
-            No agenda required. I know about Noah's projects, his career background, his technical stack, and there's an MMA coaching story that's better than you'd expect. Ask whatever you want.
-        """),
+            No agenda required. I know about Noah's projects, his career background, his technical stack, and there's an MMA coaching story that's better than you'd expect. Ask whatever you want."""),
 
-        "confession": dedent("""\
-            💌 Aww, this is sweet! I'm here to help.
-
-            Your confession will be completely anonymous and sent directly to Noah. I won't judge or analyze it — just pass it along safely.
-
-            When you're ready, go ahead and share what's on your mind!
-        """),
+        # Confession welcome is handled by handle_crush_confession in stage1
+        "confession": "",
     }
 
     return messages.get(role_mode, "")
 
+
 # ============================================================================
-# Role Mapping & Normalization
+# Role Mapping (button click / text → internal key)
 # ============================================================================
 
 _ROLE_ALIASES = {
-    "hiring manager (technical)": "hiring_manager_technical",
-    "hiring manager (nontechnical)": "hiring_manager_nontechnical",
-    "hiring manager (non-technical)": "hiring_manager_nontechnical",
-    "software developer": "software_developer",
-    "just looking around": "casual",
-    "looking to confess crush": "confession",
-    # New 4-option menu aliases
+    # Button text (lowercase)
     "learn more about noah": "explorer",
     "see what noah has built": "software_developer",
+    "just looking around": "casual",
     "confess a crush": "confession",
+    # Legacy aliases (kept for backwards compat with any stored roles)
+    "hiring manager (technical)": "explorer",
+    "hiring manager (nontechnical)": "explorer",
+    "hiring manager (non-technical)": "explorer",
+    "software developer": "software_developer",
+    "looking to confess crush": "confession",
 }
 
 _ROLE_DISPLAY = {
-    "hiring_manager_technical": "Hiring Manager (technical)",
-    "hiring_manager_nontechnical": "Hiring Manager (nontechnical)",
     "software_developer": "See what Noah has built",
     "explorer": "Learn more about Noah",
     "casual": "Just looking around",
@@ -109,171 +98,118 @@ _ROLE_SELECTION_MAP = {
 
 
 def classify_role_mode(state: ConversationState) -> ConversationState:
-    """Infer the user's persona from their query and conversation context.
+    """Route to welcome message based on button click or text input.
 
-    If no role is set yet, this node analyzes the user's message to determine
-    which persona best fits their intent (hiring manager, developer, casual, etc.).
+    After the welcome, all visitors enter the same universal conversation
+    pipeline. The role_mode is kept for analytics only.
     """
     with create_custom_span(
         name="classify_role_mode",
         inputs={"role": state.get("role", "unknown"), "query": state.get("query", "")}
     ):
-        # If role already set, just normalize it
+        # If role already set (frontend button click), normalize and show welcome
         if state.get("role"):
             raw_role = state.get("role", "").strip().lower()
             normalized = _ROLE_ALIASES.get(raw_role, raw_role.replace(" ", "_"))
+            # Map any old HM roles to explorer
+            if normalized.startswith("hiring_manager"):
+                normalized = "explorer"
             state["role_mode"] = normalized
-            state["role_confidence"] = 1.0
             state["role"] = _ROLE_DISPLAY.get(normalized, state.get("role", "Just looking around"))
 
             persona_hints: Dict[str, str] = state["session_memory"].setdefault("persona_hints", {})
             persona_hints.setdefault("role_mode", normalized)
 
-            # Show role-specific welcome on first role detection
-            # (frontend may pre-set role from button click)
+            # Show welcome on first role detection
             if not persona_hints.get("role_welcome_shown"):
                 persona_hints["role_welcome_shown"] = True
 
-                # Confession role: delegate to handle_crush_confession so the
-                # form is shown and crush flow state is properly initialized.
+                # Confession: delegate to crush flow handler
                 if normalized == "confession":
                     from assistant.flows.node_logic.stage1_intent_router import handle_crush_confession
                     state["message_intent"] = "crush_confession"
-                    state["visitor_type"] = "crush"
                     return handle_crush_confession(state)
 
-                welcome_msg = _get_role_welcome_message(normalized)
+                welcome_msg = _get_welcome_message(normalized)
                 if welcome_msg:
                     state["answer"] = welcome_msg
                     state["pipeline_halt"] = True
                     return state
 
-            # Clear pipeline_halt if it exists (from previous welcome message)
-            # Menu selections after role selection should proceed normally
+            # Clear stale state from previous turns
             if state.get("pipeline_halt") and persona_hints.get("role_welcome_shown"):
                 state.pop("pipeline_halt", None)
-                logger.debug(f"Cleared pipeline_halt for menu selection after role welcome: role={normalized}, role_welcome_shown={persona_hints.get('role_welcome_shown')}")
 
-            # Clear stale answer/draft from previous turns to avoid carryover
             state["answer"] = None
             state["draft_answer"] = None
-            # Clear pipeline_halt if it was already popped
             if not state.get("pipeline_halt"):
                 state["pipeline_halt"] = None
 
             return state
 
-        # Infer role from query content
+        # No role set — infer from query text
         query_raw = state.get("query", "")
         query = query_raw.lower().strip()
-        inferred_role = None
-        confidence = 0.7
+        normalized = None
 
-        # Number-based selections from initial prompt (1-5)
+        # Number-based selections (1-4)
         selection_key = query if query in _ROLE_SELECTION_MAP else query.replace(" ", "")
         if selection_key in _ROLE_SELECTION_MAP:
             normalized = _ROLE_SELECTION_MAP[selection_key]
-            inferred_role = _ROLE_DISPLAY.get(normalized, "Just looking around")
-            confidence = 1.0
 
-        # First check if user explicitly stated their role (exact match)
-        if not inferred_role and query in _ROLE_ALIASES:
-            inferred_role = _ROLE_DISPLAY[_ROLE_ALIASES[query]]
-            confidence = 1.0
-        # Also check for close matches (e.g., "I'm a hiring manager (technical)")
-        elif not inferred_role and any(role_name in query for role_name in _ROLE_ALIASES.keys()):
-            for role_name, role_key in _ROLE_ALIASES.items():
-                if role_name in query:
-                    inferred_role = _ROLE_DISPLAY[role_key]
-                    confidence = 0.95
+        # Exact alias match
+        if not normalized and query in _ROLE_ALIASES:
+            normalized = _ROLE_ALIASES[query]
+
+        # Partial alias match
+        if not normalized:
+            for alias_text, alias_key in _ROLE_ALIASES.items():
+                if alias_text in query:
+                    normalized = alias_key
                     break
-        # Check for hiring/recruiting signals
-        elif not inferred_role and any(keyword in query for keyword in ["hire", "hiring", "recruit", "position", "job opening", "candidate"]):
-            if any(tech_keyword in query for tech_keyword in ["technical", "tech", "engineering", "code", "developer"]):
-                inferred_role = "Hiring Manager (technical)"
-            else:
-                inferred_role = "Hiring Manager (nontechnical)"
-            confidence = 0.9
 
-        # Check for developer/engineer signals
-        elif not inferred_role and any(keyword in query for keyword in ["code", "developer", "engineer", "programming", "technical", "architecture", "api", "database"]):
-            inferred_role = "Software Developer"
-            confidence = 0.85
+        # Confession keywords
+        if not normalized and any(kw in query for kw in ["confess", "crush", "secret"]):
+            normalized = "confession"
 
-        # Check for confession signals
-        elif not inferred_role and any(keyword in query for keyword in ["confess", "crush", "secret", "anonymous"]):
-            inferred_role = "Looking to confess crush"
-            confidence = 0.95
-
-        # Default to casual explorer
-        if not inferred_role:
-            inferred_role = "Just looking around"
-            confidence = 0.6
-
-        # Set the inferred role
-        state["role"] = inferred_role
-        raw_role = inferred_role.strip().lower()
-        normalized = _ROLE_ALIASES.get(raw_role, raw_role.replace(" ", "_"))
+        # Default: explorer (broadest welcome)
+        if not normalized:
+            normalized = "explorer"
 
         state["role_mode"] = normalized
-        state["role_confidence"] = confidence
-        state["role"] = _ROLE_DISPLAY.get(normalized, inferred_role)
+        state["role"] = _ROLE_DISPLAY.get(normalized, "Learn more about Noah")
 
-        # Attach persona hints for downstream nodes (analytics + memory)
         persona_hints: Dict[str, str] = state["session_memory"].setdefault("persona_hints", {})
         persona_hints.setdefault("role_mode", normalized)
 
-        # Show role-specific welcome message on first role detection —
-        # BUT only if the query was a simple menu selection (e.g. "1", "2")
-        # or a direct role alias match (e.g. "See what Noah has built").
-        # If the user typed a substantive question, skip the welcome and let
-        # it proceed through RAG so the question actually gets answered.
-        query_raw = state.get("query", "").strip()
-        is_menu_number = query_raw in _ROLE_SELECTION_MAP
-        is_role_alias = query_raw.lower().strip() in _ROLE_ALIASES
+        # Show welcome only for menu selections or direct alias matches
+        # Substantive questions skip the welcome and go straight to RAG
+        is_menu_number = query_raw.strip() in _ROLE_SELECTION_MAP
+        is_role_alias = query in _ROLE_ALIASES
         if not persona_hints.get("role_welcome_shown"):
-            persona_hints["role_welcome_shown"] = True  # Mark shown regardless
+            persona_hints["role_welcome_shown"] = True
             if is_menu_number or is_role_alias:
-                welcome_msg = _get_role_welcome_message(normalized)
+                # Confession: delegate to crush flow
+                if normalized == "confession":
+                    from assistant.flows.node_logic.stage1_intent_router import handle_crush_confession
+                    state["message_intent"] = "crush_confession"
+                    return handle_crush_confession(state)
+
+                welcome_msg = _get_welcome_message(normalized)
                 if welcome_msg:
                     state["answer"] = welcome_msg
-                    state["pipeline_halt"] = True  # Wait for user's first real query
+                    state["pipeline_halt"] = True
                     return state
-
-        # Merged: Handle technical HM routing (from route_hiring_manager_technical)
-        # If technical HM role detected, check for menu handling or onboarding
-        if normalized == "hiring_manager_technical":
-            from assistant.flows.node_logic.util_role_specific import (
-                handle_hm_technical_menu_selection,
-                onboard_hiring_manager_technical,
-            )
-
-            if state.get("awaiting_hm_tech_menu"):
-                return handle_hm_technical_menu_selection(state)
-
-            if not persona_hints.get("hm_technical_onboarded"):
-                return onboard_hiring_manager_technical(state)
 
     return state
 
 
 # ============================================================================
-# Repeated Query Detection
+# Repeated Query Detection (unchanged — unrelated to role routing)
 # ============================================================================
 
 def detect_repeated_query(state: ConversationState) -> ConversationState:
-    """Detect if user asked the same question in recent turns.
-
-    This helps Portfolia avoid giving identical responses when users
-    repeat themselves, instead offering to explore different angles
-    or clarify what they're looking for.
-
-    Args:
-        state: ConversationState with query and chat_history
-
-    Returns:
-        Updated state with is_repeated_query flag if detected
-    """
+    """Detect if user asked the same question in recent turns."""
     with create_custom_span(
         name="detect_repeated_query",
         inputs={"query": state.get("query", "")[:100]}
@@ -284,7 +220,6 @@ def detect_repeated_query(state: ConversationState) -> ConversationState:
         if not query or len(query) < 5:
             return state
 
-        # Get last 4 messages (2 exchanges) to find recent user queries
         recent_user_queries = []
         for msg in chat_history[-4:]:
             if isinstance(msg, dict):
@@ -299,17 +234,14 @@ def detect_repeated_query(state: ConversationState) -> ConversationState:
             if msg_type in ["human", "user"]:
                 recent_user_queries.append(content)
 
-        # Check for exact or near-exact match (within last 2 user messages)
         if recent_user_queries:
             for prev_query in recent_user_queries:
-                # Exact match
                 if query == prev_query:
                     state["is_repeated_query"] = True
                     state["repeated_query_count"] = 2
                     logger.info(f"Detected repeated query (exact match): '{query[:50]}...'")
                     return state
 
-                # Near-exact match (90% word overlap)
                 query_words = set(query.split())
                 prev_words = set(prev_query.split())
                 if query_words and prev_words:

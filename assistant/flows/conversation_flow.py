@@ -6,7 +6,7 @@ patterns with clear node boundaries, traceability, and cinematic-yet-grounded to
 Enhanced Pipeline (18→21 nodes with quality assurance + phase tracking):
 1. initialize_conversation_state → normalize state containers and load memory
 2. handle_greeting → warm intro without RAG cost for first-turn hellos
-3. classify_role_mode → role detection + technical HM onboarding routing
+3. classify_role_mode → welcome message routing (no role-based branching after welcome)
 4. classify_intent → determine engineering vs business focus and data needs
 5. detect_conversation_phase → determine phase: discovery/exploration/synthesis/extended (NEW)
 6. presentation_controller → depth level (1-3) + display toggles in one pass
@@ -49,7 +49,7 @@ Scalability for Indefinite Conversations:
 - Supports 100+ turn conversations without memory bloat
 
 Merged nodes (Part 1 & 2):
-- route_hiring_manager_technical → classify_role_mode
+- route_hiring_manager_technical → removed (universal conversation after welcome)
 - depth_controller + display_controller → presentation_controller
 - re_rank_and_dedup → retrieve_chunks
 - detect_hiring_signals + handle_resume_request → plan_actions
@@ -563,7 +563,7 @@ def run_conversation_flow(
         # State Modified: role, query_type, query_intent, entities, topic_focus
         # Performance: ~100ms (regex + keyword matching, no LLM)
         # ═══════════════════════════════════════════════════════════════════════════
-        classify_role_mode,  # Now includes HM technical routing
+        classify_role_mode,  # Welcome message routing only
         classify_intent,
         detect_conversation_phase,  # Phase tracking (discovery/exploration/synthesis/extended)
         extract_entities,
@@ -717,7 +717,7 @@ def _build_langgraph() -> Any:
     workflow.add_node("initialize", initialize_conversation_state)
     workflow.add_node("role_prompt", prompt_for_role_selection)
     workflow.add_node("greeting", lambda s: handle_greeting(s, rag_engine))
-    workflow.add_node("classify_role", classify_role_mode)  # Now includes HM routing
+    workflow.add_node("classify_role", classify_role_mode)  # Welcome message routing only
     workflow.add_node("detect_repeated", detect_repeated_query)  # Detect user asking same question
     workflow.add_node("classify_intent", classify_intent)
     workflow.add_node("detect_phase", detect_conversation_phase)  # NEW: Conversation phase detection
