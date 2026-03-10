@@ -1564,7 +1564,7 @@ def handle_crush_confession(state: ConversationState) -> ConversationState:
         "Name:\n"
         "Number or social:\n"
         "Message for Noah:\n\n"
-        "Want to stay anonymous? Just leave name and number blank."
+        "Want to stay anonymous? Just leave contact info blank."
     )
 
     # Set flags for next turn handling
@@ -1752,7 +1752,7 @@ def _parse_crush_form(query: str, anonymous: bool = True):
 
     name_match = re.search(r"(?:name)\s*[:=]\s*(.+)", text, re.IGNORECASE)
     contact_match = re.search(
-        r"(?:number|social|phone|ig|insta|snap|email)\s*[:=]?\s*(.+)",
+        r"(?:number(?:\s+or\s+social)?|social|phone|ig|insta|snap|email|contact(?:\s+info)?)\s*[:=]\s*(.+)",
         text, re.IGNORECASE,
     )
     msg_match = re.search(
