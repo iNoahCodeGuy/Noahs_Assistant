@@ -50,8 +50,14 @@ def _get_welcome_message(role_mode: str) -> str:
 
             Pick one and I'll walk you through the architecture decisions."""),
 
-        "casual": dedent("""\
-            No agenda required. I know about Noah's projects, his career background, his technical stack, and there's an MMA coaching story that's better than you'd expect. Ask whatever you want."""),
+        "enterprise_ai": dedent("""\
+            You're talking to one right now. I'm a 21-node agentic pipeline — intent classification, semantic retrieval, grounding validation, hallucination checking, and deterministic tool execution. Every pattern in this system maps directly to enterprise AI applications.
+
+            Intent-first routing is how customer support agents handle millions of tickets without embedding every "hello" into a vector database. Stateless state machines are how booking flows and onboarding sequences run in serverless environments without server-side sessions. Deterministic tool execution — where the pipeline decides when to fire an API call, not the LLM — is how you keep an agent from hallucinating a function call when real money is on the line.
+
+            I write to databases, send SMS via Twilio, and fire transactional email via Resend. None of those are demos. They run unsupervised in production.
+
+            Pick any layer — retrieval, generation, agent coordination, quality gates — and I'll show you how the pattern transfers to enterprise scale."""),
 
         # Confession welcome is handled by handle_crush_confession in stage1
         "confession": "",
@@ -68,7 +74,8 @@ _ROLE_ALIASES = {
     # Button text (lowercase)
     "learn more about noah": "explorer",
     "see what noah has built": "software_developer",
-    "just looking around": "casual",
+    "how i relate to enterprise ai": "enterprise_ai",
+    "just looking around": "enterprise_ai",  # legacy alias
     "confess a crush": "confession",
     # Legacy aliases (kept for backwards compat with any stored roles)
     "hiring manager (technical)": "explorer",
@@ -81,7 +88,7 @@ _ROLE_ALIASES = {
 _ROLE_DISPLAY = {
     "software_developer": "See what Noah has built",
     "explorer": "Learn more about Noah",
-    "casual": "Just looking around",
+    "enterprise_ai": "How I relate to Enterprise AI",
     "confession": "Confess a crush",
 }
 
@@ -90,8 +97,8 @@ _ROLE_SELECTION_MAP = {
     "1️⃣": "explorer",
     "2": "software_developer",
     "2️⃣": "software_developer",
-    "3": "casual",
-    "3️⃣": "casual",
+    "3": "enterprise_ai",
+    "3️⃣": "enterprise_ai",
     "4": "confession",
     "4️⃣": "confession",
 }

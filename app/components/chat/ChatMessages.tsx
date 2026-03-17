@@ -41,7 +41,7 @@ export function ChatMessages({ messages, loading, onSendMessage }: ChatMessagesP
                 {[
                   'Learn more about Noah',
                   'See what Noah has built',
-                  'Just looking around',
+                  'How I relate to Enterprise AI',
                   'Confess a crush',
                 ].map((option) => (
                   <button

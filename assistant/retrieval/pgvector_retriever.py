@@ -314,8 +314,12 @@ class PgVectorRetriever:
             # Prefer career/achievement content
             filtered = self._filter_career(candidates)
 
+        elif "enterprise" in role.lower():
+            # Prefer technical/architecture content
+            filtered = self._filter_technical(candidates)
+
         elif "looking around" in role.lower() or "casual" in role.lower():
-            # Prefer fun/personal content
+            # Prefer fun/personal content (legacy)
             filtered = self._filter_casual(candidates)
 
         else:
