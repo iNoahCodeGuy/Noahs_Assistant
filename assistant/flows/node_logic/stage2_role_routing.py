@@ -59,6 +59,9 @@ def _get_welcome_message(role_mode: str) -> str:
 
             Pick any layer — retrieval, generation, agent coordination, quality gates — and I'll show you how the pattern transfers to enterprise scale."""),
 
+        "casual": dedent("""\
+            No agenda required. I know about Noah's projects, his career background, his technical stack, and there's an MMA coaching story that's better than you'd expect. Ask whatever you want."""),
+
         # Confession welcome is handled by handle_crush_confession in stage1
         "confession": "",
     }
@@ -75,8 +78,11 @@ _ROLE_ALIASES = {
     "learn more about noah": "explorer",
     "see what noah has built": "software_developer",
     "how i relate to enterprise ai": "enterprise_ai",
-    "just looking around": "enterprise_ai",  # legacy alias
     "confess a crush": "confession",
+    # Casual aliases (no button — triggered by free-text input)
+    "just looking around": "casual",
+    "just browsing": "casual",
+    "just looking": "casual",
     # Legacy aliases (kept for backwards compat with any stored roles)
     "hiring manager (technical)": "explorer",
     "hiring manager (nontechnical)": "explorer",
@@ -89,6 +95,7 @@ _ROLE_DISPLAY = {
     "software_developer": "See what Noah has built",
     "explorer": "Learn more about Noah",
     "enterprise_ai": "How I relate to Enterprise AI",
+    "casual": "Just looking around",
     "confession": "Confess a crush",
 }
 
