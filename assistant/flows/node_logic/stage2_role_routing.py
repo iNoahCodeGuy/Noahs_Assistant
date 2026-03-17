@@ -51,13 +51,21 @@ def _get_welcome_message(role_mode: str) -> str:
             Pick one and I'll walk you through the architecture decisions."""),
 
         "enterprise_ai": dedent("""\
-            You're talking to one right now. I'm a 21-node agentic pipeline — intent classification, semantic retrieval, grounding validation, hallucination checking, and deterministic tool execution. Every pattern in this system maps directly to enterprise AI applications.
+            You're talking to one. This is a 21-node agentic pipeline running seven processing stages — and every architectural decision maps to how enterprise AI systems work in production.
 
-            Intent-first routing is how customer support agents handle millions of tickets without embedding every "hello" into a vector database. Stateless state machines are how booking flows and onboarding sequences run in serverless environments without server-side sessions. Deterministic tool execution — where the pipeline decides when to fire an API call, not the LLM — is how you keep an agent from hallucinating a function call when real money is on the line.
+            **Intent classification and agent routing.** Claude Haiku classifies every inbound message in ~150ms before anything else runs. Greetings, crush confessions, and small talk short-circuit the pipeline entirely — they never hit retrieval or generation. At enterprise scale, this is how customer support agents and voice agents avoid embedding every "hello" into a vector database. The classifier would be a fine-tuned or distilled model for sub-50ms latency at millions of requests, but the architecture decision — classify first, route second — stays identical.
 
-            I write to databases, send SMS via Twilio, and fire transactional email via Resend. None of those are demos. They run unsupervised in production.
+            **RAG with retrieval quality gates.** OpenAI text-embedding-3-small at 1536 dimensions, pgvector cosine similarity via Supabase, dual similarity thresholds (0.50 strict / 0.30 fallback). Grounding validation checks whether retrieved chunks actually support answering the query — not just whether chunks were returned. In enterprise, this is how you prevent a financial services agent from citing an outdated policy or a healthcare agent from fabricating a drug interaction.
 
-            Pick any layer — retrieval, generation, agent coordination, quality gates — and I'll show you how the pattern transfers to enterprise scale."""),
+            **Continuous model evaluation.** Hallucination checking compares every generated response against retrieved source material. Verbatim copy detection ensures conversational value over regurgitation. LangSmith traces every LLM call with full prompt, response, latency, and cost. These three layers — grounding, faithfulness, originality — run on every single response. Not as a batch evaluation after deployment.
+
+            **Deterministic tool execution.** I write to Supabase, send SMS via Twilio, and fire transactional email via Resend. The pipeline's state machine decides when to execute — not the LLM. That means no hallucinated function calls, no skipped actions, no out-of-order execution. For any system that sends real messages to real people, that reliability is not optional.
+
+            **Stateless agent coordination.** The entire pipeline is serverless-compatible — every request reconstructs state from conversation history. Multi-step workflows (crush confessions, contact capture) use marker-based state machines recovered from the transcript on each turn. No Redis, no server-side sessions, no sticky routing.
+
+            **Knowledge base engineering.** The curated KB is ~200 chunks across 12 domain-specific CSVs. Each chunk is authored for retrieval quality — not scraped or auto-generated. The migration pipeline handles embedding generation, batching, and Supabase insertion. Adding new knowledge is: write Q&A pairs, run the migration script, done.
+
+            Pick any layer and I'll go deeper on how the pattern transfers to enterprise scale — or ask about one of Noah's other projects."""),
 
         "casual": dedent("""\
             No agenda required. I know about Noah's projects, his career background, his technical stack, and there's an MMA coaching story that's better than you'd expect. Ask whatever you want."""),

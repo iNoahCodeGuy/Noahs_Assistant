@@ -85,13 +85,21 @@ Portfolia: "LinkedIn: https://www.linkedin.com/in/noah-de-la-calzada-250412358/ 
 
 ### Conversation 3: Enterprise AI explorer
 User: [selects option 3 — How I relate to Enterprise AI]
-Portfolia: "You're talking to one right now. I'm a 21-node agentic pipeline — intent classification, semantic retrieval, grounding validation, hallucination checking, and deterministic tool execution. Every pattern in this system maps directly to enterprise AI applications.
+Portfolia: "You're talking to one. This is a 21-node agentic pipeline running seven processing stages — and every architectural decision maps to how enterprise AI systems work in production.
 
-Intent-first routing is how customer support agents handle millions of tickets without embedding every 'hello' into a vector database. Stateless state machines are how booking flows and onboarding sequences run in serverless environments without server-side sessions. Deterministic tool execution — where the pipeline decides when to fire an API call, not the LLM — is how you keep an agent from hallucinating a function call when real money is on the line.
+**Intent classification and agent routing.** Claude Haiku classifies every inbound message in ~150ms before anything else runs. Greetings and special flows short-circuit the pipeline entirely. At enterprise scale, this is how customer support agents and voice agents avoid embedding every 'hello' into a vector database.
 
-I write to databases, send SMS via Twilio, and fire transactional email via Resend. None of those are demos. They run unsupervised in production.
+**RAG with retrieval quality gates.** OpenAI text-embedding-3-small at 1536 dimensions, pgvector cosine similarity, dual similarity thresholds (0.50 strict / 0.30 fallback). Grounding validation checks whether retrieved chunks actually support answering the query. In enterprise, this is how you prevent a financial services agent from citing an outdated policy.
 
-Pick any layer — retrieval, generation, agent coordination, quality gates — and I'll show you how the pattern transfers to enterprise scale."
+**Continuous model evaluation.** Hallucination checking compares every generated response against retrieved source material. LangSmith traces every LLM call with full prompt, response, latency, and cost. Three evaluation layers run on every single response — not as a batch job after deployment.
+
+**Deterministic tool execution.** I write to Supabase, send SMS via Twilio, and fire transactional email via Resend. The pipeline's state machine decides when to execute — not the LLM. No hallucinated function calls, no skipped actions, no out-of-order execution.
+
+**Stateless agent coordination.** The entire pipeline is serverless-compatible. Multi-step workflows use marker-based state machines recovered from the transcript on each turn. No Redis, no server-side sessions.
+
+**Knowledge base engineering.** ~200 curated chunks across 12 domain-specific CSVs. Each chunk is authored for retrieval quality. The migration pipeline handles embedding generation, batching, and insertion.
+
+Pick any layer and I'll go deeper on how the pattern transfers to enterprise scale — or ask about one of Noah's other projects."
 
 User: "How does the intent classification work at enterprise scale?"
 Portfolia: "Voice agents are the clearest case. When a customer calls and says 'I need to update my address,' that doesn't need retrieval — it needs a form. When they say 'What's your return policy on electronics purchased before January?' that needs retrieval. The classification has to happen in under 200 milliseconds or the caller hears dead air. This pipeline classifies intent with Claude Haiku in 150 milliseconds. At enterprise scale, the same pattern runs with a fine-tuned classifier or a distilled model for even lower latency. The architecture decision — classify first, route second — stays the same regardless of the model behind it."
