@@ -160,12 +160,68 @@ _KNOWLEDGE_HOOKS = (
     "sends SMS, and fires emails. Ask about the agentic architecture.",
 )
 
+# Enterprise bridge hooks — used specifically after architecture/self-knowledge
+# responses to bridge from "how I work" to "how this works at enterprise scale."
+_ENTERPRISE_HOOKS = (
+    "Every pattern in this conversation — intent routing, grounding "
+    "validation, deterministic tool execution — runs in enterprise AI "
+    "systems at scale. Want to see how they transfer?",
+    "The architecture behind this conversation is the same one powering "
+    "enterprise voice agents and customer support systems. "
+    "Want to see how the patterns map?",
+    "These pipeline patterns — classify before you retrieve, validate "
+    "before you generate — are exactly how production agentic systems "
+    "work at enterprise scale. Ask me how they transfer.",
+)
+
 _REACH_OUT_OFFERS = (
     "Want Noah to reach out? Say the word and I'll set it up.",
     "If you want Noah to follow up directly, just let me know.",
     "Noah can reach out if you're interested — just say the word.",
     "Want to connect with Noah directly? I can set that up.",
 )
+
+
+def _is_architecture_response(state: dict) -> bool:
+    """Detect if the current response is about Portfolia's architecture or self-knowledge.
+
+    Used to trigger enterprise bridge hooks instead of generic knowledge hooks.
+    """
+    if state.get("is_self_referential"):
+        return True
+    if state.get("message_intent") == "self_knowledge":
+        return True
+    # Check the answer itself for architecture discussion indicators
+    answer_lower = (state.get("answer") or "").lower()
+    _arch_indicators = [
+        "pipeline", "node", "intent classification", "vector search",
+        "grounding validation", "hallucination check", "state machine",
+        "retrieval", "rag", "pgvector", "haiku", "sonnet",
+        "stage 1", "stage 2", "stage 3", "stage 4", "stage 5",
+        "21-node", "21 node", "functional pipeline",
+        "deterministic tool", "agentic",
+    ]
+    indicator_count = sum(1 for ind in _arch_indicators if ind in answer_lower)
+    return indicator_count >= 3
+
+
+def _pick_enterprise_hook(state: ConversationState) -> str:
+    """Select an enterprise bridge hook that hasn't been used yet."""
+    chat_history = state.get("chat_history", [])
+    past_assistant_text = " ".join(
+        msg.get("content", "").lower()
+        for msg in chat_history
+        if isinstance(msg, dict)
+        and (msg.get("role") or msg.get("type", "")) in ("assistant", "ai")
+    )
+    unused = [
+        hook for hook in _ENTERPRISE_HOOKS
+        if hook[:40].lower() not in past_assistant_text
+    ]
+    if unused:
+        return random.choice(unused)
+    # All enterprise hooks used — fall back to a regular knowledge hook
+    return _pick_knowledge_hook(state)
 
 
 def _pick_knowledge_hook(state: ConversationState) -> str:
@@ -399,6 +455,10 @@ def _maybe_append_discovery_question(state: dict) -> dict:
             "worth knowing", "segmentation", "k-means",
             "decision tree", "gap is worth", "patterns the",
             "if you're evaluating", "opposite direction",
+            # Enterprise bridge hook fragments
+            "enterprise ai", "enterprise scale", "enterprise voice",
+            "how they transfer", "how the patterns map",
+            "production agentic",
         ]
     )
 
@@ -429,23 +489,37 @@ def _maybe_append_discovery_question(state: dict) -> dict:
 
     if msg_count >= 2:
         # ── Message 2+: knowledge hook + reach-out offer ──
+        # Architecture/self-knowledge responses get enterprise bridge hooks
+        # instead of generic knowledge hooks.
+        is_arch = _is_architecture_response(state)
         suffix_parts = []
 
-        # Reach-out offer: every message from 2+ until declined twice
-        include_reach_out = _should_include_reach_out(state) and not has_reach_out
-        if include_reach_out:
-            suffix_parts.append(_pick_reach_out_offer())
+        if is_arch:
+            # Enterprise bridge: capture-aware endings
+            has_given_info = bool(state.get("hm_capture_step") == "complete")
+            if not has_hook:
+                suffix_parts.append(_pick_enterprise_hook(state))
+            # If user hasn't given contact info yet, also offer reach-out
+            if not has_given_info:
+                include_reach_out = _should_include_reach_out(state) and not has_reach_out
+                if include_reach_out:
+                    suffix_parts.append(_pick_reach_out_offer())
+        else:
+            # Standard flow: reach-out offer + knowledge hook
+            include_reach_out = _should_include_reach_out(state) and not has_reach_out
+            if include_reach_out:
+                suffix_parts.append(_pick_reach_out_offer())
 
-        # Knowledge hook (always, if not already present)
-        if not has_hook:
-            suffix_parts.append(_pick_knowledge_hook(state))
+            # Knowledge hook (always, if not already present)
+            if not has_hook:
+                suffix_parts.append(_pick_knowledge_hook(state))
 
         if suffix_parts:
             state["answer"] = answer + "\n\n" + "\n\n".join(suffix_parts)
             state["_discovery_injected"] = True
             logger.info(
-                "Discovery hook appended (msg_count=%d): reach_out=%s hook=%s",
-                msg_count, include_reach_out, not has_hook,
+                "Discovery hook appended (msg_count=%d): arch=%s reach_out=%s hook=%s",
+                msg_count, is_arch, not has_reach_out, not has_hook,
             )
     else:
         # ── Message 1: "What brings you here?" + knowledge hook ──
