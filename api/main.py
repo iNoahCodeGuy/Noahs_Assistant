@@ -70,13 +70,15 @@ class ChatResponse(BaseModel):
 MENU_MAP = {
     "Learn more about Noah": "1",
     "See what Noah has built": "2",
-    "Just looking around": "3",
+    "How I relate to Enterprise AI": "3",
+    "Just looking around": "Just looking around",  # free-text, pass through
     "Confess a crush": "4",
 }
 
 ROLE_MAP = {
     "Learn more about Noah": "Learn more about Noah",
     "See what Noah has built": "See what Noah has built",
+    "How I relate to Enterprise AI": "How I relate to Enterprise AI",
     "Just looking around": "Just looking around",
     "Confess a crush": "Looking to confess crush",
 }
