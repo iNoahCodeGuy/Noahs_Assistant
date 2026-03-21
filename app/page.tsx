@@ -23,6 +23,7 @@ export default function Home() {
     input,
     setInput,
     loading,
+    formActive,
     selectedRole,
     setSelectedRole,
     sendMessage
@@ -45,7 +46,8 @@ export default function Home() {
         value={input}
         onChange={setInput}
         onSubmit={() => sendMessage()}
-        disabled={loading}
+        disabled={loading || formActive}
+        placeholder={formActive ? 'Please fill out the form above first' : undefined}
       />
     </div>
   )

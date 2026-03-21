@@ -7,13 +7,14 @@ interface ChatInputProps {
   onChange: (value: string) => void
   onSubmit: () => void
   disabled: boolean
+  placeholder?: string
 }
 
 /**
  * Chat input component with send button
  * Handles form submission and validation
  */
-export function ChatInput({ value, onChange, onSubmit, disabled }: ChatInputProps) {
+export function ChatInput({ value, onChange, onSubmit, disabled, placeholder }: ChatInputProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!value.trim() || disabled) return
@@ -28,7 +29,7 @@ export function ChatInput({ value, onChange, onSubmit, disabled }: ChatInputProp
             type="text"
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            placeholder="Ask me anything about Noah..."
+            placeholder={placeholder || "Ask Portfolia anything..."}
             className="flex-1 bg-chat-bg border border-chat-border rounded-xl px-6 py-3 focus:outline-none focus:border-chat-primary transition-colors"
             disabled={disabled}
           />

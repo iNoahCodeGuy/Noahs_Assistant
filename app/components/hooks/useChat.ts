@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 
 export type Role = 
   | 'Hiring Manager (nontechnical)'
@@ -30,6 +30,14 @@ export function useChat() {
   const [selectedRole, setSelectedRole] = useState<Role>('Hiring Manager (nontechnical)')
   const [sessionId] = useState(() => crypto.randomUUID())
 
+  // True when the last assistant message contains a form that hasn't been submitted yet
+  const formActive = useMemo(() => {
+    if (messages.length === 0) return false
+    const last = messages[messages.length - 1]
+    if (last.role !== 'assistant') return false
+    return last.content.includes('Message for Noah:') || last.content.includes('fill this out so we can best assist you')
+  }, [messages])
+
   const sendMessage = async (content?: string) => {
     const messageContent = content || input
     if (!messageContent.trim() || loading) return
@@ -56,23 +64,37 @@ export function useChat() {
       })
 
       if (!response.ok) {
-        throw new Error('Failed to get response')
+        // Try to extract error message from response body
+        const errorData = await response.json().catch(() => null)
+        const errorAnswer = errorData?.answer
+        throw new Error(errorAnswer || 'Failed to get response')
       }
 
       const data = await response.json()
-      
+
+      // Handle backend error responses (success: false)
+      if (data.success === false) {
+        throw new Error(data.answer || data.error || 'Backend returned an error')
+      }
+
+      const answer = data.answer || data.response
+      if (!answer) {
+        throw new Error('No answer received from backend')
+      }
+
       const assistantMessage: Message = {
         role: 'assistant',
-        content: data.answer,
+        content: answer,
         sources: data.sources
       }
-      
+
       setMessages(prev => [...prev, assistantMessage])
     } catch (error) {
       console.error('Error sending message:', error)
+      const errorMsg = error instanceof Error ? error.message : 'Something went wrong.'
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: 'Sorry, I encountered an error. Please try again.'
+        content: errorMsg.length < 200 ? errorMsg : 'Something went wrong. Try again in a moment.'
       }])
     } finally {
       setLoading(false)
@@ -84,6 +106,7 @@ export function useChat() {
     input,
     setInput,
     loading,
+    formActive,
     selectedRole,
     setSelectedRole,
     sendMessage,
