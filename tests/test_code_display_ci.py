@@ -1,146 +1,59 @@
-"""CI-style tests focused on action execution for role-based flows."""
+"""CI-style test for action planning + execution on explicit resource requests.
 
-from dataclasses import dataclass
-from typing import Any, Dict, List
+Historical note: this file used to test the role-based resume distribution flow
+(resume email via Resend, "Resume dispatched" SMS via Twilio, contact-request
+notifications built from contact info stashed in state). Those behaviors were
+removed with the universal pipeline: nothing populates user_email/user_name in
+state anymore, and direct contact requests are intercepted by the stage-1
+intent router (contact form + pipeline halt) before plan_actions ever runs.
+Those tests were deleted.
 
-import pytest
+What survives is the LinkedIn resource request, which still runs end-to-end
+without external services:
+    classify_query marks the query as an action_request
+    → plan_actions queues send_linkedin + ask_reach_out
+    → format_answer renders the LinkedIn URL and reach-out prompt
+    → execute_actions records the linkedin_offer analytics flag.
+"""
+
+from typing import Any, Dict
 
 from assistant.state.conversation_state import ConversationState
 from assistant.flows import conversation_nodes as nodes
+from assistant.flows.node_logic.stage6_formatting_nodes import LINKEDIN_URL
 
 
-@dataclass
 class DummyRagEngine:
-    def retrieve(self, query: str, top_k: int = 4) -> Dict[str, Any]:
-        return {"matches": [], "scores": [], "chunks": []}
+    """Minimal stub; format_answer's action_request path never touches it."""
 
     def retrieve_with_code(self, query: str, role: str | None = None) -> Dict[str, Any]:
         return {"code_snippets": [], "has_code": False}
 
-    @property
-    def response_generator(self):
-        class _Generator:
-            def generate_basic_response(self, query: str, fallback_docs: List[str], chat_history: List[Dict[str, str]] | None = None) -> str:
-                return "Happy to help with that."
 
-        return _Generator()
+def test_linkedin_request_prompts_follow_up() -> None:
+    state: ConversationState = {
+        "role": "Hiring Manager (nontechnical)",
+        "query": "Can you share your LinkedIn profile?",
+        "chat_history": [{"role": "user", "content": "Hi"}],
+    }
 
+    state = nodes.classify_query(state)
+    assert state.get("query_type") == "action_request"
 
-class DummyResend:
-    def __init__(self):
-        self.sent: List[Dict[str, Any]] = []
+    state = nodes.plan_actions(state)
+    action_types = {action["type"] for action in state["pending_actions"]}
+    assert "send_linkedin" in action_types
+    assert "ask_reach_out" in action_types
 
-    def send_resume_email(self, to_email: str, to_name: str, resume_url: str, message: str | None = None) -> Dict[str, Any]:
-        payload = {
-            "to_email": to_email,
-            "to_name": to_name,
-            "resume_url": resume_url,
-            "message": message,
-        }
-        self.sent.append(payload)
-        return {"status": "sent"}
+    # format_answer's action_request path renders the resource links directly
+    state["draft_answer"] = "Absolutely, here are the details."
+    state.update(nodes.format_answer(state, DummyRagEngine()))
 
-    def send_contact_notification(self, **payload: Any) -> Dict[str, Any]:
-        self.sent.append(payload)
-        return {"status": "sent"}
+    answer = state.get("answer") or ""
+    assert LINKEDIN_URL in answer
+    assert "Would you like Noah to reach out directly?" in answer
 
-
-class DummyTwilio:
-    def __init__(self):
-        self.alerts: List[Dict[str, Any]] = []
-
-    def send_contact_alert(self, **payload: Any) -> Dict[str, Any]:
-        self.alerts.append(payload)
-        return {"status": "sent"}
-
-
-class DummyStorage:
-    def __init__(self):
-        self.requests: List[Dict[str, Any]] = []
-
-    def get_signed_url(self, file_path: str, expires_in: int = 86400) -> str:
-        self.requests.append({"file_path": file_path, "expires_in": expires_in})
-        return "https://signed.example.com/resume.pdf"
-
-
-@pytest.fixture
-def dummy_engine() -> DummyRagEngine:
-    return DummyRagEngine()
-
-
-def test_resume_request_triggers_email_sms_and_prompt(monkeypatch: pytest.MonkeyPatch, dummy_engine: DummyRagEngine) -> None:
-    state = ConversationState(
-        role="Hiring Manager (nontechnical)",
-        query="Could you email me your resume?",
-        chat_history=[{"role": "user", "content": "Hello"}],
-    )
-
-    nodes.classify_query(state)
-    nodes.plan_actions(state)
-    state.stash("user_email", "hiring@example.com")
-    state.stash("user_name", "Alex Recruiter")
-    state.set_answer("Career overview here.")
-
-    resend = DummyResend()
-    twilio = DummyTwilio()
-    storage = DummyStorage()
-
-    monkeypatch.setattr(nodes, "get_resend_service", lambda: resend)
-    monkeypatch.setattr(nodes, "get_twilio_service", lambda: twilio)
-    monkeypatch.setattr(nodes, "get_storage_service", lambda: storage)
-
-    nodes.apply_role_context(state, dummy_engine)
-    nodes.execute_actions(state)
-
-    assert any(action["type"] == "send_resume" for action in state.pending_actions)
-    assert resend.sent[0]["to_email"] == "hiring@example.com"
-    assert storage.requests[0]["file_path"] == "resumes/noah_resume.pdf"
-    assert twilio.alerts[0]["message_preview"].startswith("Resume dispatched")
-    assert "Would you like Noah to reach out?" in (state.answer or "")
-
-
-def test_linkedin_request_prompts_follow_up(dummy_engine: DummyRagEngine) -> None:
-    state = ConversationState(
-        role="Hiring Manager (nontechnical)",
-        query="Can you share your LinkedIn profile?",
-        chat_history=[{"role": "user", "content": "Hi"}],
-    )
-
-    nodes.classify_query(state)
-    nodes.plan_actions(state)
-    state.set_answer("Absolutely, here are the details.")
-
-    nodes.apply_role_context(state, dummy_engine)
-
-    assert any(action["type"] == "send_linkedin" for action in state.pending_actions)
-    assert "LinkedIn profile" in (state.answer or "")
-    assert "Would you like Noah to reach out?" in (state.answer or "")
-
-
-def test_contact_request_sends_notifications(monkeypatch: pytest.MonkeyPatch, dummy_engine: DummyRagEngine) -> None:
-    state = ConversationState(
-        role="Hiring Manager (technical)",
-        query="Please reach out to me about this opportunity",
-        chat_history=[],
-    )
-
-    nodes.classify_query(state)
-    nodes.plan_actions(state)
-    state.stash("user_name", "Jordan Hiring")
-    state.stash("user_email", "jordan@example.com")
-    state.stash("user_phone", "+15551234567")
-    state.set_answer("Technical overview ready.")
-
-    resend = DummyResend()
-    twilio = DummyTwilio()
-
-    monkeypatch.setattr(nodes, "get_resend_service", lambda: resend)
-    monkeypatch.setattr(nodes, "get_twilio_service", lambda: twilio)
-    monkeypatch.setattr(nodes, "get_storage_service", lambda: DummyStorage())
-
-    nodes.apply_role_context(state, dummy_engine)
-    nodes.execute_actions(state)
-
-    assert any(action["type"] == "notify_contact_request" for action in state.pending_actions)
-    assert resend.sent[0]["from_name"] == "Jordan Hiring"
-    assert twilio.alerts[0]["from_email"] == "jordan@example.com"
+    # execute_actions handles send_linkedin without any external service:
+    # it only records the offer in analytics metadata.
+    state = nodes.execute_actions(state)
+    assert state["analytics_metadata"]["linkedin_offer"] is True

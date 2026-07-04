@@ -1,273 +1,195 @@
-import os
-from dataclasses import dataclass
+"""End-to-end tests for the 22-node functional pipeline.
+
+All tests are hermetic: the Anthropic client is faked at the stage1 boundary,
+retrieval/generation run through a dummy engine, and analytics logging is
+stubbed. Nodes return partial dicts that run_conversation_flow merges via
+state.update(result) — these tests exercise that contract through the real
+pipeline loop.
+"""
+
+from types import SimpleNamespace
 from typing import Any, Dict, List
 
 import pytest
 
-from assistant.state.conversation_state import ConversationState
-from assistant.flows import conversation_nodes as nodes
+import assistant.flows.node_logic.stage1_intent_router as stage1
 from assistant.flows.conversation_flow import run_conversation_flow
+from assistant.flows.node_logic.stage0_session_management import (
+    initialize_conversation_state,
+)
 
 
 class DummyResponseGenerator:
+    """Matches the interface generate_draft/format_answer actually use."""
+
     def __init__(self, response: str):
         self._response = response
+        self.calls: List[Dict[str, Any]] = []
 
-    def generate_basic_response(self, query: str, fallback_docs: List[str], chat_history: List[Dict[str, str]] | None = None) -> str:
-        history_note = f" ({len(chat_history)} messages)" if chat_history else ""
-        return f"{self._response} | {query}{history_note}"
+    def generate_contextual_response(
+        self,
+        query: str,
+        context: List[Dict[str, Any]],
+        role: str = None,
+        chat_history: List[Dict[str, str]] = None,
+        extra_instructions: str = None,
+        model_name: str = None,
+    ) -> str:
+        self.calls.append({"query": query, "n_chunks": len(context or [])})
+        return f"{self._response} (answering: {query[:60]})"
+
+    def _enforce_first_person(self, text: str) -> str:
+        return text
 
 
-@dataclass
 class DummyRagEngine:
-    retrieve_result: Dict[str, Any]
-    response_text: str
+    """Minimal engine satisfying every rag_engine.* call in the pipeline."""
+
+    def __init__(self, chunks: List[Dict[str, Any]], response_text: str):
+        self._chunks = chunks
+        self.response_generator = DummyResponseGenerator(response_text)
+        self.pgvector_retriever = None  # forces the plain retrieve() path
+        self.retrieve_calls: List[str] = []
 
     def retrieve(self, query: str, top_k: int = 4) -> Dict[str, Any]:
-        return self.retrieve_result
+        self.retrieve_calls.append(query)
+        return {
+            "chunks": self._chunks,
+            "matches": [c["content"] for c in self._chunks],
+            "scores": [c.get("similarity", 0.0) for c in self._chunks],
+            "skills": [],
+            "raw": [],
+        }
 
-    @property
-    def response_generator(self) -> DummyResponseGenerator:
-        return DummyResponseGenerator(self.response_text)
+    def retrieve_with_code(self, query: str, role: str = None) -> List[Dict[str, Any]]:
+        return []
 
 
-@pytest.fixture
-def base_state() -> ConversationState:
-    return ConversationState(
-        role="Hiring Manager (nontechnical)",
-        query="Tell me about Noah's career",
-        chat_history=
-        [
-            {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi there"},
-            {"role": "user", "content": "Can you share more?"},
-        ],
-    )
+class FakeAnthropic:
+    """Stands in for anthropic.Anthropic inside stage1_intent_router."""
+
+    canned_response = "knowledge_query|neutral"
+
+    def __init__(self, api_key: str = None):
+        self.messages = self
+
+    def create(self, **kwargs):
+        return SimpleNamespace(
+            content=[SimpleNamespace(text=self.canned_response)]
+        )
 
 
 @pytest.fixture
 def dummy_engine() -> DummyRagEngine:
     return DummyRagEngine(
-        retrieve_result={
-            "matches": ["Match A", "Match B"],
-            "scores": [0.95, 0.74],
-            "chunks": [
-                {"content": "Match A", "doc_id": "career", "similarity": 0.95},
-                {"content": "Match B", "doc_id": "career", "similarity": 0.74},
-            ],
-        },
+        chunks=[
+            {
+                "content": "Noah works at Tesla and builds ML projects.",
+                "section": "career_overview",
+                "doc_id": "career",
+                "similarity": 0.82,
+            },
+            {
+                "content": "He coaches BJJ at Xtreme Couture since 2021.",
+                "section": "career_coaching",
+                "doc_id": "career",
+                "similarity": 0.71,
+            },
+        ],
         response_text="Noah has a strong track record.",
     )
 
 
-def test_classify_query_sets_type(base_state: ConversationState) -> None:
-    nodes.classify_query(base_state)
-    assert base_state.fetch("query_type") == "career"
+@pytest.fixture
+def hermetic_pipeline(monkeypatch: pytest.MonkeyPatch):
+    """Fake the LLM classifier and silence analytics side effects."""
+    monkeypatch.setattr(stage1, "Anthropic", FakeAnthropic)
+    monkeypatch.setattr(
+        "assistant.flows.conversation_flow.log_and_notify",
+        lambda state, **kwargs: state,
+    )
+    FakeAnthropic.canned_response = "knowledge_query|neutral"
+    return monkeypatch
 
 
-def test_retrieve_chunks_stores_context(base_state: ConversationState, dummy_engine: DummyRagEngine) -> None:
-    nodes.retrieve_chunks(base_state, dummy_engine)
-    assert len(base_state.retrieved_chunks) == 2
-    assert base_state.fetch("retrieval_matches") == ["Match A", "Match B"]
-    assert base_state.fetch("retrieval_scores") == [0.95, 0.74]
+def _base_state(query: str) -> Dict[str, Any]:
+    # role_welcome_shown models a session past the scripted welcome turn —
+    # without it, classify_role_mode answers every query with the welcome
+    # template and halts before retrieval (by design).
+    return {
+        "role": "Learn more about Noah",
+        "query": query,
+        "chat_history": [
+            {"role": "user", "content": "1"},
+            {"role": "assistant", "content": "Welcome — what brings you here?"},
+        ],
+        "session_memory": {
+            "persona_hints": {"role_welcome_shown": True, "role_mode": "explorer"}
+        },
+    }
 
 
-def test_generate_answer_uses_response_generator(base_state: ConversationState, dummy_engine: DummyRagEngine) -> None:
-    nodes.retrieve_chunks(base_state, dummy_engine)
-    nodes.generate_answer(base_state, dummy_engine)
-    assert base_state.answer
-    assert "Tell me about Noah's career" in base_state.answer
+def test_knowledge_query_end_to_end(hermetic_pipeline, dummy_engine):
+    state = _base_state("What is Noah's professional background?")
+    result = run_conversation_flow(state, dummy_engine, session_id="test-e2e")
+
+    assert result["answer"], "pipeline must produce an answer"
+    assert "Noah has a strong track record." in result["answer"]
+    assert result["retrieved_chunks"], "knowledge queries must hit retrieval"
+    assert dummy_engine.retrieve_calls, "engine.retrieve should have been called"
 
 
-@pytest.mark.parametrize(
-    "role,query,chat_history,expected",
-    [
-        (
-            "Hiring Manager (nontechnical)",
-            "Tell me about Noah",
-            [
-                {"role": "user", "content": "Intro"},
-                {"role": "assistant", "content": "Reply"},
-                {"role": "user", "content": "Follow up"},
-            ],
-            "offer_resume_prompt",
-        ),
-        (
-            "Hiring Manager (technical)",
-            "Explain the architecture",
-            [],
-            "provide_data_tables",
-        ),
-        (
-            "Software Developer",
-            "Show me the code",
-            [],
-            "include_code_snippets",
-        ),
-        (
-            "Just looking around",
-            "Give me fun facts",
-            [],
-            "share_fun_facts",
-        ),
-        (
-            "Looking to confess crush",
-            "I have a secret",
-            [],
-            "collect_confession",
-        ),
-    ],
-)
-def test_plan_actions_appends_expected_action(role: str, query: str, chat_history: List[Dict[str, str]], expected: str, dummy_engine: DummyRagEngine) -> None:
-    state = ConversationState(role=role, query=query, chat_history=chat_history)
-    nodes.classify_query(state)
-    nodes.plan_actions(state)
-    action_types = [action["type"] for action in state.pending_actions]
-    assert expected in action_types
+def test_pipeline_appends_turn_to_chat_history(hermetic_pipeline, dummy_engine):
+    state = _base_state("What is Noah's professional background?")
+    history_before = len(state["chat_history"])
+    result = run_conversation_flow(state, dummy_engine, session_id="test-history")
+
+    history = result["chat_history"]
+    assert len(history) == history_before + 2, "query + answer should be appended"
+    assert history[-2]["content"] == "What is Noah's professional background?"
+    assert history[-1]["content"] == result["answer"]
 
 
-def test_log_and_notify_records_metadata(monkeypatch: pytest.MonkeyPatch, base_state: ConversationState) -> None:
-    logged_payloads: List[Dict[str, Any]] = []
+def test_greeting_short_circuits_retrieval(hermetic_pipeline, dummy_engine):
+    state = _base_state("hi")
+    result = run_conversation_flow(state, dummy_engine, session_id="test-greeting")
 
-    class DummyAnalytics:
-        @staticmethod
-        def log_interaction(data):
-            logged_payloads.append({
-                "role_mode": data.role_mode,
-                "query": data.query,
-                "latency_ms": data.latency_ms,
-            })
-            return 99
-
-    monkeypatch.setattr(nodes, "supabase_analytics", DummyAnalytics)
-    base_state.answer = "Career summary"
-    nodes.classify_query(base_state)
-    result_state = nodes.log_and_notify(base_state, session_id="test-session", latency_ms=123)
-    assert result_state.analytics_metadata["message_id"] == 99
-    assert logged_payloads[0]["role_mode"] == "Hiring Manager (nontechnical)"
-    assert logged_payloads[0]["latency_ms"] == 123
+    assert result["answer"], "greeting must still produce an answer"
+    assert not dummy_engine.retrieve_calls, "greetings must never hit retrieval"
 
 
-def test_run_conversation_flow_happy_path(base_state: ConversationState, dummy_engine: DummyRagEngine, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(os.environ, "LANGGRAPH_FLOW_ENABLED", "true")
+def test_crush_intent_skips_rag(hermetic_pipeline, dummy_engine):
+    FakeAnthropic.canned_response = "crush_confession|crush"
+    state = _base_state("I would like to confess a crush")
+    result = run_conversation_flow(state, dummy_engine, session_id="test-crush")
 
-    logged = {}
-
-    class DummyAnalytics:
-        @staticmethod
-        def log_interaction(data):
-            logged["query_type"] = data.query_type
-            logged["latency_ms"] = data.latency_ms
-            return 101
-
-    monkeypatch.setattr(nodes, "supabase_analytics", DummyAnalytics)
-
-    state = run_conversation_flow(
-        state=base_state,
-        rag_engine=dummy_engine,
-        session_id="abc123",
+    assert result["answer"], "crush flow must produce an answer"
+    assert not dummy_engine.retrieve_calls, "crush flow must never hit retrieval"
+    assert "Message for Noah:" in result["answer"], (
+        "crush flow should present the confession form (state-machine marker)"
     )
 
-    assert state.answer.startswith("Noah has a strong track record.")
-    assert "Would you like me to email you my resume" in state.answer
-    assert state.retrieved_chunks
-    assert state.pending_actions[0]["type"] == "offer_resume_prompt"
-    assert state.analytics_metadata["message_id"] == 101
-    assert logged["query_type"] == "career"
-    assert isinstance(logged["latency_ms"], int)
 
+def test_initialize_clears_volatile_fields():
+    """Regression: per-turn fields must not leak across turns (serverless reuse)."""
+    stale = {
+        "role": "Learn more about Noah",
+        "query": "next question",
+        "chat_history": [],
+        "session_memory": {},
+        # leftovers from a previous turn:
+        "answer": "old answer",
+        "pipeline_halt": True,
+        "skip_rag": True,
+        "message_intent": "greeting",
+        "is_greeting": True,
+        "clarification_needed": True,
+    }
+    result = initialize_conversation_state(stale)
+    merged = {**stale, **(result or {})}
 
-def test_execute_actions_send_resume(monkeypatch: pytest.MonkeyPatch) -> None:
-    state = ConversationState(
-        role="Hiring Manager (technical)",
-        query="Please email your resume",
-        chat_history=[],
-    )
-    state.pending_actions = [
-        {"type": "send_resume", "email": "hiring@company.com", "name": "Hiring Team"},
-        {"type": "notify_resume_sent"},
-    ]
-    state.stash("user_email", "hiring@company.com")
-
-    class DummyStorage:
-        def __init__(self):
-            self.calls = []
-
-        def get_signed_url(self, file_path: str, expires_in: int = 86400) -> str:
-            self.calls.append((file_path, expires_in))
-            return "https://signed.example.com/resume.pdf"
-
-    class DummyResend:
-        def __init__(self):
-            self.sent = []
-
-        def send_resume_email(self, to_email: str, to_name: str, resume_url: str, message=None) -> Dict[str, Any]:
-            self.sent.append((to_email, to_name, resume_url, message))
-            return {"status": "sent"}
-
-    class DummyTwilio:
-        def __init__(self):
-            self.alerts = []
-
-        def send_contact_alert(self, **payload) -> Dict[str, Any]:
-            self.alerts.append(payload)
-            return {"status": "sent"}
-
-    dummy_storage = DummyStorage()
-    dummy_resend = DummyResend()
-    dummy_twilio = DummyTwilio()
-
-    monkeypatch.setattr(nodes, "get_storage_service", lambda: dummy_storage)
-    monkeypatch.setattr(nodes, "get_resend_service", lambda: dummy_resend)
-    monkeypatch.setattr(nodes, "get_twilio_service", lambda: dummy_twilio)
-
-    nodes.execute_actions(state)
-
-    assert dummy_storage.calls == [("resumes/noah_resume.pdf", 86400)]
-    assert dummy_resend.sent == [
-        ("hiring@company.com", "Hiring Team", "https://signed.example.com/resume.pdf", None)
-    ]
-    assert state.analytics_metadata["resume_email_status"] == "sent"
-    assert dummy_twilio.alerts[0]["message_preview"].startswith("Resume dispatched")
-
-
-def test_execute_actions_contact_notifications(monkeypatch: pytest.MonkeyPatch) -> None:
-    state = ConversationState(
-        role="Hiring Manager (nontechnical)",
-        query="Please reach out to me about the role",
-        chat_history=[],
-    )
-    state.pending_actions = [
-        {"type": "notify_contact_request", "urgent": True},
-    ]
-    state.stash("user_name", "Alex")
-    state.stash("user_email", "alex@example.com")
-    state.stash("user_phone", "+15551234")
-
-    class DummyResend:
-        def __init__(self):
-            self.notifications = []
-
-        def send_contact_notification(self, **payload) -> Dict[str, Any]:
-            self.notifications.append(payload)
-            return {"status": "sent"}
-
-    class DummyTwilio:
-        def __init__(self):
-            self.alerts = []
-
-        def send_contact_alert(self, **payload) -> Dict[str, Any]:
-            self.alerts.append(payload)
-            return {"status": "sent"}
-
-    dummy_resend = DummyResend()
-    dummy_twilio = DummyTwilio()
-
-    monkeypatch.setattr(nodes, "get_resend_service", lambda: dummy_resend)
-    monkeypatch.setattr(nodes, "get_twilio_service", lambda: dummy_twilio)
-
-    nodes.execute_actions(state)
-
-    assert dummy_resend.notifications[0]["from_name"] == "Alex"
-    assert dummy_resend.notifications[0]["user_role"] == "Hiring Manager (nontechnical)"
-    assert dummy_twilio.alerts[0]["is_urgent"] is True
+    assert merged["answer"] == ""
+    assert merged["pipeline_halt"] is False
+    assert merged["skip_rag"] is False
+    assert merged["is_greeting"] is False
+    assert merged["clarification_needed"] is False

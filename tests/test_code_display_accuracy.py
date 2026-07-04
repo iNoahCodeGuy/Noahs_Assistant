@@ -1,4 +1,20 @@
-"""Tests around role-specific LangGraph enrichments for technical audiences."""
+"""Code display enrichment: technical code requests get real code blocks appended.
+
+Historical note: this file used to test role-specific answer enrichments
+("Architecture Snapshot", "Enterprise Fit", "Data Collection Overview",
+"Staying Current", and unconditional resume-offer prompts). Those blocks were
+removed along with the role-based pipeline, so those tests were deleted.
+
+What survives is the code-display path, which still runs in the universal
+pipeline:
+    classify_query sets code_display_requested
+    → plan_actions queues {"type": "include_code_reference"}
+    → format_answer calls rag_engine.retrieve_with_code() and appends a
+      formatted markdown code block (with file citation) to the answer.
+
+Nodes return partial update dicts (LangGraph-style); callers merge them via
+state.update(result).
+"""
 
 from dataclasses import dataclass
 from typing import Any, Dict, List
@@ -9,31 +25,17 @@ from assistant.state.conversation_state import ConversationState
 from assistant.flows import conversation_nodes as nodes
 
 
-class DummyResponseGenerator:
-    def __init__(self, text: str):
-        self._text = text
-
-    def generate_basic_response(self, query: str, fallback_docs: List[str], chat_history: List[Dict[str, str]] | None = None) -> str:
-        return self._text
-
-
 @dataclass
 class DummyRagEngine:
-    code_snippets: List[Dict[str, Any]]
-    response_text: str = "Here is the latest information."
+    """Stub engine exposing only what format_answer's code path uses."""
 
-    def retrieve(self, query: str, top_k: int = 4) -> Dict[str, Any]:
-        return {"matches": [], "scores": [], "chunks": []}
+    code_snippets: List[Dict[str, Any]]
 
     def retrieve_with_code(self, query: str, role: str | None = None) -> Dict[str, Any]:
         return {
             "code_snippets": self.code_snippets,
             "has_code": bool(self.code_snippets),
         }
-
-    @property
-    def response_generator(self) -> DummyResponseGenerator:
-        return DummyResponseGenerator(self.response_text)
 
 
 @pytest.fixture
@@ -46,66 +48,28 @@ def developer_engine() -> DummyRagEngine:
     return DummyRagEngine(code_snippets=[snippet])
 
 
-def _build_chat_history(turns: int) -> List[Dict[str, str]]:
-    history: List[Dict[str, str]] = []
-    for idx in range(turns):
-        history.append({"role": "user", "content": f"Question {idx}"})
-        history.append({"role": "assistant", "content": f"Answer {idx}"})
-    return history
+def test_software_developer_code_request_appends_code_block(developer_engine: DummyRagEngine) -> None:
+    """A developer asking for implementation details gets a cited code block."""
+    state: ConversationState = {
+        "role": "Software Developer",
+        "query": "Show me the latest implementation details",
+        "chat_history": [],
+    }
 
+    state = nodes.classify_query(state)
+    state = nodes.plan_actions(state)
 
-def test_technical_hiring_manager_enrichments(developer_engine: DummyRagEngine) -> None:
-    state = ConversationState(
-        role="Hiring Manager (technical)",
-        query="Explain the architecture and enterprise fit",
-        chat_history=_build_chat_history(2),
-    )
+    assert state.get("code_display_requested") is True
+    action_types = {action["type"] for action in state["pending_actions"]}
+    assert "include_code_reference" in action_types
 
-    nodes.classify_query(state)
-    nodes.plan_actions(state)
-    state.set_answer("Base technical answer.")
+    # format_answer builds the final answer from draft_answer and returns a
+    # partial update dict that the pipeline merges into state.
+    state["draft_answer"] = "Developer focused answer."
+    state.update(nodes.format_answer(state, developer_engine))
 
-    nodes.apply_role_context(state, developer_engine)
-
-    enriched = state.answer or ""
-    assert "Architecture Snapshot" in enriched
-    assert "Enterprise Fit" in enriched
-    assert "Data Collection Overview" in enriched
-
-
-def test_software_developer_receives_code_and_updates(developer_engine: DummyRagEngine) -> None:
-    state = ConversationState(
-        role="Software Developer",
-        query="Show me the latest implementation details",
-        chat_history=[],
-    )
-
-    nodes.classify_query(state)
-    nodes.plan_actions(state)
-    state.set_answer("Developer focused answer.")
-
-    nodes.apply_role_context(state, developer_engine)
-
-    output = state.answer or ""
+    output = state.get("answer") or ""
+    assert "Developer focused answer." in output
     assert "```python" in output
-    assert "Source:" in output
-    assert "Staying Current" in output
-    assert "Data Collection Overview" in output
-
-
-def test_non_technical_manager_offered_resume_prompt(developer_engine: DummyRagEngine) -> None:
-    state = ConversationState(
-        role="Hiring Manager (nontechnical)",
-        query="Tell me more about Noah's experience",
-        chat_history=_build_chat_history(2),
-    )
-
-    nodes.classify_query(state)
-    nodes.plan_actions(state)
-
-    assert any(action["type"] == "offer_resume_prompt" for action in state.pending_actions)
-
-    state.set_answer("Career overview.")
-    nodes.apply_role_context(state, developer_engine)
-
-    assert "Would you like me to email you my resume" in (state.answer or "")
+    assert "src/flows/conversation_flow.py" in output
+    assert "def run_conversation_flow" in output

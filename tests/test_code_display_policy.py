@@ -1,10 +1,19 @@
 """Test code display and import explanation functionality.
 
 This test suite validates:
-1. Code display triggers detect appropriate queries
-2. Import explanation retrieval returns correct tier
-3. Code formatting includes proper metadata and guardrails
-4. Role-based tier selection works correctly
+1. Code display triggers detect appropriate queries (classify_query flags)
+2. Import explanation triggers detect stack justification questions
+3. Action planning queues the right enrichment actions (plan_actions)
+4. Import explanation retrieval returns the correct tier
+5. Code/import formatting helpers produce correct markdown
+
+Current architecture notes:
+- ConversationState is a TypedDict (plain dict). Nodes read and write state
+  keys directly; classify_query and plan_actions merge their updates into the
+  state dict and return it.
+- plan_actions queues {"type": "include_code_reference"} for code display and
+  {"type": "explain_imports"} for import/stack questions (the old
+  "display_code_snippet" action type no longer exists).
 """
 
 import pytest
@@ -19,42 +28,47 @@ from assistant.retrieval.import_retriever import (
 from assistant.flows import content_blocks
 
 
+def _make_state(role: str, query: str) -> ConversationState:
+    """Build a minimal conversation state dict for node-level tests."""
+    return {"role": role, "query": query, "chat_history": []}
+
+
 class TestCodeDisplayTriggers:
     """Test that code display requests are detected correctly."""
 
     def test_explicit_show_code_request(self):
         """Explicit 'show code' should trigger code display."""
-        state = ConversationState(role="Software Developer", query="show me the code for retrieval")
+        state = _make_state("Software Developer", "show me the code for retrieval")
         result = classify_query(state)
-        assert result.fetch("code_display_requested") is True
-        assert result.fetch("query_type") == "technical"
+        assert result.get("code_display_requested") is True
+        assert result.get("query_type") == "technical"
 
     def test_show_implementation_request(self):
         """'show implementation' should trigger code display."""
-        state = ConversationState(role="Hiring Manager (technical)", query="show implementation of the API")
+        state = _make_state("Hiring Manager (technical)", "show implementation of the API")
         result = classify_query(state)
-        assert result.fetch("code_display_requested") is True
+        assert result.get("code_display_requested") is True
 
     def test_how_do_you_implementation_request(self):
         """'how do you' questions should trigger code display."""
-        state = ConversationState(role="Software Developer", query="how do you call the Supabase API?")
+        state = _make_state("Software Developer", "how do you call the Supabase API?")
         result = classify_query(state)
-        assert result.fetch("code_display_requested") is True
+        assert result.get("code_display_requested") is True
 
     def test_no_trigger_for_general_question(self):
         """General questions should not trigger code display."""
-        state = ConversationState(role="Software Developer", query="what is Noah's experience?")
+        state = _make_state("Software Developer", "what is Noah's experience?")
         result = classify_query(state)
-        assert result.fetch("code_display_requested") is not True
+        assert result.get("code_display_requested") is not True
 
     def test_code_display_action_planned_for_technical_role(self):
-        """Code display action should be added for technical roles when triggered."""
-        state = ConversationState(role="Software Developer", query="show me the retrieval code")
+        """Code reference action should be added for technical roles when triggered."""
+        state = _make_state("Software Developer", "show me the retrieval code")
         state = classify_query(state)
         state = plan_actions(state)
 
-        action_types = {action["type"] for action in state.pending_actions}
-        assert "display_code_snippet" in action_types
+        action_types = {action["type"] for action in state["pending_actions"]}
+        assert "include_code_reference" in action_types
 
 
 class TestImportExplanationTriggers:
@@ -62,29 +76,29 @@ class TestImportExplanationTriggers:
 
     def test_why_use_import_trigger(self):
         """'why use X' should trigger import explanation."""
-        state = ConversationState(role="Software Developer", query="why use Supabase?")
+        state = _make_state("Software Developer", "why use Supabase?")
         result = classify_query(state)
-        assert result.fetch("import_explanation_requested") is True
+        assert result.get("import_explanation_requested") is True
 
     def test_explain_imports_trigger(self):
         """'explain imports' should trigger import explanation."""
-        state = ConversationState(role="Hiring Manager (technical)", query="explain your imports")
+        state = _make_state("Hiring Manager (technical)", "explain your imports")
         result = classify_query(state)
-        assert result.fetch("import_explanation_requested") is True
+        assert result.get("import_explanation_requested") is True
 
     def test_trade_off_question_trigger(self):
         """Trade-off questions should trigger import explanation."""
-        state = ConversationState(role="Software Developer", query="what are the trade-offs of using pgvector?")
+        state = _make_state("Software Developer", "what are the trade-offs of using pgvector?")
         result = classify_query(state)
-        assert result.fetch("import_explanation_requested") is True
+        assert result.get("import_explanation_requested") is True
 
     def test_import_explanation_action_planned(self):
-        """Import explanation action should be added when triggered."""
-        state = ConversationState(role="Software Developer", query="why did you choose OpenAI?")
+        """Import explanation action should be added when triggered (developer flow)."""
+        state = _make_state("Software Developer", "why did you choose OpenAI?")
         state = classify_query(state)
         state = plan_actions(state)
 
-        action_types = {action["type"] for action in state.pending_actions}
+        action_types = {action["type"] for action in state["pending_actions"]}
         assert "explain_imports" in action_types
 
 
@@ -217,50 +231,44 @@ class TestEndToEndFlow:
     """Test complete code display and import explanation flow."""
 
     def test_developer_asks_how_do_you(self):
-        """Software developer asking 'how do you' should get code."""
-        state = ConversationState(
-            role="Software Developer",
-            query="how do you retrieve from pgvector?"
-        )
+        """Software developer asking 'how do you' should get code + import actions."""
+        state = _make_state("Software Developer", "how do you retrieve from pgvector?")
 
         # Classify should detect code display and import explanation
         state = classify_query(state)
-        assert state.fetch("code_display_requested") is True
-        assert state.fetch("import_explanation_requested") is True
+        assert state.get("code_display_requested") is True
+        assert state.get("import_explanation_requested") is True
 
         # Plan should add both actions
         state = plan_actions(state)
-        action_types = {action["type"] for action in state.pending_actions}
-        assert "display_code_snippet" in action_types
+        action_types = {action["type"] for action in state["pending_actions"]}
+        assert "include_code_reference" in action_types
         assert "explain_imports" in action_types
 
     def test_hiring_manager_asks_why_supabase(self):
         """Technical hiring manager should get tier 1 explanation."""
-        state = ConversationState(
-            role="Hiring Manager (technical)",
-            query="why did you use Supabase instead of separate services?"
+        state = _make_state(
+            "Hiring Manager (technical)",
+            "why did you use Supabase instead of separate services?"
         )
 
         state = classify_query(state)
-        assert state.fetch("import_explanation_requested") is True
+        assert state.get("import_explanation_requested") is True
 
         # Should get tier 1 explanation
-        explanation = get_import_explanation("supabase", state.role)
+        explanation = get_import_explanation("supabase", state["role"])
         assert explanation["tier"] == "1"
 
     def test_casual_user_no_code_display(self):
         """Casual users shouldn't trigger code display even with technical words."""
-        state = ConversationState(
-            role="Just looking around",
-            query="how does this work?"
-        )
+        state = _make_state("Just looking around", "how does this work?")
 
         state = classify_query(state)
         state = plan_actions(state)
 
-        action_types = {action["type"] for action in state.pending_actions}
+        action_types = {action["type"] for action in state["pending_actions"]}
         # Should not include code display for casual role
-        assert "display_code_snippet" not in action_types
+        assert "include_code_reference" not in action_types
 
 
 if __name__ == "__main__":
