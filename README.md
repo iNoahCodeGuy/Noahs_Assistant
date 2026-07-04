@@ -1,7 +1,7 @@
 # Portfolia - Noah's AI Assistant
 
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit)
-[![CI/CD Tests](https://github.com/iNoahCodeGuy/ai_assistant/workflows/Quality%20Assurance%20Tests/badge.svg)](https://github.com/iNoahCodeGuy/ai_assistant/actions)
+[![Tests](https://github.com/iNoahCodeGuy/Noahs_Assistant/actions/workflows/tests.yml/badge.svg)](https://github.com/iNoahCodeGuy/Noahs_Assistant/actions/workflows/tests.yml)
 
 **Portfolia** is Noah's **educational generative AI assistant** that teaches users how GenAI systems work and their enterprise value by **using herself as a hands-on case study**.
 
