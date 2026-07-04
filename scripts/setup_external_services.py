@@ -31,9 +31,9 @@ def create_storage_buckets():
     print("\n" + "=" * 60)
     print("Step 1: Creating Storage Buckets")
     print("=" * 60)
-    
+
     client = get_supabase_client()
-    
+
     # Create public bucket
     try:
         client.storage.create_bucket(
@@ -46,7 +46,7 @@ def create_storage_buckets():
             print("ℹ️  'public' bucket already exists")
         else:
             print(f"❌ Error creating public bucket: {e}")
-    
+
     # Create private bucket
     try:
         client.storage.create_bucket(
@@ -66,19 +66,19 @@ def upload_files():
     print("\n" + "=" * 60)
     print("Step 2: Uploading Files")
     print("=" * 60)
-    
+
     storage = StorageService()
-    
+
     # Define file paths (adjust these to match your actual files)
     resume_path = 'data/resume.pdf'
     headshot_path = 'data/headshot.jpg'
-    
+
     # Upload resume (private)
     if Path(resume_path).exists():
         try:
             path = storage.upload_resume(resume_path)
             print(f"✅ Uploaded resume: {path}")
-            
+
             # Generate signed URL
             signed_url = storage.get_signed_url(path, expires_in=3600)
             print(f"🔗 Signed URL (1 hour): {signed_url[:80]}...")
@@ -87,7 +87,7 @@ def upload_files():
     else:
         print(f"⚠️  Resume not found at {resume_path}")
         print(f"   Create a sample file: echo 'Sample Resume' > {resume_path}")
-    
+
     # Upload headshot (public)
     if Path(headshot_path).exists():
         try:
@@ -105,17 +105,17 @@ def test_email_service():
     print("\n" + "=" * 60)
     print("Step 3: Testing Email Service (Resend)")
     print("=" * 60)
-    
+
     resend = ResendService()
-    
+
     health = resend.health_check()
     print(f"📧 Service status: {health['status']}")
-    
+
     if health['status'] == 'healthy':
         print(f"   From email: {health['from_email']}")
         print(f"   Admin email: {health['admin_email']}")
         print("\n✅ Resend is configured and ready")
-        
+
         # Optionally send test email
         send_test = input("\nSend test email? (y/n): ")
         if send_test.lower() == 'y':
@@ -145,18 +145,18 @@ def test_sms_service():
     print("\n" + "=" * 60)
     print("Step 4: Testing SMS Service (Twilio)")
     print("=" * 60)
-    
+
     twilio = TwilioService()
-    
+
     health = twilio.health_check()
     print(f"📱 Service status: {health['status']}")
-    
+
     if health['status'] == 'healthy':
         print(f"   Account status: {health.get('account_status')}")
         print(f"   From phone: {health['from_phone']}")
         print(f"   Admin phone: {health['admin_phone']}")
         print("\n✅ Twilio is configured and ready")
-        
+
         # Optionally send test SMS
         send_test = input("\nSend test SMS? (y/n): ")
         if send_test.lower() == 'y':
@@ -188,29 +188,29 @@ def verify_integration():
     print("\n" + "=" * 60)
     print("Step 5: Integration Verification")
     print("=" * 60)
-    
+
     storage = StorageService()
     resend = ResendService()
     twilio = TwilioService()
-    
+
     checks = {
         'Storage (Supabase)': storage.health_check()['status'] == 'healthy',
         'Email (Resend)': resend.health_check()['status'] == 'healthy',
         'SMS (Twilio)': twilio.health_check()['status'] == 'healthy'
     }
-    
+
     print("\n📊 Service Status:")
     for service, status in checks.items():
         icon = "✅" if status else "❌"
         print(f"   {icon} {service}")
-    
+
     all_healthy = all(checks.values())
-    
+
     if all_healthy:
         print("\n🎉 All services are operational!")
     else:
         print("\n⚠️  Some services need configuration. See above for setup instructions.")
-    
+
     return all_healthy
 
 
@@ -219,7 +219,7 @@ def print_next_steps():
     print("\n" + "=" * 60)
     print("Next Steps")
     print("=" * 60)
-    
+
     print("""
 ✅ External Services Setup Complete!
 
@@ -275,12 +275,12 @@ def main():
     print("3. Test email service (Resend)")
     print("4. Test SMS service (Twilio)")
     print("5. Verify all integrations")
-    
+
     proceed = input("\nProceed with setup? (y/n): ")
     if proceed.lower() != 'y':
         print("Setup cancelled.")
         return
-    
+
     try:
         # Run setup steps
         create_storage_buckets()
@@ -288,17 +288,17 @@ def main():
         test_email_service()
         test_sms_service()
         all_healthy = verify_integration()
-        
+
         # Print next steps
         print_next_steps()
-        
+
         # Return exit code
         sys.exit(0 if all_healthy else 1)
-    
+
     except KeyboardInterrupt:
         print("\n\n⚠️  Setup interrupted by user")
         sys.exit(1)
-    
+
     except Exception as e:
         print(f"\n\n❌ Setup failed with error: {e}")
         import traceback

@@ -39,13 +39,13 @@ CREATE TABLE IF NOT EXISTS kb_chunks (
 -- Create index for fast similarity search
 -- IVFFLAT is faster than exact search for large datasets
 -- lists=100 is good for ~10k vectors, adjust based on data size
-CREATE INDEX IF NOT EXISTS kb_chunks_embedding_idx 
-ON kb_chunks 
+CREATE INDEX IF NOT EXISTS kb_chunks_embedding_idx
+ON kb_chunks
 USING ivfflat (embedding vector_cosine_ops)
 WITH (lists = 100);
 
 -- Index for filtering by document and section
-CREATE INDEX IF NOT EXISTS kb_chunks_doc_section_idx 
+CREATE INDEX IF NOT EXISTS kb_chunks_doc_section_idx
 ON kb_chunks (doc_id, section);
 
 -- Enable Row Level Security (RLS) - Supabase best practice
@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS retrieval_logs (
 );
 
 -- Index for joining with messages
-CREATE INDEX IF NOT EXISTS retrieval_logs_message_id_idx 
+CREATE INDEX IF NOT EXISTS retrieval_logs_message_id_idx
 ON retrieval_logs (message_id);
 
 -- Enable RLS
@@ -167,7 +167,7 @@ CREATE TABLE IF NOT EXISTS feedback (
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS feedback_message_id_idx ON feedback (message_id);
-CREATE INDEX IF NOT EXISTS feedback_contact_requested_idx 
+CREATE INDEX IF NOT EXISTS feedback_contact_requested_idx
 ON feedback (contact_requested) WHERE contact_requested = true;
 
 -- Enable RLS
@@ -184,7 +184,7 @@ USING (true);
 
 -- View: Recent messages with their retrieval logs
 CREATE OR REPLACE VIEW messages_with_retrieval AS
-SELECT 
+SELECT
     m.id,
     m.session_id,
     m.role_mode,
@@ -200,7 +200,7 @@ LEFT JOIN retrieval_logs r ON m.id = r.message_id;
 
 -- View: Message analytics by role
 CREATE OR REPLACE VIEW analytics_by_role AS
-SELECT 
+SELECT
     role_mode,
     COUNT(*) as total_messages,
     AVG(latency_ms) as avg_latency_ms,
@@ -275,10 +275,10 @@ INSERT INTO links (key, url, description, category) VALUES
 ON CONFLICT (key) DO NOTHING;
 
 -- ============================================================================
--- COMPLETE! 
+-- COMPLETE!
 -- ============================================================================
 -- Your database is now ready for the Supabase + Vercel architecture
--- 
+--
 -- Next steps:
 -- 1. Run the data migration script to populate kb_chunks from career_kb.csv
 -- 2. Update application code to use supabase_config.py

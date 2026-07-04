@@ -35,16 +35,16 @@ def create_test_resume(filepath: Path):
         # Create a proper PDF with reportlab
         c = canvas.Canvas(str(filepath), pagesize=letter)
         width, height = letter
-        
+
         # Title
         c.setFont("Helvetica-Bold", 24)
         c.drawString(72, height - 72, "Noah Delacalzada")
-        
+
         # Contact info
         c.setFont("Helvetica", 12)
         c.drawString(72, height - 100, "Email: noah@example.com | Phone: (555) 123-4567")
         c.drawString(72, height - 115, "Portfolio: noahdelacalzada.com | GitHub: github.com/noah")
-        
+
         # Section: Summary
         c.setFont("Helvetica-Bold", 16)
         c.drawString(72, height - 160, "Professional Summary")
@@ -58,11 +58,11 @@ def create_test_resume(filepath: Path):
         for line in summary:
             c.drawString(90, y_position, line)
             y_position -= 15
-        
+
         # Section: Experience
         c.setFont("Helvetica-Bold", 16)
         c.drawString(72, height - 260, "Experience")
-        
+
         c.setFont("Helvetica-Bold", 12)
         c.drawString(90, height - 285, "Senior Software Engineer | Tech Company")
         c.setFont("Helvetica-Oblique", 10)
@@ -78,7 +78,7 @@ def create_test_resume(filepath: Path):
         for line in experience:
             c.drawString(90, y_position, line)
             y_position -= 15
-        
+
         # Section: Skills
         c.setFont("Helvetica-Bold", 16)
         c.drawString(72, height - 420, "Technical Skills")
@@ -94,11 +94,11 @@ def create_test_resume(filepath: Path):
         for line in skills:
             c.drawString(90, y_position, line)
             y_position -= 15
-        
+
         # Footer
         c.setFont("Helvetica-Oblique", 9)
         c.drawString(72, 50, "Generated for External Services testing - Noah's AI Assistant")
-        
+
         c.save()
         print(f"✅ Created test resume: {filepath}")
     else:
@@ -172,7 +172,7 @@ startxref
 516
 %%EOF
 """
-        
+
         with open(filepath, 'wb') as f:
             f.write(pdf_content)
         print(f"✅ Created minimal test resume: {filepath}")
@@ -186,12 +186,12 @@ def create_test_headshot(filepath: Path):
         width, height = 400, 400
         img = Image.new('RGB', (width, height), color='#1a1a2e')
         draw = ImageDraw.Draw(img)
-        
+
         # Draw gradient background
         for i in range(height):
             color_value = int(26 + (i / height) * 40)
             draw.rectangle([(0, i), (width, i + 1)], fill=(color_value, color_value, color_value + 20))
-        
+
         # Draw a circle for the "face"
         circle_center = (width // 2, height // 2)
         circle_radius = 120
@@ -202,7 +202,7 @@ def create_test_headshot(filepath: Path):
             outline='#0f3460',
             width=3
         )
-        
+
         # Draw "N" for Noah
         try:
             # Try to use a truetype font
@@ -210,7 +210,7 @@ def create_test_headshot(filepath: Path):
         except:
             # Fall back to default font
             font = ImageFont.load_default()
-        
+
         # Draw the letter
         text = "N"
         bbox = draw.textbbox((0, 0), text, font=font)
@@ -221,19 +221,19 @@ def create_test_headshot(filepath: Path):
             circle_center[1] - text_height // 2 - 10
         )
         draw.text(text_position, text, fill='#00d4ff', font=font)
-        
+
         # Add label at bottom
         try:
             label_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 16)
         except:
             label_font = ImageFont.load_default()
-        
+
         label_text = "Noah Delacalzada"
         bbox = draw.textbbox((0, 0), label_text, font=label_font)
         label_width = bbox[2] - bbox[0]
         label_position = (width // 2 - label_width // 2, height - 40)
         draw.text(label_position, label_text, fill='#00d4ff', font=label_font)
-        
+
         # Save image
         img.save(filepath, 'JPEG', quality=90)
         print(f"✅ Created test headshot: {filepath}")
@@ -254,7 +254,7 @@ def create_test_headshot(filepath: Path):
             0x00, 0x00, 0x00, 0x03, 0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00,
             0x3F, 0x00, 0x00, 0xFF, 0xD9
         ])
-        
+
         with open(filepath, 'wb') as f:
             f.write(jpeg_data)
         print(f"✅ Created minimal test headshot: {filepath}")
@@ -264,18 +264,18 @@ def main():
     """Generate test files for External Services setup."""
     print("📁 Generating test files for External Services setup...")
     print()
-    
+
     # Ensure data directory exists
     data_dir = Path(__file__).parent.parent / 'data'
     data_dir.mkdir(exist_ok=True)
-    
+
     # Create test files
     resume_path = data_dir / 'test_resume.pdf'
     headshot_path = data_dir / 'test_headshot.jpg'
-    
+
     create_test_resume(resume_path)
     create_test_headshot(headshot_path)
-    
+
     print()
     print("✅ Test files created successfully!")
     print()

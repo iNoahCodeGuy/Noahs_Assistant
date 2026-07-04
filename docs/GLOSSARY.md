@@ -28,7 +28,7 @@ A numerical representation of text as a vector (list of numbers). OpenAI's `text
 ### **Cosine Similarity**
 Measures how similar two vectors are by calculating the angle between them.
 
-**Range**: 
+**Range**:
 - `1.0` = Identical (0° angle)
 - `0.7` = Moderately similar (45° angle) ← Our threshold
 - `0.0` = Completely unrelated (90° angle)
@@ -96,7 +96,7 @@ LLM creating the final response using the augmented prompt.
 ### **Grounded Response**
 A response that cites specific sources from retrieved context. Reduces hallucinations.
 
-**Ungrounded** (bad): "I have Python experience."  
+**Ungrounded** (bad): "I have Python experience."
 **Grounded** (good): "I have 10 years of Python development experience (source: career_kb, chunk_15)."
 
 ---
@@ -167,8 +167,8 @@ Supabase's feature for subscribing to database changes.
 ### **text-embedding-3-small**
 OpenAI's embedding model that converts text → vectors.
 
-**Cost**: $0.00002 per 1,000 tokens (~750 words)  
-**Dimensions**: 1536  
+**Cost**: $0.00002 per 1,000 tokens (~750 words)
+**Dimensions**: 1536
 **Speed**: ~50ms per embedding
 
 **Why this model**: 5x cheaper than `text-embedding-ada-002`, same quality.
@@ -187,7 +187,7 @@ A piece of text (~4 characters on average).
 ### **Context Window**
 Maximum amount of text an LLM can process at once.
 
-**Claude Sonnet 4.5**: 200,000 tokens (~150,000 words)  
+**Claude Sonnet 4.5**: 200,000 tokens (~150,000 words)
 **Our typical usage**: 2,000 tokens (query + 5 retrieved chunks)
 
 ---
@@ -195,7 +195,7 @@ Maximum amount of text an LLM can process at once.
 ### **Temperature**
 Controls randomness in LLM responses.
 
-**Range**: 0.0 (deterministic) to 2.0 (creative)  
+**Range**: 0.0 (deterministic) to 2.0 (creative)
 **Our setting**: 0.7 (balanced)
 
 **Why 0.7**: Accurate but not robotic. 0.0 is too repetitive, 1.5+ is too random.
@@ -207,7 +207,7 @@ Controls randomness in LLM responses.
 ### **Vercel**
 Serverless hosting platform for Next.js applications.
 
-**Why Vercel**: 
+**Why Vercel**:
 - Free tier for small projects
 - Automatic scaling
 - Built-in CI/CD
@@ -230,7 +230,7 @@ Code that runs on-demand without managing servers.
 ### **Cold Start**
 Time it takes to spin up a serverless function from scratch.
 
-**File-based vector store (e.g. FAISS)**: seconds — vector files must load into memory  
+**File-based vector store (e.g. FAISS)**: seconds — vector files must load into memory
 **pgvector**: fast — a stateless SQL query against Supabase
 
 **Why pgvector wins**: No files to load, just query the database. (This project migrated
@@ -280,7 +280,7 @@ Tests a single function in isolation.
 ### **Latency**
 Time from request to response.
 
-**Target**: <2 seconds for good UX  
+**Target**: <2 seconds for good UX
 **Current**: ~500ms (pgvector) vs ~3s (FAISS)
 
 ---
@@ -385,7 +385,7 @@ Collection of text chunks stored for retrieval.
 ### **Next.js**
 React framework for building web applications.
 
-**Why**: 
+**Why**:
 - Better SEO (server-side rendering)
 - Faster load times
 - Professional UI/UX
@@ -435,5 +435,5 @@ Actual per-call costs are visible in LangSmith traces.
 
 ---
 
-**Last Updated**: January 2025  
+**Last Updated**: January 2025
 **Maintainer**: Noah De La Calzada

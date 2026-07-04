@@ -20,7 +20,7 @@ returns table (
   created_at timestamptz
 )
 language sql stable as $$
-  select 
+  select
     m.id as message_id,
     m.user_query,
     avg(r.similarity_score) as avg_similarity,
@@ -43,13 +43,13 @@ returns table (
   conversion_rate numeric
 )
 language sql stable as $$
-  select 
+  select
     m.role_mode,
     count(distinct m.session_id) as sessions,
     count(distinct case when f.contact_requested then m.session_id end) as conversions,
     round(
-      100.0 * count(distinct case when f.contact_requested then m.session_id end) 
-      / nullif(count(distinct m.session_id), 0), 
+      100.0 * count(distinct case when f.contact_requested then m.session_id end)
+      / nullif(count(distinct m.session_id), 0),
       1
     ) as conversion_rate
   from messages m
@@ -69,34 +69,34 @@ language sql stable as $$
   select 'total_messages' as metric, count(*)::numeric as value
   from messages
   where created_at > now() - interval '7 days'
-  
+
   union all
-  
+
   select 'p95_latency_ms', percentile_cont(0.95) within group (order by latency_ms)
   from messages
   where created_at > now() - interval '7 days' and latency_ms is not null
-  
+
   union all
-  
+
   select 'avg_latency_ms', avg(latency_ms)
   from messages
   where created_at > now() - interval '7 days' and latency_ms is not null
-  
+
   union all
-  
+
   select 'success_rate', round(100.0 * count(case when success then 1 end) / nullif(count(*), 0), 1)
   from messages
   where created_at > now() - interval '7 days'
-  
+
   union all
-  
+
   select 'grounded_rate', round(100.0 * count(case when grounded then 1 end) / nullif(count(*), 0), 1)
   from retrieval_logs r
   join messages m on m.id = r.message_id
   where m.created_at > now() - interval '7 days' and r.grounded is not null
-  
+
   union all
-  
+
   select 'avg_rating', avg(rating)
   from feedback f
   join messages m on m.id = f.message_id
@@ -112,7 +112,7 @@ returns table (
   avg_duration_ms numeric
 )
 language sql stable as $$
-  select 
+  select
     tool,
     count(*) as invocations,
     round(100.0 * count(case when status = 'success' then 1 end) / nullif(count(*), 0), 1) as success_rate,

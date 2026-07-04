@@ -488,4 +488,3 @@ Noah's next goal for Portfolia is giving it access to the internet. If someone a
 - **LinkedIn**: https://www.linkedin.com/in/noah-de-la-calzada-250412358/
 - **Email**: [Contact via Portfolia chat interface]
 - **Location**: Las Vegas, NV
-

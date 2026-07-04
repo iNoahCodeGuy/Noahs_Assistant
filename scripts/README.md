@@ -197,5 +197,5 @@ After running these scripts successfully:
 
 ---
 
-**Last Updated**: October 5, 2025  
+**Last Updated**: October 5, 2025
 **Maintainer**: Noah De La Calzada (@iNoahCodeGuy)

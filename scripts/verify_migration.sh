@@ -57,7 +57,7 @@ for table in "${tables[@]}"; do
         "${SUPABASE_URL}/rest/v1/${table}?limit=0" \
         -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
         -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}")
-    
+
     if [ "$response" = "200" ]; then
         echo -e "${GREEN}✓${NC} ${table} exists"
     else
@@ -72,15 +72,15 @@ if [ -n "$missing_tables" ]; then
     echo -e "${RED}Missing tables detected!${NC}"
     echo "Please run the following migrations in Supabase SQL Editor:"
     echo ""
-    
+
     if [[ "$missing_tables" == *"kb_chunks"* ]] || [[ "$missing_tables" == *"messages"* ]]; then
         echo "1. supabase/migrations/001_initial_schema.sql"
     fi
-    
+
     if [[ "$missing_tables" == *"confessions"* ]] || [[ "$missing_tables" == *"sms_logs"* ]]; then
         echo "2. supabase/migrations/002_add_confessions_and_sms.sql"
     fi
-    
+
     echo ""
     echo "How to run migrations:"
     echo "  1. Go to https://app.supabase.com"

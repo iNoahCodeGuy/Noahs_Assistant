@@ -20,25 +20,25 @@ def print_header(text):
 def main():
     """Guide user through manual migration."""
     print_header("Migration 002 Setup Assistant")
-    
+
     print("I'll help you run Migration 002 in 3 easy steps!\n")
-    
+
     # Step 1: Read migration file
     migration_file = 'supabase/migrations/002_add_confessions_and_sms.sql'
-    
+
     try:
         with open(migration_file, 'r') as f:
             sql_content = f.read()
     except FileNotFoundError:
         print("ERROR: Migration file not found: {}".format(migration_file))
         return 1
-    
+
     print("Step 1: Open the migration file")
     print("-" * 60)
     print("File location: {}".format(migration_file))
     print("File size: {} lines".format(len(sql_content.splitlines())))
     print("\nOpening file in your default text editor...")
-    
+
     # Try to open the file
     try:
         if sys.platform == 'darwin':  # macOS
@@ -49,9 +49,9 @@ def main():
             os.system('xdg-open "{}"'.format(migration_file))
     except:
         pass
-    
+
     input("\nPress Enter when ready for Step 2...")
-    
+
     # Step 2: Open Supabase
     print("\n\nStep 2: Open Supabase SQL Editor")
     print("-" * 60)
@@ -60,15 +60,15 @@ def main():
     print("  1. Select your project")
     print("  2. Click 'SQL Editor' in left sidebar")
     print("  3. Click 'New Query' button")
-    
+
     try:
         webbrowser.open('https://app.supabase.com')
         print("\n✓ Browser opened")
     except:
         print("\nPlease manually navigate to: https://app.supabase.com")
-    
+
     input("\nPress Enter when you have SQL Editor open...")
-    
+
     # Step 3: Instructions
     print("\n\nStep 3: Run the migration")
     print("-" * 60)
@@ -78,13 +78,13 @@ def main():
     print("  3. Click 'Run' (or press Cmd/Ctrl + Enter)")
     print("\nYou should see: 'Success. No rows returned'")
     print("\n" + "="*60)
-    
+
     input("\nPress Enter when migration is complete...")
-    
+
     # Verify
     print("\n\nVerifying migration...")
     print("-" * 60)
-    
+
     import subprocess
     try:
         result = subprocess.run(
@@ -92,9 +92,9 @@ def main():
             capture_output=True,
             text=True
         )
-        
+
         print(result.stdout)
-        
+
         if result.returncode == 0:
             print_header("SUCCESS! 🎉")
             print("Migration completed and verified!")
@@ -108,7 +108,7 @@ def main():
             print("\n⚠ Verification found issues. Run again:")
             print("  python3 scripts/verify_migration.py")
             return 1
-            
+
     except Exception as e:
         print("Couldn't run verification automatically.")
         print("Please run: python3 scripts/verify_migration.py")

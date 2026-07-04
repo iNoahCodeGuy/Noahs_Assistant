@@ -17,4 +17,3 @@ uvicorn>=0.34.0
 # pandas is required by src/retrieval/career_kb.py
 # requests is required for fetching live analytics from /api/analytics endpoint
 # This avoids version conflicts by letting pip resolve the dependency tree
-

@@ -245,7 +245,7 @@ Poor (<0.55):           ██░░░░░░░░░░░░░░░░�
 
 **Get top queries by volume**:
 ```sql
-SELECT 
+SELECT
     user_query,
     COUNT(*) as query_count,
     AVG(latency_ms) as avg_latency,
@@ -259,7 +259,7 @@ LIMIT 10;
 
 **Find knowledge gaps** (low similarity scores):
 ```sql
-SELECT 
+SELECT
     m.user_query,
     AVG(r.similarity_score) as avg_similarity,
     COUNT(r.id) as retrieval_count
@@ -273,7 +273,7 @@ ORDER BY retrieval_count DESC;
 
 **Conversion funnel analysis**:
 ```sql
-SELECT 
+SELECT
     role,
     COUNT(DISTINCT session_id) as total_sessions,
     COUNT(DISTINCT CASE WHEN f.contact_requested THEN session_id END) as conversions,

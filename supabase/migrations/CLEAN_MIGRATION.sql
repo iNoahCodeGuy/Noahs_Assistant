@@ -187,7 +187,7 @@ BEGIN
 END $$;
 
 SELECT 'SUCCESS: Tables created' as status;
-SELECT table_name FROM information_schema.tables 
-WHERE table_schema = 'public' 
+SELECT table_name FROM information_schema.tables
+WHERE table_schema = 'public'
 AND table_name IN ('kb_chunks', 'messages', 'retrieval_logs', 'links', 'feedback')
 ORDER BY table_name;

@@ -152,4 +152,3 @@ def chat(req: ChatRequest):
             "answer": "Something went wrong. Try again in a moment.",
             "session_id": req.session_id or "",
         }
-

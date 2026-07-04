@@ -17,10 +17,10 @@ CREATE TABLE IF NOT EXISTS confessions (
 );
 
 -- Indexes
-CREATE INDEX IF NOT EXISTS confessions_created_at_idx 
+CREATE INDEX IF NOT EXISTS confessions_created_at_idx
 ON confessions (created_at DESC);
 
-CREATE INDEX IF NOT EXISTS confessions_is_anonymous_idx 
+CREATE INDEX IF NOT EXISTS confessions_is_anonymous_idx
 ON confessions (is_anonymous);
 
 -- Enable RLS
@@ -39,11 +39,11 @@ USING (true);
 -- TABLE: feedback (update to add missing columns)
 -- ============================================================================
 -- Add missing columns if they don't exist
-DO $$ 
+DO $$
 BEGIN
     -- Add user_name column if it doesn't exist
     IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns 
+        SELECT 1 FROM information_schema.columns
         WHERE table_name = 'feedback' AND column_name = 'user_name'
     ) THEN
         ALTER TABLE feedback ADD COLUMN user_name TEXT;
@@ -51,7 +51,7 @@ BEGIN
 
     -- Add user_phone column if it doesn't exist
     IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns 
+        SELECT 1 FROM information_schema.columns
         WHERE table_name = 'feedback' AND column_name = 'user_phone'
     ) THEN
         ALTER TABLE feedback ADD COLUMN user_phone TEXT;
@@ -59,12 +59,12 @@ BEGIN
 
     -- Add user_email column if it doesn't exist (rename from email if needed)
     IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns 
+        SELECT 1 FROM information_schema.columns
         WHERE table_name = 'feedback' AND column_name = 'user_email'
     ) THEN
         -- Check if 'email' column exists and rename it
         IF EXISTS (
-            SELECT 1 FROM information_schema.columns 
+            SELECT 1 FROM information_schema.columns
             WHERE table_name = 'feedback' AND column_name = 'email'
         ) THEN
             ALTER TABLE feedback RENAME COLUMN email TO user_email;
@@ -91,10 +91,10 @@ CREATE TABLE IF NOT EXISTS sms_logs (
 );
 
 -- Indexes
-CREATE INDEX IF NOT EXISTS sms_logs_created_at_idx 
+CREATE INDEX IF NOT EXISTS sms_logs_created_at_idx
 ON sms_logs (created_at DESC);
 
-CREATE INDEX IF NOT EXISTS sms_logs_status_idx 
+CREATE INDEX IF NOT EXISTS sms_logs_status_idx
 ON sms_logs (status);
 
 -- Enable RLS
@@ -111,9 +111,9 @@ USING (true);
 
 -- View: Recent confessions summary
 CREATE OR REPLACE VIEW recent_confessions AS
-SELECT 
+SELECT
     id,
-    CASE 
+    CASE
         WHEN is_anonymous THEN 'Anonymous'
         ELSE COALESCE(name, 'Unknown')
     END as from_name,
@@ -125,7 +125,7 @@ LIMIT 50;
 
 -- View: Feedback with contact requests
 CREATE OR REPLACE VIEW pending_contacts AS
-SELECT 
+SELECT
     f.id,
     f.message_id,
     f.user_name,
