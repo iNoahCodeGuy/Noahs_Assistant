@@ -121,7 +121,6 @@ assistant/            core package
   config/             settings & Supabase config
   observability/      LangSmith tracing
 api/                  FastAPI app (api/main.py)
-app/                  dashboard + legacy chat UI (production UI lives in portfolia_frontend)
 data/                 knowledge-base CSVs
 scripts/              KB migration & utilities
 supabase/migrations/  database schema
