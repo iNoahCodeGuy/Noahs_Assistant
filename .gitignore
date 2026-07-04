@@ -62,3 +62,4 @@ data/*.json
 *.sqlite
 *.sqlite3
 kb_review.md
+AUDIT_ROADMAP.md
