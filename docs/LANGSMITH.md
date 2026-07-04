@@ -12,8 +12,8 @@ Complete guide to setting up LangSmith for observability in Noah's AI Assistant.
 
 ## Prerequisites
 
-- OpenAI API key (already configured)
-- Python 3.8+
+- OpenAI + Anthropic API keys (already configured)
+- Python 3.12
 - Active internet connection
 
 ## Get LangSmith API Key
@@ -65,25 +65,23 @@ export LANGCHAIN_PROJECT=noahs-ai-assistant
 ### Full .env Example
 
 ```bash
-# OpenAI Configuration
+# OpenAI (embeddings)
 OPENAI_API_KEY=sk-...
+
+# Anthropic (generation + intent classification)
+ANTHROPIC_API_KEY=sk-ant-...
 
 # Supabase Configuration
 SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 
 # LangSmith Configuration (OBSERVABILITY)
 LANGCHAIN_TRACING_V2=true
 LANGCHAIN_API_KEY=lsv2_pt_...
-LANGCHAIN_PROJECT=noahs-ai-assistant
-LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
-
-# Database
-DATABASE_URL=postgresql://...
-
-# Streamlit
-STREAMLIT_PORT=8501
+LANGCHAIN_PROJECT=portfolia
 ```
+
+See [.env.example](../.env.example) for the full annotated list.
 
 ## Verify Setup
 
@@ -109,8 +107,8 @@ python test_langsmith.py
 ### Method 2: Check Logs
 
 ```bash
-# Run the app
-streamlit run src/main.py
+# Run the terminal client
+python3 chat_with_portfolia.py
 
 # Look for this log message
 # ✅ LangSmith tracing enabled
@@ -145,7 +143,7 @@ print(response)
 │  ├─ Chunks: 3
 │  └─ Avg Similarity: 0.82
 ├─ 🤖 Generation (980ms)
-│  ├─ Model: gpt-4
+│  ├─ Model: claude-sonnet-4-5
 │  ├─ Tokens: 150 prompt + 200 completion
 │  ├─ Cost: $0.012
 │  └─ Response: "Noah is proficient in..."
@@ -162,7 +160,7 @@ When `LANGGRAPH_FLOW_ENABLED=true` (default) you’ll also see sub-runs for `cla
 - **By Date**: Last hour, today, this week
 - **By Status**: Success, Error, Pending
 - **By Latency**: > 1s, > 2s, > 5s
-- **By Model**: gpt-4, gpt-3.5-turbo
+- **By Model**: claude-sonnet-4-5 (generation), claude-haiku-4-5 (classification)
 
 ### Export Data
 
@@ -189,7 +187,7 @@ LANGCHAIN_PROJECT=noahs-ai-assistant-prod   # Production
 ### Sampling (Reduce Costs)
 
 ```python
-# In src/core/rag_engine.py
+# In assistant/core/rag_engine.py
 import os
 
 # Only trace 10% of requests in production

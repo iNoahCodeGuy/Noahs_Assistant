@@ -9,7 +9,7 @@ The default runtime executes the LangGraph-style `run_conversation_flow`, so tra
 ## 📊 Features
 
 ### 1. **LangSmith Integration**
-- 🔎 **Trace OpenAI Calls**: Visual traces of all LLM interactions
+- 🔎 **Trace LLM Calls**: Visual traces of every Claude and embedding interaction
 - 📈 **Token Usage Tracking**: Monitor costs and optimize prompts
 - ⏱️ **Latency Monitoring**: Identify performance bottlenecks
 - 🐛 **Error Debugging**: Detailed error traces with context
@@ -22,9 +22,9 @@ The default runtime executes the LangGraph-style `run_conversation_flow`, so tra
 
 ### 3. **Generation Metrics**
 - **Token Usage**: Track prompt and completion tokens
-- **Cost Estimation**: Calculate OpenAI API costs
+- **Cost Estimation**: Calculate Anthropic + OpenAI API costs
 - **Response Latency**: Monitor generation time
-- **Model Performance**: Compare GPT-4 vs GPT-3.5
+- **Model Performance**: Compare generation (Sonnet) vs classification (Haiku) calls
 
 ### 4. **LLM-as-Judge Evaluation**
 - **Faithfulness**: Does response cite retrieved context?
@@ -171,7 +171,7 @@ User Query
 └────────┬────────┘
          ↓
 ┌─────────────────┐
-│  Generate       │ → OpenAI GPT-4
+│  Generate       │ → Claude Sonnet 4.5
 │  Response       │ → Log: tokens, latency, cost
 └────────┬────────┘
          ↓
@@ -189,7 +189,7 @@ Final Response + Metrics
 
 1. **Trace Creation**: LangSmith creates parent trace
 2. **Retrieval Span**: Logs pgvector query, scores, latency
-3. **Generation Span**: Logs OpenAI call, tokens, response
+3. **Generation Span**: Logs the Claude call, tokens, response
 4. **Evaluation Span**: Logs quality metrics (sampled)
 5. **Trace Completion**: Full pipeline visible in dashboard
 
@@ -218,7 +218,7 @@ class GenerationMetrics:
     tokens_completion: int        # Completion tokens
     total_tokens: int             # Total tokens
     latency_ms: int               # Generation time
-    model: str                    # Model name (gpt-4)
+    model: str                    # Model name (e.g. claude-sonnet-4-5)
     cost_usd: float               # Estimated cost
     timestamp: datetime           # When generation occurred
 ```
@@ -250,8 +250,8 @@ if should_evaluate_sample(sample_rate=0.1):  # 10% of responses
 ### 2. Cost Management
 - **Development**: Use sampling for evaluation
 - **Production**: Evaluate only flagged responses
-- **GPT-3.5-turbo**: ~$0.002/1K tokens for evaluation
-- **Budget**: ~$5/month for 10% sampling at 1K queries/day
+- **Claude Haiku**: cheapest option for evaluation calls
+- **Budget**: a few dollars/month for 10% sampling at 1K queries/day
 
 ### 3. Dashboard Monitoring
 View traces in LangSmith dashboard:
@@ -330,7 +330,7 @@ result = test_function()
 
 **Solution**:
 1. Reduce sampling rate: `sample_rate=0.05` (5%)
-2. Use GPT-3.5-turbo instead of GPT-4 for evaluation
+2. Use Claude Haiku instead of Sonnet for evaluation
 3. Disable evaluation in development:
    ```python
    if os.getenv("ENVIRONMENT") == "production":
@@ -347,9 +347,9 @@ result = test_function()
 ## 🎓 Learn More
 
 ### Example Projects
-- **Supabase Analytics**: `src/analytics/supabase_analytics.py`
-- **pgvector Retrieval**: `src/retrieval/pgvector_retriever.py`
-- **RAG Engine**: `src/core/rag_engine.py`
+- **Supabase Analytics**: `assistant/analytics/supabase_analytics.py`
+- **pgvector Retrieval**: `assistant/retrieval/pgvector_retriever.py`
+- **RAG Engine**: `assistant/core/rag_engine.py`
 
 ### Extending Observability
 Add custom metrics:

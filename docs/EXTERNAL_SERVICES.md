@@ -188,10 +188,11 @@ Step 5: Testing SMS service...
 After completing all steps, your `.env` should look like:
 
 ```bash
-# OpenAI
+# OpenAI (embeddings only — text-embedding-3-small)
 OPENAI_API_KEY=sk-proj-...
-OPENAI_MODEL=gpt-3.5-turbo
-EMBEDDING_MODEL=text-embedding-ada-002
+
+# Anthropic (generation: Claude Sonnet 4.5, classification: Claude Haiku)
+ANTHROPIC_API_KEY=sk-ant-...
 
 # Supabase
 SUPABASE_URL=https://yourproject.supabase.co

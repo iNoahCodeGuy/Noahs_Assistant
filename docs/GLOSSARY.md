@@ -101,12 +101,9 @@ A response that cites specific sources from retrieved context. Reduces hallucina
 
 ---
 
-### **Hybrid RAG**
-Supporting multiple retrieval backends (pgvector for production, FAISS for tests).
-
-**Why hybrid**: 
-- Production: pgvector (centralized, observable)
-- Tests: FAISS (no external dependencies, faster CI/CD)
+### **Retrieval Backend**
+Production retrieval runs on Supabase pgvector (the `match_kb_chunks` RPC). Tests mock
+the retriever entirely (see `DummyRagEngine` in the test suite) — no vector store needed.
 
 ---
 
@@ -165,7 +162,7 @@ Supabase's feature for subscribing to database changes.
 
 ---
 
-## 🧠 OpenAI API Terms
+## 🧠 LLM API Terms
 
 ### **text-embedding-3-small**
 OpenAI's embedding model that converts text → vectors.
@@ -190,7 +187,7 @@ A piece of text (~4 characters on average).
 ### **Context Window**
 Maximum amount of text an LLM can process at once.
 
-**GPT-4o-mini**: 128,000 tokens (~96,000 words)  
+**Claude Sonnet 4.5**: 200,000 tokens (~150,000 words)  
 **Our typical usage**: 2,000 tokens (query + 5 retrieved chunks)
 
 ---
@@ -233,10 +230,11 @@ Code that runs on-demand without managing servers.
 ### **Cold Start**
 Time it takes to spin up a serverless function from scratch.
 
-**FAISS cold start**: 2-3 seconds (loading vector files)  
-**pgvector cold start**: 0.2 seconds (stateless SQL query)
+**File-based vector store (e.g. FAISS)**: seconds — vector files must load into memory  
+**pgvector**: fast — a stateless SQL query against Supabase
 
-**Why pgvector wins**: No files to load, just query Supabase.
+**Why pgvector wins**: No files to load, just query the database. (This project migrated
+from FAISS to pgvector for exactly this reason.)
 
 ---
 
@@ -249,7 +247,7 @@ Reusable test setup code.
 ```python
 @pytest.fixture
 def mock_rag_engine():
-    return RagEngine(use_pgvector=False)  # Use FAISS for tests
+    return DummyRagEngine()  # No network calls — returns canned chunks
 ```
 
 **Why fixtures**: Don't repeat setup in every test.
@@ -384,15 +382,6 @@ Collection of text chunks stored for retrieval.
 
 ## 🛠️ Development Tools
 
-### **Streamlit**
-Python framework for building data apps.
-
-**Why we use it**: Quick prototyping, built-in chat interface.
-
-**Next step**: Migrate to Next.js for production (better UX, SEO).
-
----
-
 ### **Next.js**
 React framework for building web applications.
 
@@ -428,11 +417,12 @@ $25/month tier with:
 
 ---
 
-### **OpenAI API Costs**
-- **Embeddings**: $0.00002 per 1K tokens (~$5-10/month for 100K queries)
-- **GPT-4o-mini**: $0.00015 per 1K input tokens (~$20-30/month)
+### **LLM API Costs**
+- **OpenAI embeddings** (text-embedding-3-small): $0.00002 per 1K tokens
+- **Claude Haiku** (intent classification): fractions of a cent per message
+- **Claude Sonnet 4.5** (generation): the dominant cost — a few cents per long answer
 
-**Total estimated**: $30-35/month (vs $100-200/month on GCP).
+Actual per-call costs are visible in LangSmith traces.
 
 ---
 
