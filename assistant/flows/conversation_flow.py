@@ -1,9 +1,9 @@
-"""LangGraph-style orchestrator with 21-node pipeline including quality validation and phase tracking.
+"""LangGraph-style orchestrator with 22-node pipeline including quality validation and phase tracking.
 
 Educational mission: make every conversation a live case study of production RAG
 patterns with clear node boundaries, traceability, and cinematic-yet-grounded tone.
 
-Enhanced Pipeline (18→21 nodes with quality assurance + phase tracking):
+Enhanced Pipeline (18→22 nodes with quality assurance + phase tracking + intent routing):
 1. initialize_conversation_state → normalize state containers and load memory
 2. handle_greeting → warm intro without RAG cost for first-turn hellos
 3. classify_role_mode → welcome message routing (no role-based branching after welcome)
@@ -62,7 +62,7 @@ Performance characteristics:
 - Greeting short-circuit <50ms
 - Cold start ~3s on Vercel
 - p95 latency <3.2s with tracing enabled
-- Recursion depth: 21 nodes (quality gates are lightweight)
+- Recursion depth: 22 nodes (quality gates are lightweight)
 """
 
 from __future__ import annotations
@@ -198,7 +198,7 @@ def _is_architecture_response(state: dict) -> bool:
         "grounding validation", "hallucination check", "state machine",
         "retrieval", "rag", "pgvector", "haiku", "sonnet",
         "stage 1", "stage 2", "stage 3", "stage 4", "stage 5",
-        "21-node", "21 node", "functional pipeline",
+        "22-node", "22 node", "21-node", "21 node", "functional pipeline",
         "deterministic tool", "agentic",
     ]
     indicator_count = sum(1 for ind in _arch_indicators if ind in answer_lower)
@@ -671,7 +671,7 @@ def run_conversation_flow(
         # STAGE 5: GENERATION (Create Answer)
         # Purpose: LLM generation with hallucination checks
         # State Modified: draft_answer, answer, hallucination_safe, citations
-        # Performance: ~600ms (OpenAI API call)
+        # Performance: ~600ms (Anthropic API call)
         # ═══════════════════════════════════════════════════════════════════════════
         lambda s: generate_draft(s, rag_engine),
         hallucination_check,
@@ -789,7 +789,7 @@ def _build_langgraph() -> Any:
     # Create StateGraph with ConversationState schema
     workflow = StateGraph(ConversationState)
 
-    # Add all nodes with RAG engine injected (21-node pipeline with quality validation)
+    # Add all nodes with RAG engine injected (22-node pipeline with quality validation)
     workflow.add_node("initialize", initialize_conversation_state)
     workflow.add_node("role_prompt", prompt_for_role_selection)
     workflow.add_node("greeting", lambda s: handle_greeting(s, rag_engine))

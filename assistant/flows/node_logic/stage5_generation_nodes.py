@@ -753,7 +753,7 @@ def _build_engagement_context(state: dict) -> str | None:
             "\n1. SELF-INTRO (Danaher structure): Name the PROBLEM with "
             "portfolio sites (they're static — you read, you leave, no "
             "follow-up questions). Then the approach: Noah built a "
-            "conversational one. You're the example — 21-node RAG pipeline, "
+            "conversational one. You're the example — 22-node RAG pipeline, "
             "semantic search, intent classification, grounding validation. "
             "Built from scratch to demonstrate production AI architecture."
             "\n2. ML WORK (show range through paired projects): The attrition "

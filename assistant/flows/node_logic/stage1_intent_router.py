@@ -1073,7 +1073,7 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["answer"] = (
             "I'm here to show you who Noah is and what he builds. Ask me anything — his work, his projects, "
             "his background. I know it all because he built me from scratch. I'm also a live demo of his "
-            "engineering — every answer runs through a 21-node pipeline with semantic search, grounding "
+            "engineering — every answer runs through a 22-node pipeline with semantic search, grounding "
             "validation, and quality gates. So while I'm telling you about Noah, I'm showing you what he can do."
         )
         state["pipeline_halt"] = True

@@ -34,7 +34,7 @@ def _get_welcome_message(role_mode: str) -> str:
         "software_developer": dedent("""\
             Seven projects. Each one started with a problem worth solving.
 
-            **Portfolia AI Assistant** -- Most portfolio sites are static pages you skim and forget. This is a 21-node RAG pipeline with pgvector semantic search, Claude Sonnet 4.5 for generation, and intent classification before retrieval so greetings don't waste a vector search. You're using it.
+            **Portfolia AI Assistant** -- Most portfolio sites are static pages you skim and forget. This is a 22-node RAG pipeline with pgvector semantic search, Claude Sonnet 4.5 for generation, and intent classification before retrieval so greetings don't waste a vector search. You're using it.
 
             **Employee Attrition -- Logistic Regression** -- HR teams can't predict who's leaving until it's too late. Feature engineering on imbalanced data, cross-validation, ROC analysis. 94.75% accuracy where naive approaches plateau around 83%.
 
@@ -51,7 +51,7 @@ def _get_welcome_message(role_mode: str) -> str:
             Pick one and I'll walk you through the architecture decisions."""),
 
         "enterprise_ai": dedent("""\
-            Every pattern behind this conversation maps directly to enterprise AI systems in production. This is a 21-node agentic pipeline running seven processing stages — here is how each one translates.
+            Every pattern behind this conversation maps directly to enterprise AI systems in production. This is a 22-node agentic pipeline running seven processing stages — here is how each one translates.
 
             **Intent classification and agent routing.** Claude Haiku classifies every inbound message in ~150ms before anything else runs. Greetings, crush confessions, and small talk short-circuit the pipeline entirely — they never hit retrieval or generation. At enterprise scale, this is how customer support agents and voice agents avoid embedding every "hello" into a vector database. The classifier would be a fine-tuned or distilled model for sub-50ms latency at millions of requests, but the architecture decision — classify first, route second — stays identical.
 

@@ -867,7 +867,7 @@ def handle_grounding_gap(state: ConversationState) -> ConversationState:
         # Architecture-specific terms (unlikely in normal project queries)
         "retrieval pipeline", "pipeline architecture", "rag pipeline",
         "langgraph", "pgvector", "embedding model", "vector search",
-        "21 node", "21-node", "node pipeline",
+        "22 node", "22-node", "node pipeline",
         "how do you work", "how you work", "how you were built", "how this works",
         "how does your", "how were you built", "how are you built",
         "how does this assistant", "how does this chatbot", "how does portfolia",
