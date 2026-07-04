@@ -5,18 +5,7 @@ import { ChatHeader } from './components/chat/ChatHeader'
 import { ChatMessages } from './components/chat/ChatMessages'
 import { ChatInput } from './components/chat/ChatInput'
 
-/**
- * Main chat page - refactored from 224 lines to 28 lines
- * 
- * BEFORE: All state, API logic, and UI mixed in one component
- * AFTER: Clean separation of concerns with dedicated components
- * 
- * Benefits:
- * - 87% code reduction in main file
- * - Each component testable independently
- * - Business logic (useChat) separated from UI
- * - Easy to modify individual pieces without touching others
- */
+/** Chat page: state and API logic live in useChat; UI in the chat components. */
 export default function Home() {
   const {
     messages,
