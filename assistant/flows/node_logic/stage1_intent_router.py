@@ -2016,7 +2016,8 @@ def handle_crush_flow_continuation(state: ConversationState) -> ConversationStat
             from supabase import create_client
             supabase = create_client(
                 os.getenv("SUPABASE_URL"),
-                os.getenv("SUPABASE_SERVICE_KEY"),
+                # SUPABASE_SERVICE_KEY is the legacy name; keep as fallback
+                os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_SERVICE_KEY"),
             )
             supabase.table("crush_confessions").insert({
                 "session_id": session_id,
