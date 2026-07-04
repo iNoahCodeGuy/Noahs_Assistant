@@ -63,3 +63,4 @@ data/*.json
 *.sqlite3
 kb_review.md
 AUDIT_ROADMAP.md
+CLAUDE.local.md
