@@ -7,8 +7,8 @@ repos:
     hooks:
       - id: hermetic-tests
         name: Hermetic test suite (pytest, live evals excluded)
-        # `python -m pytest` respects the activated virtualenv
-        entry: python -m pytest -q
+        # `python3 -m pytest` respects the activated virtualenv
+        entry: python3 -m pytest -q
         language: system
         pass_filenames: false
         stages: [pre-commit]

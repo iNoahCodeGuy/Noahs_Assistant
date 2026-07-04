@@ -9,6 +9,28 @@ All notable changes to Portfolia are documented here. The format is based on
 
 ---
 
+## [2026-07-04] — Test suite resurrection (Phase 4)
+
+### Added
+- Hermetic tests for the flagship claims: intent routing (classifier faked, incl.
+  outage fallback), grounding-validation thresholds, verbatim-copy detection,
+  conversation phases, pgvector threshold plumbing
+- Rewritten end-to-end pipeline tests against the current partial-dict contract
+- Frontend: ESLint (next/core-web-vitals), 19 vitest tests for form detection,
+  and its first CI workflow (lint, typecheck, test, build)
+- pyproject pytest/coverage config; pinned `requirements-dev.txt`; working
+  pre-commit setup
+
+### Changed
+- Live-API evals are opt-in (`pytest -m live`) — collection no longer requires keys
+- Backend CI runs the full suite with coverage (79 tests; was a 3-file allowlist)
+
+### Removed
+- Test modules and scripts that exercised removed architecture (RoleRouter,
+  Vercel handlers, visitor-type detection, resume-dispatch actions)
+
+---
+
 ## [2026-07-04] — One deployment story (Phase 3)
 
 ### Removed
