@@ -1,0 +1,5 @@
+[project]
+name = "portfolia-backend"
+version = "1.0.0"
+description = "Noah's RAG-powered AI portfolio assistant — FastAPI backend"
+requires-python = ">=3.12"
