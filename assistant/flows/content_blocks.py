@@ -308,7 +308,7 @@ def format_code_snippet(
 
     Args:
         code: The actual code content
-        file_path: Relative path to the file (e.g., "src/core/retriever.py")
+        file_path: Relative path to the file (e.g., "assistant/core/rag_engine.py")
         language: Programming language for syntax highlighting
         description: Optional description of what the code does
         branch: Git branch name
@@ -803,7 +803,7 @@ def code_example_retrieval_method() -> str:
         Formatted code block with retrieval method.
     """
     return """
-**Here's my actual retrieval method** (`src/retrieval/pgvector_retriever.py`):
+**Here's my actual retrieval method** (`assistant/retrieval/pgvector_retriever.py`):
 
 ```python
 def retrieve(self, query: str, top_k: int = 3) -> Dict[str, Any]:

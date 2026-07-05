@@ -17,7 +17,7 @@ This package organizes node modules by responsibility:
 - analytics_renderer: Analytics display formatting
 - performance_metrics: Performance tracking and metrics
 
-All functions are re-exported through src/flows/conversation_nodes.py
+All functions are re-exported through assistant/flows/conversation_nodes.py
 for a stable public API.
 """
 
@@ -74,13 +74,6 @@ from assistant.flows.node_logic.util_resume_distribution import (
     get_job_details_prompt,
     extract_job_details_from_query
 )
-from assistant.flows.node_logic.util_role_specific import (
-    route_hiring_manager_technical,
-    onboard_hiring_manager_technical,
-    explain_enterprise_adaptation,
-    show_certifications,
-    show_enterprise_pattern_example,
-)
 
 __all__ = [
     "initialize_conversation_state",
@@ -94,11 +87,6 @@ __all__ = [
     "presentation_controller",  # NEW: Unified depth + display
     "depth_controller",  # DEPRECATED: alias
     "display_controller",  # DEPRECATED: no-op
-    "route_hiring_manager_technical",
-    "onboard_hiring_manager_technical",
-    "explain_enterprise_adaptation",
-    "show_certifications",
-    "show_enterprise_pattern_example",
     "retrieve_chunks",
     "re_rank_and_dedup",
     "validate_grounding",

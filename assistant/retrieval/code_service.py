@@ -23,7 +23,7 @@ class CodeIndexService:
     def snapshot_sources(self):
         self._snapshot = {}
         base = Path('.')
-        for py in base.rglob('src/**/*.py'):
+        for py in base.rglob('assistant/**/*.py'):
             try:
                 stat = py.stat()
                 self._snapshot[str(py)] = stat.st_mtime
@@ -47,7 +47,7 @@ class CodeIndexService:
             pass
         base = Path('.')
         changed = False
-        for py in base.rglob('src/**/*.py'):
+        for py in base.rglob('assistant/**/*.py'):
             try:
                 mtime = py.stat().st_mtime
                 old = self._snapshot.get(str(py))

@@ -865,7 +865,7 @@ def _add_subcategory_code_blocks(
                 if is_valid_code_snippet(code_content):
                     formatted_code = content_blocks.format_code_snippet(
                         code=code_content,
-                        file_path="src/state/conversation_state.py",
+                        file_path="assistant/state/conversation_state.py",
                         language="python",
                         description="ConversationState schema with all tracked fields",
                     )
@@ -883,7 +883,7 @@ def _add_subcategory_code_blocks(
                 if is_valid_code_snippet(code_content):
                     formatted_code = content_blocks.format_code_snippet(
                         code=code_content,
-                        file_path="src/retrieval/pgvector_retriever.py",
+                        file_path="assistant/retrieval/pgvector_retriever.py",
                         language="python",
                         description="Vector search with Supabase RPC",
                     )
@@ -2190,57 +2190,58 @@ def format_answer(state: ConversationState, rag_engine: RagEngine) -> Dict[str, 
         architecture_context = any(a.get("context") == "architecture" for a in code_actions)
 
         if architecture_context:
-            # Special handling for architecture queries - show conversation flow structure
-            architecture_code = """# LangGraph conversation pipeline (src/flows/conversation_flow.py)
-from langgraph.graph import StateGraph
-from assistant.state.conversation_state import ConversationState
+            # Architecture queries: show the real runtime structure — a
+            # faithful condensation of the pipeline tuple in
+            # assistant/flows/conversation_flow.py (22 nodes, stages 0-7).
+            architecture_code = """# Functional conversation pipeline (assistant/flows/conversation_flow.py)
+# Nodes run in order; each returns a partial dict merged into shared state.
 
-def build_conversation_graph():
-    \"\"\"Build the conversation flow as a state graph.\"\"\"
-    graph = StateGraph(ConversationState)
+pipeline = (
+    # Stage 0: initialization
+    initialize_conversation_state,
+    # Stage 1: first contact (menu prompt, deterministic greetings)
+    prompt_for_role_selection,
+    handle_greeting,
+    # Stage 1.5: intent routing — classify BEFORE retrieval (Claude Haiku)
+    classify_message_intent,
+    handle_non_knowledge_intent,
+    # Stage 2: understanding
+    classify_role_mode,
+    classify_intent,
+    detect_conversation_phase,
+    extract_entities,
+    # Stage 3: query preparation
+    assess_clarification_need,
+    ask_clarifying_question,
+    presentation_controller,
+    compose_query,
+    # Stage 4: retrieval (pgvector, 0.50 strict / 0.30 fallback)
+    retrieve_chunks,
+    validate_grounding,
+    handle_grounding_gap,
+    # Stage 5: generation (Claude Sonnet 4.5) + claim verification
+    generate_draft,
+    hallucination_check,
+    # Stage 6: enrichment
+    plan_actions,
+    format_answer,
+    # Stage 7: side effects + memory
+    execute_actions,
+    update_memory,
+)
 
-    # Stage 0: Session initialization
-    graph.add_node("initialize_conversation_state", initialize_conversation_state)
+for node in pipeline:
+    state.update(node(state) or {})
+    if state.get("pipeline_halt") or state.get("is_greeting"):
+        break  # short-circuits: greetings, forms, clarifications
 
-    # Stage 1: Role classification and greeting
-    graph.add_node("handle_greeting", handle_greeting)
-    graph.add_node("classify_role_mode", classify_role_mode)
-
-    # Stage 2: Query understanding (intent + entities)
-    graph.add_node("classify_intent", classify_intent)
-    graph.add_node("extract_entities", extract_entities)
-
-    # Stage 3: Query refinement (composition + clarification)
-    graph.add_node("assess_clarification_need", assess_clarification_need)
-    graph.add_node("compose_query", compose_query)
-
-    # Stage 4: Retrieval pipeline (pgvector + grounding)
-    graph.add_node("retrieve_chunks", retrieve_chunks)
-    graph.add_node("validate_grounding", validate_grounding)
-
-    # Stage 5: Generation pipeline (LLM response)
-    graph.add_node("generate_draft", generate_draft)
-    graph.add_node("hallucination_check", hallucination_check)
-
-    # Stage 6: Action planning and formatting
-    graph.add_node("plan_actions", plan_actions)
-    graph.add_node("format_answer", format_answer)
-
-    # Stage 7: Logging and followups
-    graph.add_node("log_and_notify", log_and_notify)
-
-    # Define edges (control flow)
-    graph.set_entry_point("initialize_conversation_state")
-    graph.add_edge("initialize_conversation_state", "handle_greeting")
-    # ... (18 nodes total with conditional routing)
-
-    return graph.compile()"""
+log_and_notify(state)  # analytics — always runs, even on short-circuit"""
 
             formatted_code = content_blocks.format_code_snippet(
                 code=architecture_code,
-                file_path="src/flows/conversation_flow.py",
+                file_path="assistant/flows/conversation_flow.py",
                 language="python",
-                description="LangGraph StateGraph orchestration with 18 nodes across 7 pipeline stages",
+                description="Functional pipeline: 22 nodes across 8 stages, deterministic short-circuits",
             )
             sections.append("")
             sections.append(formatted_code)
