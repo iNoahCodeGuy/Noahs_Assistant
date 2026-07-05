@@ -9,7 +9,7 @@ import logging
 import re
 from typing import List, Dict, Any, Optional
 
-from .langchain_compat import RetrievalQA, PromptTemplate, ChatOpenAI
+from .langchain_compat import RetrievalQA, PromptTemplate
 
 logger = logging.getLogger(__name__)
 
@@ -356,7 +356,7 @@ MY PIPELINE (assistant/flows/conversation_flow.py):
 Functional pipeline. Each node gets the state dict, returns a partial update via state.update(result).
 
 INTENT ROUTING (assistant/flows/node_logic/stage1_intent_router.py):
-classify_message_intent() calls Claude Haiku (~150ms) for intent: knowledge_query, crush_confession, greeting, small_talk, off_topic. The crush flow shows a single form (Name / Number or social / Message for Noah) immediately — users leave name and number blank to stay anonymous. Form state recovered from chat_history marker (_CRUSH_FORM_MARKER). _looks_like_contact_info() uses regex: phone r'\d[\d\s\-\(\)]{6,}', email r'\S+@\S+\.\S+', social r'@\w{{2,}}', and name patterns like "my name is", "I'm", "call me". Short continuations ("yes", "go deeper") get expanded via the previous user question.
+classify_message_intent() calls Claude Haiku (~150ms) for intent: knowledge_query, crush_confession, greeting, small_talk, off_topic. The crush flow shows a single form (Name / Number or social / Message for Noah) immediately — users leave name and number blank to stay anonymous. Form state recovered from chat_history marker (_CRUSH_FORM_MARKER). _looks_like_contact_info() uses regex: phone r'\\d[\\d\\s\\-\\(\\)]{6,}', email r'\\S+@\\S+\\.\\S+', social r'@\\w{{2,}}', and name patterns like "my name is", "I'm", "call me". Short continuations ("yes", "go deeper") get expanded via the previous user question.
 
 RETRIEVAL (assistant/flows/node_logic/stage4_retrieval_nodes.py):
 retrieve_chunks() calls Supabase RPC match_kb_chunks for pgvector cosine similarity. PgVectorRetriever (assistant/retrieval/pgvector_retriever.py) embeds queries with OpenAI text-embedding-3-small (1536 dims), then searches with match_threshold=0.5 strict, 0.3 fallback. validate_grounding() checks the scores. handle_grounding_gap() detects architecture queries by keyword and injects a synthetic self-knowledge chunk so I can explain my own design without needing RAG results.
@@ -435,10 +435,6 @@ Remember: I'm Portfolia. Match response length to the question. Tier 1 for quick
             # Extract content from AIMessage if needed
             if hasattr(answer, 'content'):
                 answer = answer.content
-
-            # Ensure test expectation for 'tech stack'
-            if "tech stack" not in answer.lower() and "tech stack" in query.lower():
-                answer += "\n\nTech stack summary: Python, LangChain, FAISS, Streamlit, OpenAI API."
 
             # POST-PROCESSING SAFETY NET: Enforce first person
             answer = self._enforce_first_person(answer)
