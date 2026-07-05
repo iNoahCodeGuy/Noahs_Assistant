@@ -3,6 +3,7 @@ langchain-openai>=0.2.0
 langchain-anthropic>=1.0.0
 anthropic>=0.30.0
 langchain-community>=0.3.0
+langsmith>=0.4.0
 supabase>=2.0.0
 pandas>=2.0.0
 python-dotenv>=1.0.0
@@ -12,7 +13,9 @@ requests>=2.31.0
 fastapi>=0.115.0
 uvicorn>=0.34.0
 
-# Note: langchain, openai, httpx, pydantic, numpy will be installed as dependencies
-# pandas is required by src/retrieval/career_kb.py
-# requests is required for fetching live analytics from /api/analytics endpoint
-# This avoids version conflicts by letting pip resolve the dependency tree
+# Notes:
+# - langchain, openai, httpx, pydantic, numpy install as transitive deps
+# - langsmith is pinned explicitly because tracing is a first-class feature
+#   (assistant/observability/), not an accident of the dependency tree
+# - pandas is required by assistant/retrieval/career_kb.py
+# - requests is used by the analytics rendering utilities
