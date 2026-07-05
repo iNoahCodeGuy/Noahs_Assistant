@@ -1,20 +1,12 @@
-"""Conversation nodes orchestrator - imports modular functions.
+"""Central import hub for the conversation pipeline nodes.
 
-This module acts as the central import point for all conversation pipeline nodes.
-All node logic has been extracted into focused modules for maintainability:
+Node implementations live in assistant/flows/node_logic/ as stage-prefixed
+modules (stage0_session_management … stage7_logging_nodes plus util_*
+helpers). This file re-exports them so callers — conversation_flow.py and
+the tests — can import everything from one place.
 
-- query_classification.py: Intent detection and routing
-- core_nodes.py: Retrieval, generation, and logging
-- action_planning.py: Role-based action generation
-- action_execution.py: Side effects (email, SMS, storage)
-- code_validation.py: Sanitization and validation utilities
-- greetings.py: Role-specific welcome messages
-
-Each module is <200 lines and handles a single responsibility.
-This file simply re-exports the functions so callers can import from one place.
-
-See docs/context/SYSTEM_ARCHITECTURE_SUMMARY.md for the full conversation flow diagram.
-See docs/CONVERSATION_PIPELINE_MODULES.md for implementation details.
+The pipeline order and stage map are documented in
+assistant/flows/conversation_flow.py's module docstring.
 """
 
 from __future__ import annotations
@@ -70,13 +62,6 @@ from assistant.flows.node_logic.util_resume_distribution import (
     should_gather_job_details,
     get_job_details_prompt,
     extract_job_details_from_query
-)
-from assistant.flows.node_logic.util_role_specific import (
-    route_hiring_manager_technical,
-    onboard_hiring_manager_technical,
-    explain_enterprise_adaptation,
-    show_certifications,
-    show_enterprise_pattern_example,
 )
 
 
@@ -150,10 +135,6 @@ __all__ = [
     "should_show_greeting",
     "is_valid_code_snippet",
     "sanitize_generated_answer",
-    "onboard_hiring_manager_technical",
-    "explain_enterprise_adaptation",
-    "show_certifications",
-    "show_enterprise_pattern_example",
     "should_add_availability_mention",
     "extract_email_from_query",
     "extract_name_from_query",
