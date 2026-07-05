@@ -9,6 +9,47 @@ All notable changes to Portfolia are documented here. The format is based on
 
 ---
 
+## [2026-07-05] — Audit close-out: renames, hardening, KB truth pass, architecture doc
+
+### Added
+- `docs/ARCHITECTURE.md` — the design-decision walkthrough: 22-node pipeline
+  table, request-lifecycle and capture-FSM diagrams, and the constraint behind
+  each architectural choice
+- Sentry error reporting, gated on `SENTRY_DSN`: reports both unhandled route
+  errors (new global exception handler) and pipeline errors the `/chat`
+  endpoint masks behind its graceful fallback
+- Notification dispatch throttle — 10/hour global cap on capture SMS/email
+  (the `/chat` limiter alone still allowed 20 SMS/min to Noah's phone);
+  throttled submissions still reach Supabase. Seven hermetic tests
+- KB provenance: the migrator stamps `content_sha256` into chunk metadata and
+  gains `--all` for full rebuilds; new `scripts/verify_kb_parity.py` proves
+  the live table matches `data/*.csv` and flags orphaned chunks
+- Frontend: sliding-window rate limits on the dashboard login (5/min/IP —
+  brute-force target) and analytics routes (60/min/IP), with vitest coverage
+
+### Changed
+- **Repos renamed**: `Noahs_Assistant` → `portfolia-backend`,
+  `portfolia_frontend` → `portfolia-frontend` (GitHub redirects old URLs);
+  every reference updated across docs, prompts, test fixtures, and KB
+- **KB truth pass**: all 14 KB files audited against the codebase — 99
+  findings fixed (langgraph-as-dependency claims, OpenAI credited with
+  generation, backend-on-Vercel claims, removed features, fabricated
+  metrics, stale schemas and URLs). Not yet re-embedded (see below)
+- `docs/EXTERNAL_SERVICES.md` rewritten against reality (it still described
+  deleted setup scripts, storage buckets, and sqlite-era variables)
+- README/CLAUDE.md testing docs updated: CI runs the full hermetic suite,
+  not the legacy 3-file subset
+
+### Known issue
+- The Supabase project (`tjnlusesinzzlwvlbnnm`) stopped resolving on
+  2026-07-05 — paused or deleted. Production retrieval is degraded (fallback
+  answers) and capture writes fail silently until restored. After
+  restoration: `migrate_data_to_supabase.py --all --force`, then
+  `verify_kb_parity.py --delete-orphans`, then verify
+  `supabase/migrations/APPLIED.md` rows 004/008
+
+---
+
 ## [2026-07-04] — Structural cleanup completed + production hardening (Phase 5B/6)
 
 ### Added
