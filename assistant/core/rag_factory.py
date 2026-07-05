@@ -28,19 +28,20 @@ class RagEngineFactory:
         self.degraded_mode = False
 
     def create_embeddings(self) -> Tuple[Any, bool]:
-        """Create embeddings with fallback. Returns (embeddings, is_degraded)."""
+        """Create embeddings. Returns (embeddings, is_degraded=False).
+
+        Fails loud on initialization errors: hash-derived fake embeddings
+        would silently break every similarity score downstream.
+        """
         try:
             embeddings = OpenAIEmbeddings(
                 openai_api_key=getattr(self.settings, "openai_api_key", None),
-                model=getattr(self.settings, "embedding_model", "text-embedding-ada-002")
+                model=getattr(self.settings, "embedding_model", "text-embedding-3-small")
             )
             return embeddings, False
         except Exception as e:
-            logger.warning(f"Embedding initialization failed, entering degraded mode: {e}")
-            class _FallbackEmb:
-                def embed_query(self, text: str):
-                    return [float((hash(text) >> i) & 0xFF) / 255.0 for i in range(0, 32)]
-            return _FallbackEmb(), True
+            logger.error(f"Embedding initialization failed: {e}")
+            raise
 
     def create_llm(self, model_name: Optional[str] = None) -> Tuple[Any, bool]:
         """Create LLM with fallback and LangSmith wrapping. Returns (llm, is_degraded).

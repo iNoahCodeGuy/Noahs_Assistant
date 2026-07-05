@@ -5,10 +5,10 @@ Provides graceful fallbacks for LangChain imports to handle:
 - Version differences between langchain releases
 - Development environments without full dependencies
 
-This isolates import complexity from core RAG logic.
-
-**Note**: FAISS imports have been removed as the system now uses pgvector exclusively.
-FAISS stubs are kept for backwards compatibility with old code/tests.
+This isolates import complexity from core RAG logic. Every fallback fails
+loud: silently degraded stand-ins (fake embeddings, echo LLMs, empty
+loaders) corrupt behavior in ways that are far harder to debug than an
+ImportError with install instructions.
 """
 from __future__ import annotations
 
@@ -26,33 +26,12 @@ except Exception:
             from langchain_community.embeddings import OpenAIEmbeddings  # type: ignore
         except Exception:
             class OpenAIEmbeddings:  # type: ignore
+                """Fail loud: fake embeddings would silently corrupt retrieval."""
                 def __init__(self, *_, **__):
-                    pass
-                def embed_query(self, text: str) -> List[float]:
-                    return [float((hash(text) >> i) & 0xFF) / 255.0 for i in range(0, 32)]
-
-# --- FAISS Stub (Deprecated - kept for backwards compatibility) ---
-# FAISS has been removed from production. Use pgvector instead.
-# This stub exists only to prevent import errors in legacy code.
-class _StubVectorStore:
-    """Deprecated: Use pgvector instead."""
-    def __init__(self, *_, **__):
-        raise RuntimeError("FAISS is no longer supported. Use pgvector retrieval instead.")
-    def similarity_search(self, *_, **__):
-        raise RuntimeError("FAISS is no longer supported. Use pgvector retrieval instead.")
-    def save_local(self, *_, **__):
-        raise RuntimeError("FAISS is no longer supported. Use pgvector retrieval instead.")
-    def as_retriever(self, *_, **__):
-        raise RuntimeError("FAISS is no longer supported. Use pgvector retrieval instead.")
-
-class FAISS:  # type: ignore
-    """Deprecated: FAISS support removed. Use pgvector instead."""
-    @staticmethod
-    def from_documents(_docs, _emb):
-        raise RuntimeError("FAISS is no longer supported. Use pgvector retrieval instead.")
-    @staticmethod
-    def load_local(*_, **__):
-        raise RuntimeError("FAISS is no longer supported. Use pgvector retrieval instead.")
+                    raise ImportError(
+                        "OpenAIEmbeddings unavailable — install langchain-openai "
+                        "(pip install -r requirements.txt)."
+                    )
 
 # --- Resilient Document Loaders ---
 try:
@@ -62,11 +41,12 @@ except Exception:
         from langchain.document_loaders import CSVLoader  # type: ignore
     except Exception:
         class CSVLoader:  # type: ignore
+            """Fail loud: an empty loader would silently produce an empty KB."""
             def __init__(self, file_path: str, source_column: str = "source"):
-                self.file_path = file_path
-                self.source_column = source_column
-            def load(self):
-                return []
+                raise ImportError(
+                    "CSVLoader unavailable — install langchain-community "
+                    "(pip install -r requirements.txt)."
+                )
 
 # --- Resilient Text Splitter ---
 try:
@@ -90,9 +70,13 @@ except Exception:
         from langchain.chains import RetrievalQA  # type: ignore
     except Exception:
         class RetrievalQA:  # type: ignore
+            """Fail loud rather than silently disabling the QA chain."""
             @staticmethod
             def from_chain_type(*_, **__):
-                return None
+                raise ImportError(
+                    "RetrievalQA unavailable — install langchain "
+                    "(pip install -r requirements.txt)."
+                )
 
 # --- Resilient Prompt Template ---
 try:
@@ -117,44 +101,12 @@ except Exception:
             from langchain_community.chat_models import ChatAnthropic  # type: ignore
         except Exception:
             class ChatAnthropic:  # type: ignore
-                """Fallback ChatAnthropic that implements both legacy and modern interfaces."""
+                """Fail loud: a fake LLM that echoes prompts is worse than a crash."""
                 def __init__(self, *_, **__):
-                    pass
-
-                def predict(self, prompt: str) -> str:
-                    words = prompt.strip().split()
-                    tail = " ".join(words[-40:])
-                    return f"[DEGRADED MODE SYNTHESIS]\n{tail}"
-
-                def invoke(self, input_data, **kwargs):
-                    """Modern LangChain interface - invoke method."""
-                    try:
-                        from langchain_core.messages import AIMessage
-                    except ImportError:
-                        class AIMessage:
-                            def __init__(self, content):
-                                self.content = content
-
-                    # Handle different input types
-                    if isinstance(input_data, str):
-                        prompt = input_data
-                    elif isinstance(input_data, list):
-                        # List of messages - extract content
-                        prompt = " ".join(
-                            getattr(m, 'content', str(m)) for m in input_data
-                        )
-                    else:
-                        prompt = str(input_data)
-
-                    result = self.predict(prompt)
-                    return AIMessage(content=result)
-
-                def __call__(self, *args, **kwargs):
-                    """Make callable for legacy compatibility."""
-                    return self.invoke(*args, **kwargs)
-
-# Legacy alias for backwards compatibility
-ChatOpenAI = ChatAnthropic
+                    raise ImportError(
+                        "ChatAnthropic unavailable — install langchain-anthropic "
+                        "(pip install -r requirements.txt)."
+                    )
 
 # --- Document Schema ---
 try:
@@ -170,11 +122,10 @@ except Exception:
 
 __all__ = [
     "OpenAIEmbeddings",
-    "FAISS",
     "CSVLoader",
     "RecursiveCharacterTextSplitter",
     "RetrievalQA",
     "PromptTemplate",
-    "ChatOpenAI",
+    "ChatAnthropic",
     "Document"
 ]

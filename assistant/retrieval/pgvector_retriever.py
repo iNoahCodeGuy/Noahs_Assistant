@@ -84,8 +84,10 @@ class PgVectorRetriever:
         self.openai_client = OpenAI(api_key=supabase_settings.api_key)
         self.supabase_client = get_supabase_client()
 
-        # Embedding model configuration
-        self.embedding_model = "text-embedding-3-small"
+        # Embedding model configuration (EMBEDDING_MODEL env var;
+        # defaults to text-embedding-3-small — must match what the KB
+        # was embedded with, or similarity scores are meaningless)
+        self.embedding_model = supabase_settings.embedding_model
         self.embedding_dimensions = 1536
 
         logger.info(f"PgVectorRetriever initialized with threshold={similarity_threshold}")

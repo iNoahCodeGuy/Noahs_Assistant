@@ -44,9 +44,6 @@ from .langchain_compat import (
     RetrievalQA, PromptTemplate, ChatAnthropic, Document
 )
 
-# Legacy alias for backwards compatibility
-ChatOpenAI = ChatAnthropic
-
 # Import Supabase configuration
 from assistant.config.supabase_config import supabase_settings
 

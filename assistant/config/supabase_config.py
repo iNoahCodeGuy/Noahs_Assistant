@@ -134,12 +134,7 @@ class SupabaseSettings:
 
         # OpenAI configuration (for embeddings only)
         self.openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
-        self.embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-ada-002").strip()
-
-        # Legacy OpenAI model settings (deprecated — generation now uses Anthropic Claude)
-        self.openai_model = os.getenv("OPENAI_MODEL", "claude-sonnet-4-5-20250929").strip()
-        self.openai_reasoning_model = os.getenv("OPENAI_REASONING_MODEL", "claude-sonnet-4-5-20250929").strip()
-        self.openai_fast_model = os.getenv("OPENAI_FAST_MODEL", "claude-haiku-4-5-20251001").strip()
+        self.embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small").strip()
 
         # External services (for Next.js API routes)
         self.resend_api_key = os.getenv("RESEND_API_KEY", "").strip()
