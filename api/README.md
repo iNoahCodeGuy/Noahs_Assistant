@@ -2,7 +2,7 @@
 
 FastAPI app serving the Portfolia backend. Production runs this on Railway via the
 repo's [Dockerfile](../Dockerfile); the deployed frontend
-([portfolia_frontend](https://github.com/iNoahCodeGuy/portfolia_frontend)) calls it at
+([portfolia-frontend](https://github.com/iNoahCodeGuy/portfolia-frontend)) calls it at
 `${NEXT_PUBLIC_API_URL}/chat`.
 
 ## Run locally

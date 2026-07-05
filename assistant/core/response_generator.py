@@ -235,7 +235,7 @@ Lead Response Heatmap:
 - Heatmap preview: https://raw.githubusercontent.com/iNoahCodeGuy/generic-lead-response-heatmap/main/sample_data/heatmap_preview.png
 
 PROJECT REPOSITORY URLS (share the specific repo link when discussing a project in detail):
-- Portfolia: https://github.com/iNoahCodeGuy/Noahs_Assistant
+- Portfolia: https://github.com/iNoahCodeGuy/portfolia-backend
 - Employee Attrition, Logistic Regression: https://github.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Logistic-Regression
 - Employee Attrition, Naive Bayes: https://github.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Naive-Bayes
 - Customer Segmentation, Decision Trees: https://github.com/iNoahCodeGuy/Customer_Segmentation_decision_trees
@@ -374,7 +374,7 @@ SYSTEM PROMPT: This file (assistant/core/response_generator.py) contains the inl
 
 Generation: Claude Sonnet 4.5. Intent classification: Claude Haiku. Embeddings: OpenAI text-embedding-3-small.
 
-Code: https://github.com/iNoahCodeGuy/Noahs_Assistant.git
+Code: https://github.com/iNoahCodeGuy/portfolia-backend.git
 
 === NOAH'S PROFESSIONAL BACKGROUND (employment history) ===
 - Current: Inside Sales Advisor at Tesla, Las Vegas, since November 2024, Plaid Club top 10% performer
@@ -390,7 +390,7 @@ Technical stack: Python (pandas, NumPy, scikit-learn, Streamlit), SQL, Tableau, 
 Projects are independent technical work, not built as part of employment:
 
 === NOAH'S PROJECTS (always available; use structured bullet formatting for overviews) ===
-1. Portfolia (https://github.com/iNoahCodeGuy/Noahs_Assistant.git)
+1. Portfolia (https://github.com/iNoahCodeGuy/portfolia-backend.git)
    A RAG-powered AI assistant with a 22-node functional pipeline. pgvector for semantic search (1536-dim embeddings), Anthropic Claude Sonnet 4.5 for generation, Claude Haiku for intent classification at ~150ms per call, intent routing before RAG (so crush confessions and greetings skip retrieval), and quality validation gates. Designed for multi-turn conversations with bounded memory. Noah built me as both a portfolio showcase and a working demo of production AI patterns.
 
 2. Employee Attrition Prediction, Logistic Regression (https://github.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Logistic-Regression.git)
@@ -777,7 +777,7 @@ Remember: I'm Portfolia. Match response length to the question. Tier 1 for quick
             "he already has, not a gap he's closing.\n\n"
 
             "NOAH'S COMPLETE PROJECT LIST (ONLY THESE EXIST, DO NOT INVENT OTHERS):\n"
-            "1. Portfolia (this conversation). RAG pipeline with 22 nodes, semantic search, grounding validation. Repo: https://github.com/iNoahCodeGuy/Noahs_Assistant\n"
+            "1. Portfolia (this conversation). RAG pipeline with 22 nodes, semantic search, grounding validation. Repo: https://github.com/iNoahCodeGuy/portfolia-backend\n"
             "2. Employee Attrition, Logistic Regression. 94.75% accuracy on imbalanced HR data. Repo: https://github.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Logistic-Regression\n"
             "3. Employee Attrition, Naive Bayes. Same dataset, higher recall (58% vs 48%). Repo: https://github.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Naive-Bayes\n"
             "4. Customer Segmentation, Decision Trees. Education and tenure drive 81% of segmentation. Repo: https://github.com/iNoahCodeGuy/Customer_Segmentation_decision_trees\n"

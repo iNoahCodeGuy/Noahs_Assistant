@@ -131,7 +131,7 @@ This foundation trained him to reason quantitatively in complex systems and made
 
 ### Repository and Overview
 
-Repository: https://github.com/iNoahCodeGuy/Noahs_Assistant.git
+Repository: https://github.com/iNoahCodeGuy/portfolia-backend.git
 
 Portfolia is Noah's flagship project, a production-grade AI-powered portfolio assistant built with a LangGraph pipeline. It uses RAG (Retrieval-Augmented Generation) to answer questions about Noah's professional background, technical skills, and projects.
 

@@ -36,7 +36,7 @@ class TestReadmeAlignment:
     def test_readme_exists_and_links_live_site(self):
         content = _read(README)
         assert "noahdelacalzada.com" in content, "README must link the live demo"
-        assert "portfolia_frontend" in content, "README must link the frontend repo"
+        assert "portfolia-frontend" in content, "README must link the frontend repo"
 
     def test_readme_embedding_model_matches_code(self):
         """The embedding model named in the README is the one the retriever uses."""

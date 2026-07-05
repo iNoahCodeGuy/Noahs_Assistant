@@ -17,7 +17,7 @@ from assistant.flows.node_logic.stage5_generation_nodes import (
 
 CHUNKS = [
     {"content": "The logistic regression model reached 94.75% accuracy.", "section": "ml"},
-    {"content": "Repo: https://github.com/iNoahCodeGuy/Noahs_Assistant", "section": "links"},
+    {"content": "Repo: https://github.com/iNoahCodeGuy/portfolia-backend", "section": "links"},
 ]
 
 
@@ -54,7 +54,7 @@ class TestClaimFinder:
 
     def test_url_trailing_punctuation_is_normalized(self):
         assert _find_unsupported_claims(
-            "Repo: https://github.com/iNoahCodeGuy/Noahs_Assistant.", CHUNKS
+            "Repo: https://github.com/iNoahCodeGuy/portfolia-backend.", CHUNKS
         ) == []
 
     def test_unsupported_dollar_amount_is_found(self):

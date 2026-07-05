@@ -1,6 +1,6 @@
 # Portfolia — Noah's AI Portfolio Assistant
 
-[![Tests](https://github.com/iNoahCodeGuy/Noahs_Assistant/actions/workflows/tests.yml/badge.svg)](https://github.com/iNoahCodeGuy/Noahs_Assistant/actions/workflows/tests.yml)
+[![Tests](https://github.com/iNoahCodeGuy/portfolia-backend/actions/workflows/tests.yml/badge.svg)](https://github.com/iNoahCodeGuy/portfolia-backend/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **Live demo: [noahdelacalzada.com](https://noahdelacalzada.com/)**
@@ -12,13 +12,13 @@ deterministic state machines, and executes real side effects — database writes
 email — in production, unsupervised.
 
 This repo is the backend. The deployed chat UI lives in
-[portfolia_frontend](https://github.com/iNoahCodeGuy/portfolia_frontend).
+[portfolia-frontend](https://github.com/iNoahCodeGuy/portfolia-frontend).
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    A[Browser — noahdelacalzada.com] --> B["Next.js frontend (Vercel)\nportfolia_frontend repo"]
+    A[Browser — noahdelacalzada.com] --> B["Next.js frontend (Vercel)\nportfolia-frontend repo"]
     B -->|POST /chat| C["FastAPI (Railway)\napi/main.py"]
     C --> D["22-node functional pipeline\nassistant/flows/conversation_flow.py"]
     D --> E["Intent classification\nClaude Haiku, ~150ms"]
@@ -54,7 +54,7 @@ Design decisions worth knowing:
 | Embeddings | OpenAI text-embedding-3-small (1536 dimensions) |
 | Vector store | Supabase Postgres + pgvector (`match_kb_chunks` RPC) |
 | Backend | FastAPI (Python 3.12) on Railway |
-| Frontend | Next.js 14 on Vercel ([separate repo](https://github.com/iNoahCodeGuy/portfolia_frontend)) |
+| Frontend | Next.js 14 on Vercel ([separate repo](https://github.com/iNoahCodeGuy/portfolia-frontend)) |
 | Side effects | Supabase, Twilio (SMS), Resend (email) |
 | Observability | LangSmith |
 
@@ -64,8 +64,8 @@ Requires Python 3.12 and API keys for OpenAI, Anthropic, and a Supabase project 
 pgvector (see [supabase/migrations](supabase/migrations/) for schema).
 
 ```bash
-git clone https://github.com/iNoahCodeGuy/Noahs_Assistant.git
-cd Noahs_Assistant
+git clone https://github.com/iNoahCodeGuy/portfolia-backend.git
+cd portfolia-backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env   # fill in the four required keys
@@ -97,13 +97,12 @@ python3 scripts/migrate_data_to_supabase.py
 ## Testing
 
 ```bash
-pytest tests/test_documentation_alignment.py tests/test_memory.py tests/test_roles.py
+pytest
 ```
 
-This hermetic subset (no API keys needed) runs in CI on every push. The remaining legacy
-suite is being repaired incrementally, and a live-API eval suite
-(`tests/test_portfolia_eval.py`) requires real keys. Useful manual smoke queries after
-changes:
+The full hermetic suite (no API keys needed) runs in CI on every push. A live-API eval
+suite is opt-in — `pytest -m live` (`tests/test_portfolia_eval.py`) — and requires real
+keys. Useful manual smoke queries after changes:
 
 1. "What is Noah's professional background?" — conversational, not a dry list
 2. "What are some projects by Noah?" — specific projects, with personality
@@ -133,7 +132,7 @@ docs/                 reference docs (see docs/README.md)
 - **Backend:** Railway builds the [Dockerfile](Dockerfile) and runs
   `uvicorn api.main:app`. Configuration comes from Railway environment variables
   (same names as `.env.example`).
-- **Frontend:** [portfolia_frontend](https://github.com/iNoahCodeGuy/portfolia_frontend)
+- **Frontend:** [portfolia-frontend](https://github.com/iNoahCodeGuy/portfolia-frontend)
   deploys to Vercel and points `NEXT_PUBLIC_API_URL` at the Railway backend.
 
 ## License

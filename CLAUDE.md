@@ -2,7 +2,7 @@
 
 ## Project: Portfolia AI Assistant
 Noah's AI-powered portfolio assistant built with RAG architecture. Live at
-https://noahdelacalzada.com (frontend repo: iNoahCodeGuy/portfolia_frontend).
+https://noahdelacalzada.com (frontend repo: iNoahCodeGuy/portfolia-frontend).
 
 ## Tech Stack
 - **Pipeline:** 22-node functional pipeline (LangGraph-style; plain function loop at runtime)
@@ -24,7 +24,7 @@ https://noahdelacalzada.com (frontend repo: iNoahCodeGuy/portfolia_frontend).
 ## Commands
 - Terminal client: `python3 chat_with_portfolia.py` (must use `run_conversation_flow()`, not `generate_response()` directly)
 - API server: `uvicorn api.main:app --reload --port 8000`
-- Tests (hermetic subset, same as CI): `pytest tests/test_documentation_alignment.py tests/test_memory.py tests/test_roles.py`
+- Tests (hermetic, same as CI): `pytest` — live evals are opt-in via `pytest -m live`
 - Re-embed KB after editing `data/*.csv`: `python3 scripts/migrate_data_to_supabase.py`
 
 ## Key Architecture Decisions
