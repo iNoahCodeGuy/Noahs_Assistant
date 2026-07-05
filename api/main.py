@@ -16,6 +16,7 @@ from typing import Deque, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 # Add project root to path so assistant package is importable
@@ -26,6 +27,30 @@ from assistant.flows.conversation_flow import run_conversation_flow
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# --- Error monitoring (Sentry) ---
+# Active only when SENTRY_DSN is set (Railway env). Local dev, CI, and the
+# hermetic test suite run without it — and without the import.
+SENTRY_DSN = os.getenv("SENTRY_DSN")
+if SENTRY_DSN:
+    import sentry_sdk
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+        # Errors only. LangSmith owns request tracing; Sentry transactions
+        # on top of it would be a second, overlapping trace store.
+        traces_sample_rate=0.0,
+    )
+
+
+def _report_exception(exc: Exception) -> None:
+    """Forward to Sentry when configured; silent no-op otherwise."""
+    if SENTRY_DSN:
+        import sentry_sdk
+
+        sentry_sdk.capture_exception(exc)
+
 
 app = FastAPI(title="Portfolia API")
 
@@ -52,6 +77,19 @@ app.add_middleware(
     allow_methods=["POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Anything that escapes a route: report, log, return clean JSON
+    (Starlette's default is a plain-text 500 and no alerting)."""
+    logger.error(f"Unhandled error on {request.url.path}: {exc}")
+    logger.error(traceback.format_exc())
+    _report_exception(exc)
+    return JSONResponse(
+        status_code=500,
+        content={"success": False, "detail": "Internal server error."},
+    )
+
 
 # --- In-memory session store ---
 sessions: dict[str, dict] = {}
@@ -214,6 +252,9 @@ def chat(req: ChatRequest, request: Request):
     except Exception as e:
         logger.error(f"Pipeline error: {e}")
         logger.error(traceback.format_exc())
+        # The user gets a graceful fallback, but the error must still page
+        # someone — a masked 200 with no alerting is how outages go unnoticed.
+        _report_exception(e)
         return {
             "success": False,
             "response": "Something went wrong. Try again in a moment.",
