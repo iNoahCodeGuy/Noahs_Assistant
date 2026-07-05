@@ -11,6 +11,11 @@ Design Principles:
 - Fast and cheap: Uses a simple LLM call with Haiku for cost efficiency
 - Early routing: Prevents unnecessary RAG calls for non-knowledge queries
 - Clear categories: Explicit intent types make routing decisions transparent
+
+The capture state machines (crush confession, contact/lead capture) live in
+assistant/flows/capture/ and are re-exported here for compatibility.
+classify_intent() itself is a short dispatcher over ordered _check_* helpers;
+each helper returns the handled state (early exit) or None (fall through).
 """
 
 import logging
@@ -21,20 +26,55 @@ import os
 
 from assistant.state.conversation_state import ConversationState
 
+# ── Capture-flow API (moved to assistant/flows/capture in the stage1 split) ──
+# Re-exported from this module for compatibility: conversation_nodes.py,
+# stage2_role_routing.py, and the tests all import these names from here.
+from assistant.flows.capture.constants import (  # noqa: F401
+    _BUYING_SIGNAL_PATTERNS,
+    _CAPTURE_QUESTION_FRAGMENTS,
+    _CAPTURE_TRIGGER_FORM_PROMPT,
+    _CONTACT_FORM_DETAILS_MARKER,
+    _CONTACT_FORM_MARKER,
+    _CONTACT_FORM_PROMPT,
+    _CONTACT_FORM_RE,
+    _CRUSH_COMPLETE_MARKERS,
+    _CRUSH_FORM_MARKER,
+    _CRUSH_FORM_PROMPT,
+    _HM_CAPTURE_COMPLETE_MARKERS,
+    _HM_CAPTURE_DETAILS_MARKER,
+    _HM_CAPTURE_MARKER,
+    _HM_SOFT_OFFER_MARKER,
+    _VISITOR_QUESTION_PATTERNS,
+    _compute_buying_signals,
+    _compute_message_count,
+    _compute_questions_asked_about_visitor,
+)
+from assistant.flows.capture.crush_flow import (  # noqa: F401
+    _detect_crush_flow_from_history,
+    _is_anonymous_choice,
+    _is_cancel_choice,
+    _is_reveal_choice,
+    _looks_like_contact_info,
+    _parse_crush_form,
+    _parse_name_and_message,
+    handle_crush_confession,
+    handle_crush_flow_continuation,
+)
+from assistant.flows.capture.lead_capture import (  # noqa: F401
+    _detect_hm_capture_flow_from_history,
+    _is_capture_question_response,
+    _is_connect_intent,
+    _parse_hm_contact_info,
+    _save_recruiter_lead,
+    handle_hm_capture_continuation,
+)
+from assistant.flows.capture.notifications import (  # noqa: F401
+    _send_crush_notifications,
+    _send_hm_lead_notifications,
+)
+
 logger = logging.getLogger(__name__)
 
-
-# ── Crush flow chat-history markers ──────────────────────────────────────────
-# Used to reconstruct crush flow state from chat_history when state fields
-# don't persist across API calls (serverless/stateless architecture).
-_CRUSH_FORM_MARKER = "Message for Noah:"
-_CRUSH_COMPLETE_MARKERS = ["Message sent", "Say less", "Noah knows"]
-
-# Pattern to detect contact form submissions in chat history.
-# Used to filter them out of Haiku's classification context.
-_CONTACT_FORM_RE = re.compile(
-    r"Name:.*(?:Number:|Email:|Company:)", re.DOTALL | re.IGNORECASE
-)
 
 INTENT_CLASSIFICATION_PROMPT = """Classify the user's message into TWO values separated by a pipe (|):
 
@@ -87,554 +127,6 @@ Examples:
 Respond with ONLY the two values separated by |, nothing else."""
 
 
-# ── Hiring manager data capture markers ──────────────────────────────────
-_HM_CAPTURE_MARKER = "Would you like me to pass your info along to Noah?"
-_HM_CAPTURE_DETAILS_MARKER = "fill this out so we can best assist you"
-_HM_CAPTURE_COMPLETE_MARKERS = ["I'll make sure Noah sees this", "Info passed along"]
-_HM_SOFT_OFFER_MARKER = "just let me know and I'll set it up"
-
-# ── Contact form markers ─────────────────────────────────────────────────
-# FRONTEND SPEC: When capture triggers, the web UI should render Name/Number/Email/Company/Additional
-# as interactive form fields below Portfolia's message, not as plain text in the chat bubble.
-# Terminal client uses plain text as fallback.
-_CONTACT_FORM_MARKER = "fill this out so we can best assist you"
-_CONTACT_FORM_DETAILS_MARKER = "Name:\nNumber:\nEmail:\nCompany:\nHow did you find this website?:\nAdditional information:"
-
-# Phrases in last assistant message that indicate a capture question was asked
-_CAPTURE_QUESTION_FRAGMENTS = [
-    "what brings you here", "what's your angle",
-    "hiring, building, or just curious", "hiring, curiosity",
-    "want to share what you're working on",
-    "noah can follow up", "want noah to reach out",
-    "noah can reach out", "want to connect with noah",
-    "say the word", "just let me know",
-    "i'll set it up", "i can set that up",
-]
-
-
-# ── Engagement counter computation ──────────────────────────────────────
-# These functions compute state from chat_history each turn (stateless).
-
-def _compute_message_count(chat_history: list) -> int:
-    """Count user messages in chat_history."""
-    count = 0
-    for msg in chat_history:
-        if isinstance(msg, dict):
-            role = msg.get("role") or msg.get("type", "")
-        elif hasattr(msg, "type"):
-            role = getattr(msg, "type", "") or getattr(msg, "role", "")
-        else:
-            continue
-        if role in ("user", "human"):
-            count += 1
-    return count
-
-
-_VISITOR_QUESTION_PATTERNS = [
-    r"what.*(?:role|position|team|company|building|looking for|hiring)",
-    r"are you.*(?:hiring|building|looking|recruiting)",
-    r"what brings you",
-    r"may i ask",
-    r"out of curiosity",
-    r"what kind of (?:role|work|team|company)",
-    r"who.*(?:team|company|organization)",
-    r"are you in tech",
-]
-
-
-def _compute_questions_asked_about_visitor(chat_history: list) -> int:
-    """Count how many times Portfolia asked about the VISITOR's context."""
-    count = 0
-    for msg in chat_history:
-        if isinstance(msg, dict):
-            role = msg.get("role") or msg.get("type", "")
-            content = msg.get("content", "")
-        elif hasattr(msg, "content"):
-            role = getattr(msg, "type", "") or getattr(msg, "role", "")
-            content = getattr(msg, "content", "")
-        else:
-            continue
-        if role in ("assistant", "ai") and content and "?" in content:
-            content_lower = content.lower()
-            if any(re.search(p, content_lower) for p in _VISITOR_QUESTION_PATTERNS):
-                count += 1
-    return count
-
-
-_BUYING_SIGNAL_PATTERNS = {
-    "mentioned_hiring": r'\b(?:hiring|looking for|need someone|recruiting|open role|opening)\b',
-    "described_role": r'\b(?:engineer|developer|architect|specialist|lead|analyst)\b',
-    "team_context": r'\b(?:our team|my team|the team|our company|we\'re building|our stack)\b',
-    "asked_timeline": r'\b(?:when available|start date|timeline|availability|how soon)\b',
-    "budget_mentioned": r'\b(?:salary|compensation|budget|rate|benefits)\b',
-    "intent_to_connect": r'\b(?:talk to him|reach him|get in touch|connect with|set something up|can he do a screen|how do i reach|how can i reach|contact him)\b',
-    "actively_looking": r'\b(?:actively looking|open to opportunities|is he open|is he looking|available for)\b',
-}
-
-
-def _compute_buying_signals(chat_history: list) -> int:
-    """Count distinct buying signals across all user messages."""
-    all_user_text = ""
-    for msg in chat_history:
-        if isinstance(msg, dict):
-            role = msg.get("role") or msg.get("type", "")
-            content = msg.get("content", "")
-        elif hasattr(msg, "content"):
-            role = getattr(msg, "type", "") or getattr(msg, "role", "")
-            content = getattr(msg, "content", "")
-        else:
-            continue
-        if role in ("user", "human") and content:
-            all_user_text += " " + content
-    all_user_text = all_user_text.lower()
-
-    signals = set()
-    for signal_name, pattern in _BUYING_SIGNAL_PATTERNS.items():
-        if re.search(pattern, all_user_text):
-            signals.add(signal_name)
-    return len(signals)
-
-
-def _detect_crush_flow_from_history(state: ConversationState) -> str | None:
-    """Detect the current crush flow step by scanning chat_history for markers.
-
-    Because state is rebuilt from scratch on each serverless invocation, we
-    cannot rely on awaiting_crush_choice / crush_flow_step persisting. Instead
-    we look at the last assistant message to determine where we are.
-
-    Returns:
-        'awaiting_crush_form' | None
-    """
-    chat_history = state.get("chat_history", [])
-    if not chat_history:
-        return None
-
-    # Find the last assistant message
-    last_assistant_content = None
-    for msg in reversed(chat_history):
-        content = None
-        role = None
-        if isinstance(msg, dict):
-            role = msg.get("role") or msg.get("type")
-            content = msg.get("content", "")
-        elif hasattr(msg, "content"):
-            role = getattr(msg, "type", None) or getattr(msg, "role", None)
-            content = getattr(msg, "content", "")
-
-        if role in ("assistant", "ai"):
-            last_assistant_content = content
-            break
-
-    if not last_assistant_content:
-        return None
-
-    # Check if crush flow already completed (don't re-enter)
-    for marker in _CRUSH_COMPLETE_MARKERS:
-        if marker in last_assistant_content:
-            return None
-
-    # Check if we're awaiting crush form submission
-    if _CRUSH_FORM_MARKER in last_assistant_content:
-        return "awaiting_crush_form"
-
-    return None
-
-
-# ── HM data capture flow ────────────────────────────────────────────────
-# Follows the same chat_history-marker pattern as the crush flow.
-
-def _detect_hm_capture_flow_from_history(state: ConversationState) -> str | None:
-    """Detect HM data capture step from chat_history markers.
-
-    Returns:
-        'awaiting_hm_response' | 'awaiting_hm_details' | None
-    """
-    chat_history = state.get("chat_history", [])
-    if not chat_history:
-        return None
-
-    last_assistant_content = None
-    for msg in reversed(chat_history):
-        if isinstance(msg, dict):
-            role = msg.get("role") or msg.get("type")
-            content = msg.get("content", "")
-        elif hasattr(msg, "content"):
-            role = getattr(msg, "type", None) or getattr(msg, "role", None)
-            content = getattr(msg, "content", "")
-        else:
-            continue
-        if role in ("assistant", "ai"):
-            last_assistant_content = content
-            break
-
-    if not last_assistant_content:
-        return None
-
-    # Check completion first
-    for marker in _HM_CAPTURE_COMPLETE_MARKERS:
-        if marker in last_assistant_content:
-            return None
-
-    if _HM_CAPTURE_DETAILS_MARKER in last_assistant_content:
-        return "awaiting_hm_details"
-
-    # Contact form marker (from new capture question flow)
-    if _CONTACT_FORM_MARKER in last_assistant_content:
-        return "awaiting_hm_details"
-
-    if _HM_CAPTURE_MARKER in last_assistant_content:
-        return "awaiting_hm_response"
-
-    return None
-
-
-def _parse_hm_contact_info(query: str) -> dict:
-    """Parse hiring manager contact info from free-form input.
-
-    Returns dict with keys: name, email, phone, company, referral_source, message.
-    Any value can be None if not detected.
-    """
-    info = {"name": None, "email": None, "phone": None, "company": None, "referral_source": None, "message": None}
-
-    # Extract email
-    email_match = re.search(r'[\w.+-]+@[\w-]+\.[\w.-]+', query)
-    if email_match:
-        info["email"] = email_match.group()
-
-    # Extract phone (digit-pattern OR "Number/Phone: X" label)
-    phone_match = re.search(r'(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', query)
-    if phone_match:
-        info["phone"] = phone_match.group()
-    else:
-        label_phone = re.search(r'(?:^|\n)\s*(?:number|phone)\s*[:=][ \t]*([^\n]+)', query, re.IGNORECASE)
-        if label_phone and label_phone.group(1).strip():
-            info["phone"] = label_phone.group(1).strip()
-
-    # Extract name — "Name: X", "my name is X", "I'm X", "this is X", "Name, ..."
-    # Use [^\n]+ (not .+) and [ \t]* (not \s*) to avoid crossing newlines
-    label_name_match = re.search(r'(?:^|\n)\s*name\s*[:=][ \t]*([^\n]+)', query, re.IGNORECASE)
-    name_match = re.match(
-        r"(?:my name is|i'm|i am|this is|it's)\s+(\w+(?:\s+\w+)?)",
-        query, re.IGNORECASE,
-    )
-    if label_name_match and label_name_match.group(1).strip():
-        info["name"] = label_name_match.group(1).strip()
-    elif name_match:
-        info["name"] = name_match.group(1).strip()
-    elif not info["email"] and not info["phone"]:
-        # If first words look like a name (1-3 capitalized words before a comma)
-        parts = query.split(",", 1)
-        if len(parts) == 2 and len(parts[0].strip().split()) <= 3:
-            info["name"] = parts[0].strip()
-
-    # Extract company — "Company: X", "at X", "from X", "X company"
-    label_company_match = re.search(r'(?:^|\n)\s*company\s*[:=][ \t]*([^\n]+)', query, re.IGNORECASE)
-    company_match = re.search(
-        r'(?:at|from|with)\s+([A-Z][\w\s&.-]{1,30}?)(?:\s*[,.]|\s+(?:and|we|our|i|my|looking|hiring)|\s*$)',
-        query, re.IGNORECASE,
-    )
-    if label_company_match and label_company_match.group(1).strip():
-        info["company"] = label_company_match.group(1).strip()
-    elif company_match:
-        info["company"] = company_match.group(1).strip()
-
-    # Extract referral source — "How did you find this website?: X"
-    # Consume the full label (including "this website?") before capturing the value
-    referral_match = re.search(
-        r'(?:how did you find[^:\n]*[?]?\s*[:=]|found (?:this|you|the site|the website)\s*[:=]|referral\s*[:=])[ \t]*([^\n]+)',
-        query, re.IGNORECASE,
-    )
-    if referral_match and referral_match.group(1).strip():
-        info["referral_source"] = referral_match.group(1).strip()
-
-    # Extract additional info label value
-    additional_match = re.search(
-        r'(?:^|\n)\s*additional\s*(?:information|info)?\s*[:=][ \t]*([^\n]+)',
-        query, re.IGNORECASE,
-    )
-    additional_text = additional_match.group(1).strip() if additional_match and additional_match.group(1).strip() else None
-
-    # Build message from remaining text, stripping form labels
-    remaining = query
-    for val in [info["email"], info["phone"], info["name"], info["company"], info["referral_source"]]:
-        if val:
-            remaining = remaining.replace(val, "", 1).strip()
-    # Strip known form label lines (empty or already-extracted)
-    remaining = re.sub(
-        r'(?m)^\s*(?:name|phone|number|email|company|how did you find[^\n]*?|additional\s*(?:information|info)?)\s*[:=][ \t]*\n?',
-        '', remaining, flags=re.IGNORECASE,
-    )
-    remaining = re.sub(r'^[\s,.-]+|[\s,.-]+$', '', remaining)
-
-    # Prefer additional_text if remaining is mostly form debris
-    if additional_text and (not remaining or len(remaining) <= 3):
-        info["message"] = additional_text
-    elif remaining and len(remaining) > 3:
-        info["message"] = remaining
-    elif additional_text:
-        info["message"] = additional_text
-
-    return info
-
-
-def _save_recruiter_lead(session_id: str, info: dict, state: ConversationState) -> bool:
-    """Save hiring manager lead to Supabase recruiter_leads table."""
-    try:
-        from assistant.config.supabase_config import get_supabase_client
-        supabase = get_supabase_client()
-        supabase.table('recruiter_leads').insert({
-            'session_id': session_id,
-            'name': info.get('name'),
-            'email': info.get('email'),
-            'phone': info.get('phone'),
-            'company': info.get('company'),
-            'referral_source': info.get('referral_source'),
-            'message': info.get('message'),
-            'visitor_type': state.get('visitor_type', 'hiring_manager'),
-            'buying_signals_count': state.get('buying_signals_count', 0),
-            'message_count': state.get('message_count', 0),
-            'capture_trigger': 'intent_to_connect',
-        }).execute()
-        logger.info(f"Recruiter lead saved for session {session_id}: {info.get('name')}")
-
-        # Mark capture in conversation analytics
-        try:
-            from assistant.analytics.supabase_analytics import supabase_analytics
-            turn_count = state.get("message_count", 0)
-            supabase_analytics.mark_data_captured(
-                session_id=session_id,
-                capture_turn=turn_count,
-                capture_type="recruiter_lead",
-                referral_source=info.get("referral_source"),
-            )
-        except Exception as analytics_err:
-            logger.error(f"Failed to mark capture in analytics: {analytics_err}")
-
-        return True
-    except Exception as e:
-        logger.error(f"Failed to save recruiter lead: {e}")
-        return False
-
-
-def _send_hm_lead_notifications(info: dict) -> bool:
-    """Send SMS and email notifications to Noah about a new hiring manager lead."""
-    name = info.get('name') or 'Unknown'
-    company = info.get('company') or 'Unknown company'
-    email = info.get('email') or ''
-    phone = info.get('phone') or ''
-    referral = info.get('referral_source') or ''
-    msg = info.get('message') or ''
-
-    # ── SMS ──
-    try:
-        from assistant.services.twilio_service import get_twilio_service
-        twilio = get_twilio_service()
-        noah_phone = os.getenv("NOAH_PHONE_NUMBER")
-
-        if noah_phone and twilio and twilio.enabled:
-            sms_body = f"Portfolia Lead: {name} at {company}"
-            if email:
-                sms_body += f"\nEmail: {email}"
-            if phone:
-                sms_body += f"\nPhone: {phone}"
-            if referral:
-                sms_body += f"\nFound via: {referral[:100]}"
-            if msg:
-                sms_body += f"\nMessage: {msg[:200]}"
-
-            if len(sms_body) > 1600:
-                sms_body = sms_body[:1597] + "..."
-
-            result = twilio.send_sms(to_phone=noah_phone, message=sms_body)
-            logger.info(f"HM lead SMS sent to Noah: {result.get('status', 'unknown')}")
-        else:
-            logger.warning("Twilio not configured -- skipping HM lead SMS")
-    except Exception as e:
-        logger.error(f"HM lead SMS failed: {e}")
-
-    # ── Email ──
-    try:
-        from assistant.services.resend_service import get_resend_service
-        resend_svc = get_resend_service()
-
-        if resend_svc and resend_svc.enabled:
-            subject = f"Portfolia Lead: {name} at {company}"
-            html = (
-                "<h2>New Recruiter/Hiring Manager Lead</h2>"
-                f"<p><strong>Name:</strong> {name}</p>"
-                f"<p><strong>Company:</strong> {company}</p>"
-                f"<p><strong>Email:</strong> {email or '(not provided)'}</p>"
-                f"<p><strong>Phone:</strong> {phone or '(not provided)'}</p>"
-                f"<p><strong>Referral Source:</strong> {referral or '(not provided)'}</p>"
-                f"<p><strong>Message:</strong> {msg or '(none)'}</p>"
-                "<p><em>Captured via Portfolia recruiter lead flow</em></p>"
-            )
-            resend_svc.send_email(
-                to_email=resend_svc.admin_email,
-                subject=subject,
-                html=html,
-            )
-            logger.info("HM lead email sent to Noah")
-        else:
-            logger.warning("Resend not configured -- skipping HM lead email")
-    except Exception as e:
-        logger.error(f"HM lead email failed: {e}")
-
-    return True
-
-
-def _is_connect_intent(query: str) -> bool:
-    """Check if user expresses intent to connect with Noah."""
-    q = query.lower()
-    connect_phrases = [
-        "talk to him", "reach him", "get in touch", "connect with",
-        "set something up", "can he do a screen", "how do i reach",
-        "how can i reach", "contact him", "connect directly",
-        "let's set up", "schedule", "i'd like to talk",
-        "want to connect", "reach out to him", "reach out to noah",
-        "set up a call", "put me in touch", "pass my info",
-        "yes", "sure", "yeah", "please", "do it",
-    ]
-    return any(phrase in q for phrase in connect_phrases)
-
-
-def _is_capture_question_response(query: str, state: ConversationState) -> bool:
-    """Check if user is responding to a capture question with connect/hiring intent.
-
-    Returns True if:
-    1. The last assistant message contained a capture question fragment, AND
-    2. The user's response indicates hiring intent, company mention, or
-       explicit interest in connecting.
-    """
-    # First, check if last assistant message had a capture question
-    chat_history = state.get("chat_history", [])
-    last_assistant = ""
-    for msg in reversed(chat_history):
-        if isinstance(msg, dict):
-            role = msg.get("role") or msg.get("type", "")
-            content = msg.get("content", "")
-        elif hasattr(msg, "content"):
-            role = getattr(msg, "type", "") or getattr(msg, "role", "")
-            content = getattr(msg, "content", "")
-        else:
-            continue
-        if role in ("assistant", "ai") and content:
-            last_assistant = content.lower()
-            break
-
-    if not last_assistant:
-        return False
-
-    had_capture_question = any(
-        frag in last_assistant for frag in _CAPTURE_QUESTION_FRAGMENTS
-    )
-    if not had_capture_question:
-        return False
-
-    # Now check if user's response signals hiring/connect intent
-    q = query.lower().strip()
-
-    # Direct connect intent
-    if _is_connect_intent(q):
-        return True
-
-    # Hiring/recruitment signals in response
-    # Traffic source phrases that should NOT be treated as hiring signals
-    _traffic_source_phrases = [
-        "from linkedin", "from twitter", "from instagram", "from ig",
-        "from reddit", "from github", "from youtube", "from upwork",
-        "from hinge", "from tinder", "from bumble",
-    ]
-    if any(ts in q for ts in _traffic_source_phrases):
-        return False
-
-    hiring_signals = [
-        "hiring", "recruiter", "recruiting", "we're looking",
-        "we are looking", "open role", "open position",
-        "evaluating candidates", "data analyst", "data engineer",
-        "software engineer", "developer role", "team is hiring",
-        "interested in him", "interested in noah",
-        "our company", "our team", "my company", "my team",
-    ]
-    if any(signal in q for signal in hiring_signals):
-        return True
-
-    return False
-
-
-def handle_hm_capture_continuation(state: ConversationState) -> ConversationState:
-    """Handle hiring manager data capture flow steps.
-
-    Follows the same state machine pattern as handle_crush_flow_continuation.
-    """
-    query = state.get("query", "").strip()
-    step = state.get("hm_capture_step")
-    session_id = state.get("session_id", "unknown")
-
-    state["skip_rag"] = True
-    state["message_intent"] = "knowledge_query"
-
-    # ── Cancel detection ─────────────────────────────────────────────────
-    cancel_phrases = ["no", "nah", "no thanks", "not right now", "maybe later",
-                      "i'm good", "im good", "skip", "pass"]
-    if query.lower().strip() in cancel_phrases or "not interested" in query.lower():
-        state["answer"] = (
-            "No worries at all. If you change your mind, I'm always here. "
-            "Anything else you want to know about Noah's work?"
-        )
-        state["hm_capture_step"] = None
-        state["pipeline_halt"] = True
-        logger.info("HM capture flow declined by visitor")
-        return state
-
-    # ── Step: awaiting_hm_response (user deciding yes/no) ────────────────
-    if step == "awaiting_hm_response":
-        if _is_connect_intent(query):
-            # User said yes — always present the contact form, never parse info here
-            state["answer"] = (
-                "I can have Noah reach out — fill this out so we can best assist you:\n\n"
-                "Name:\nNumber:\nEmail:\nCompany:\nHow did you find this website?:\nAdditional information:"
-                "\n\nOnce you submit, I can walk you through the rest of Noah's projects."
-            )
-            state["hm_capture_step"] = "awaiting_hm_details"
-            state["pipeline_halt"] = True
-            return state
-        else:
-            # Not a clear yes or no — treat as normal conversation, exit capture flow
-            state["hm_capture_step"] = None
-            state["skip_rag"] = False
-            state["message_intent"] = None  # Let classify_intent re-classify
-            return state
-
-    # ── Step: awaiting_hm_details (collecting name/email/company) ────────
-    if step == "awaiting_hm_details":
-        info = _parse_hm_contact_info(query)
-
-        if info.get("name") or info.get("email") or info.get("phone"):
-            _save_recruiter_lead(session_id, info, state)
-            _send_hm_lead_notifications(info)
-            display = info.get("name") or info.get("email") or "your info"
-            state["answer"] = (
-                f"I'll make sure Noah sees this. {display}'s details have been forwarded — "
-                f"he'll follow up directly. Want to see what else Noah has built?"
-            )
-            state["hm_capture_step"] = None
-            state["message_intent"] = "contact_info_submission"
-            state["pipeline_halt"] = True
-        else:
-            state["answer"] = (
-                "I just need at least a name or email so Noah can reach back out. "
-                "Something like: \"Alex, alex@company.com — interested in chatting about the data role.\""
-            )
-            state["pipeline_halt"] = True
-
-        return state
-
-    # Fallback
-    state["hm_capture_step"] = None
-    return state
-
-
 def classify_intent(state: ConversationState) -> ConversationState:
     """Classify user message intent before RAG retrieval.
 
@@ -649,7 +141,54 @@ def classify_intent(state: ConversationState) -> ConversationState:
     Performance:
         - ~150ms (fast model call with Haiku or GPT-3.5)
         - Cached for repeated queries
+
+    Dispatcher: each _check_* helper below runs in strict order and either
+    returns the handled state (early exit) or None (fall through).
     """
+    result = _check_crush_flow_continuation(state)
+    if result is not None:
+        return result
+
+    result = _check_capture_continuation(state)
+    if result is not None:
+        return result
+
+    _update_engagement_counters(state)
+
+    query = state.get("query", "").strip()
+
+    # If no query or already classified, skip
+    if not query or state.get("message_intent"):
+        return state
+
+    for check in (
+        _check_traffic_source,
+        _check_crush_keywords,
+        _check_direct_contact_request,
+        _check_greeting,
+        _check_menu_selection,
+        _check_continuation,
+        _check_self_knowledge_shortcuts,
+        _check_topic_keywords,
+        _check_self_referential,
+        _check_short_reply,
+        _check_form_submission,
+    ):
+        result = check(state, query)
+        if result is not None:
+            return result
+
+    _classify_with_llm(state, query)
+
+    result = _maybe_trigger_capture_offer(state, query)
+    if result is not None:
+        return result
+
+    return state
+
+
+def _check_crush_flow_continuation(state: ConversationState) -> ConversationState | None:
+    """Recover crush flow state from chat_history and dispatch if active."""
     # ── Crush flow state recovery ────────────────────────────────────────
     # Reconstruct crush flow state from chat_history if not already set.
     # This is critical for serverless/stateless deployments where
@@ -665,6 +204,11 @@ def classify_intent(state: ConversationState) -> ConversationState:
     if state.get("awaiting_crush_choice") or state.get("crush_flow_step"):
         return handle_crush_flow_continuation(state)
 
+    return None
+
+
+def _check_capture_continuation(state: ConversationState) -> ConversationState | None:
+    """Recover HM capture flow state from chat_history and dispatch if active."""
     # ── HM capture flow state recovery ───────────────────────────────────
     if not state.get("hm_capture_step"):
         detected_hm_step = _detect_hm_capture_flow_from_history(state)
@@ -675,6 +219,11 @@ def classify_intent(state: ConversationState) -> ConversationState:
     if state.get("hm_capture_step"):
         return handle_hm_capture_continuation(state)
 
+    return None
+
+
+def _update_engagement_counters(state: ConversationState) -> None:
+    """Compute engagement counters and the soft-offer flag from chat_history."""
     # ── Compute engagement counters (stateless, from chat_history) ───────
     chat_history = state.get("chat_history", [])
     current_query = state.get("query", "")
@@ -710,12 +259,9 @@ def classify_intent(state: ConversationState) -> ConversationState:
                 state["hm_soft_offer_made"] = True
                 break
 
-    query = state.get("query", "").strip()
 
-    # If no query or already classified, skip
-    if not query or state.get("message_intent"):
-        return state
-
+def _check_traffic_source(state: ConversationState, query: str) -> ConversationState | None:
+    """Route traffic-source mentions ("I came from hinge") away from crush/capture."""
     # Traffic source detection — BEFORE crush keyword check and LLM classify.
     # "I came here from hinge" is NOT a crush confession.
     # "I am from linkedin" is NOT contact info.
@@ -748,6 +294,12 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["skip_rag"] = True
         return state
 
+    return None
+
+
+def _check_crush_keywords(state: ConversationState, query: str) -> ConversationState | None:
+    """Keyword-based crush confession detection (before the LLM call)."""
+    query_lower = query.lower()
     # CRITICAL FIX: Keyword-based crush confession detection (before LLM call)
     # This catches cases where the LLM might misclassify obvious crush confessions
     crush_keywords = [
@@ -775,6 +327,12 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["visitor_type"] = "crush"
         return state
 
+    return None
+
+
+def _check_direct_contact_request(state: ConversationState, query: str) -> ConversationState | None:
+    """Present the contact form for direct reach-out requests."""
+    query_lower = query.lower()
     # ── Direct contact / reach-out request detection ─────────────────────
     _contact_phrases = [
         "reach out", "have noah reach out", "contact", "get in touch",
@@ -784,15 +342,16 @@ def classify_intent(state: ConversationState) -> ConversationState:
         logger.info(f"Direct contact request detected via keywords: {query[:50]}")
         state["message_intent"] = "connect"
         state["skip_rag"] = True
-        state["answer"] = (
-            "I can have Noah reach out — fill this out so we can best assist you:"
-            "\n\nName:\nNumber:\nEmail:\nCompany:\nHow did you find this website?:\nAdditional information:"
-            "\n\nOnce you submit, I can walk you through the rest of Noah's projects."
-        )
+        state["answer"] = _CONTACT_FORM_PROMPT
         state["hm_capture_step"] = "awaiting_hm_details"
         state["pipeline_halt"] = True
         return state
 
+    return None
+
+
+def _check_greeting(state: ConversationState, query: str) -> ConversationState | None:
+    """Handle explicit greeting flags and simple keyword greetings."""
     # Skip if this is explicitly marked as a greeting (e.g., just "hi" or "hello")
     if state.get("is_greeting"):
         state["message_intent"] = "greeting"
@@ -808,6 +367,12 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["skip_rag"] = True
         return state
 
+    return None
+
+
+def _check_menu_selection(state: ConversationState, query: str) -> ConversationState | None:
+    """Route single-digit menu picks to knowledge_query for stage-2 routing."""
+    query_lower = query.lower().strip()
     # ── Menu selection detection ─────────────────────────────────────────
     # Single-digit "1"–"4" (or emoji variants) are menu picks, not off_topic.
     # Detect them here so they pass through to classify_role_mode in stage 2.
@@ -818,6 +383,12 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["skip_rag"] = False
         return state
 
+    return None
+
+
+def _check_continuation(state: ConversationState, query: str) -> ConversationState | None:
+    """Expand short continuations ("tell me more", "yes") with prior topic context."""
+    query_lower = query.lower().strip()
     # ── Short continuation detection ────────────────────────────────────
     # Phrases like "tell me more", "go deeper", "yes", "continue" have no
     # semantic content and fail retrieval + edge case detection.  When the
@@ -948,6 +519,12 @@ def classify_intent(state: ConversationState) -> ConversationState:
             state["is_self_referential"] = True
             return state
 
+    return None
+
+
+def _check_self_knowledge_shortcuts(state: ConversationState, query: str) -> ConversationState | None:
+    """Direct answers for model/purpose/GitHub questions that fail retrieval."""
+    query_lower = query.lower().strip()
     # ── Quick self-knowledge answers ────────────────────────────────
     # Short queries about Portfolia's model/tech that fail pgvector retrieval
     # (too short, get 0 chunks). These deserve a direct answer.
@@ -1013,6 +590,12 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["pipeline_halt"] = True
         return state
 
+    return None
+
+
+def _check_topic_keywords(state: ConversationState, query: str) -> ConversationState | None:
+    """Route single topic words and project names straight to knowledge_query."""
+    query_lower = query.lower().strip()
     # ── Single-topic word detection ────────────────────────────────────
     # Short topic words that always map to knowledge_query about Noah.
     # These bypass the LLM classifier to avoid misclassification.
@@ -1052,6 +635,12 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["skip_rag"] = False
         return state
 
+    return None
+
+
+def _check_self_referential(state: ConversationState, query: str) -> ConversationState | None:
+    """Route queries about Portfolia itself to knowledge_query with the self flag."""
+    query_lower = query.lower().strip()
     # ── Self-referential query detection ────────────────────────────────
     # Queries about Portfolia itself ("tell me about you", "your architecture")
     # should route to knowledge_query with skip_rag=False so the self-knowledge
@@ -1093,6 +682,12 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["is_self_referential"] = True
         return state
 
+    return None
+
+
+def _check_short_reply(state: ConversationState, query: str) -> ConversationState | None:
+    """Route brief replies to an assistant question straight to generation."""
+    chat_history = state.get("chat_history", [])
     # ── Short conversational reply detection ──────────────────────────
     # When the user sends a brief reply (under 3 words) and the last
     # assistant message ended with a question, the user is answering
@@ -1123,6 +718,12 @@ def classify_intent(state: ConversationState) -> ConversationState:
                 state["skip_rag"] = True
                 return state
 
+    return None
+
+
+def _check_form_submission(state: ConversationState, query: str) -> ConversationState | None:
+    """Detect contact intent / contact-info submissions before the LLM classifier."""
+    query_lower = query.lower().strip()
     # ── Contact info submission pre-classifier ────────────────────────
     # Detect messages with email, phone, or explicit contact submission
     # BEFORE the LLM classifier to prevent misclassification as small_talk.
@@ -1203,6 +804,12 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["pipeline_halt"] = True
         return state
 
+    return None
+
+
+def _classify_with_llm(state: ConversationState, query: str) -> None:
+    """Classify intent + visitor signal with Haiku; mutates state, never halts."""
+    chat_history = state.get("chat_history", [])
     # For all other messages, use the LLM classifier to determine intent + visitor signal
     try:
         client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -1273,6 +880,9 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["message_intent"] = "knowledge_query"
         state["skip_rag"] = False
 
+
+def _maybe_trigger_capture_offer(state: ConversationState, query: str) -> ConversationState | None:
+    """Post-classification capture triggers: contact form and soft offer."""
     # ── Data capture trigger (universal) ─────────────────────────────────
     msg_count = state.get("message_count", 0)
     buying = state.get("buying_signals_count", 0)
@@ -1280,15 +890,7 @@ def classify_intent(state: ConversationState) -> ConversationState:
     if (_is_connect_intent(query)
             and not state.get("hm_capture_step")
             and msg_count >= 2):
-        state["answer"] = (
-            "I can have Noah reach out. Fill this out so we can best assist you:\n\n"
-            "Name:\n"
-            "Number:\n"
-            "Email:\n"
-            "Company:\n"
-            "How did you find this website?:\n"
-            "Additional information:"
-        )
+        state["answer"] = _CAPTURE_TRIGGER_FORM_PROMPT
         state["hm_capture_step"] = "awaiting_hm_details"
         state["pipeline_halt"] = True
         state["skip_rag"] = True
@@ -1302,11 +904,7 @@ def classify_intent(state: ConversationState) -> ConversationState:
     if (not state.get("hm_capture_step")
             and msg_count >= 2
             and _is_capture_question_response(query, state)):
-        state["answer"] = (
-            "I can have Noah reach out — fill this out so we can best assist you:\n\n"
-            "Name:\nNumber:\nEmail:\nCompany:\nHow did you find this website?:\nAdditional information:"
-            "\n\nOnce you submit, I can walk you through the rest of Noah's projects."
-        )
+        state["answer"] = _CONTACT_FORM_PROMPT
         state["hm_capture_step"] = "awaiting_hm_details"
         state["pipeline_halt"] = True
         state["skip_rag"] = True
@@ -1321,7 +919,7 @@ def classify_intent(state: ConversationState) -> ConversationState:
         state["hm_soft_offer_made"] = True
         logger.info("Soft offer flagged for injection at message %d", msg_count)
 
-    return state
+    return None
 
 
 def handle_non_knowledge_intent(state: ConversationState, rag_engine: Any) -> ConversationState:
@@ -1512,470 +1110,4 @@ def handle_non_knowledge_intent(state: ConversationState, rag_engine: Any) -> Co
         return state
 
     # Fallback
-    return state
-
-
-def handle_crush_confession(state: ConversationState) -> ConversationState:
-    """Handle crush confession — show the crush form immediately.
-
-    Args:
-        state: ConversationState
-
-    Returns:
-        Updated state with crush form prompt and flags
-    """
-    state["answer"] = (
-        "Didn't expect anyone to actually pick this one. Respect the commitment though.\n\n"
-        "I can let Noah know someone came through with intentions. Fill this out:\n\n"
-        "Name:\n"
-        "Number or social:\n"
-        "Message for Noah:\n\n"
-        "Want to stay anonymous? Just leave contact info blank."
-    )
-
-    # Set flags for next turn handling
-    state["awaiting_crush_choice"] = True
-    state["crush_flow_step"] = "awaiting_crush_form"
-    state["pipeline_halt"] = True
-    state["skip_rag"] = True
-    state["message_intent"] = "crush_confession"
-
-    logger.info("Crush confession detected - presented form to user")
-
-    return state
-
-
-def _is_cancel_choice(query: str) -> bool:
-    """Check if the user wants to cancel the crush flow."""
-    q = query.lower().strip()
-    # Short words — exact match only to avoid false positives ("no" in "anonymous")
-    exact_only = {"no", "nah", "nope", "jk", "back", "stop", "exit", "wrong"}
-    # Longer phrases — safe for substring matching
-    substring_ok = [
-        "nevermind", "never mind", "nvm", "cancel", "just kidding",
-        "forget it", "changed my mind", "go back", "not that",
-        "professionally", "not a crush", "not what i meant",
-        "not romantic", "not interested", "wrong option",
-    ]
-    if q in exact_only:
-        return True
-    return any(signal in q for signal in substring_ok)
-
-
-def _is_anonymous_choice(query: str) -> bool:
-    """Check if the user chose the anonymous option."""
-    q = query.lower().strip()
-    # Exact-match-only signals (single chars that cause false positives in substrings)
-    exact_only = {"1"}
-    # Signals that can use substring matching (multi-word phrases)
-    substring_ok = [
-        "anonymous", "stay anonymous", "secret", "secret admirer",
-        "option 1", "first", "first one", "the first",
-    ]
-    if q in exact_only:
-        return True
-    return any(signal == q or signal in q for signal in substring_ok)
-
-
-def _is_reveal_choice(query: str) -> bool:
-    """Check if the user chose the reveal option."""
-    q = query.lower().strip()
-    # Exact-match-only signals (single chars that cause false positives in substrings)
-    exact_only = {"2"}
-    # Signals that can use substring matching
-    substring_ok = [
-        "reveal", "reveal myself", "reveal yourself",
-        "option 2", "second", "second one", "the second",
-        "drop my name", "full send", "bold",
-    ]
-    if q in exact_only:
-        return True
-    return any(signal == q or signal in q for signal in substring_ok)
-
-
-def _looks_like_contact_info(query: str) -> bool:
-    """Check if a message looks like it contains contact info or a direct reveal.
-
-    Used to detect that a message contains contact info (name, phone,
-    email, social handle, etc.).
-
-    Matches: phone numbers, emails, "my name is", "tell noah/him", "call me",
-    "here is my number", "hit me up", name + number patterns, etc.
-    """
-    q = query.lower().strip()
-    # Phone number pattern (7+ digits, allowing dashes/spaces/parens)
-    if re.search(r'\d[\d\s\-\(\)]{6,}', query):
-        return True
-    # Email pattern
-    if re.search(r'\S+@\S+\.\S+', query):
-        return True
-    # Name introduction patterns (exclude "i'm from/on/just/here" — traffic sources)
-    if re.search(r"(?:my name is|i'm (?!from |on |just |here )|i am (?!from |on |just |here )|this is |it's |call me )", q):
-        return True
-    # Messaging-Noah patterns
-    if re.search(r"(?:tell (?:noah|him)|let (?:noah|him) know|hit me up|message him|reach me)", q):
-        return True
-    # Social media handles
-    if re.search(r'@\w{2,}', query):
-        return True
-    # "here is my number/contact/info"
-    if re.search(r"(?:here(?:'s| is) my|my (?:number|phone|contact|email|ig|insta|snap))", q):
-        return True
-    return False
-
-
-def _parse_name_and_message(query: str) -> tuple[str | None, str | None]:
-    """Extract name and message from free-form user input.
-
-    Accepts formats like:
-    - "my name is Sarah and tell him he seems really cool"
-    - "Sarah, tell him he's awesome"
-    - "I'm Mike and my message is you seem great"
-    - "Sarah, 702-555-1234"
-    - "Sarah, sarah@email.com"
-    - "tell noah to call me 707-319-0951"
-    - "noah is so hot, here is my number 707-319-0951"
-    - "tell him to hit me up, my name is Sarah 707-319-0951"
-
-    Returns:
-        (name, message) tuple. Either or both can be None if not parseable.
-    """
-    text = query.strip()
-
-    # Try "my name is X and ..." pattern
-    match = re.match(
-        r"(?:my name is|i'm|i am|this is|it's|its)\s+(\w+(?:\s+\w+)?)\s*(?:and|,|\.)\s*(.*)",
-        text, re.IGNORECASE,
-    )
-    if match:
-        return match.group(1).strip(), match.group(2).strip() or None
-
-    # Try "... my name is X ..." anywhere in the message (not just start)
-    # [a-zA-Z] ensures we don't capture a phone number after "call me"
-    match = re.search(
-        r"(?:my name is|i'm|i am|call me)\s+([a-zA-Z]\w*)",
-        text, re.IGNORECASE,
-    )
-    if match:
-        name = match.group(1).strip()
-        # Rest of the message is the contact/message
-        rest = text[:match.start()].strip().rstrip(",").strip()
-        rest2 = text[match.end():].strip().lstrip(",").strip()
-        message = " ".join(filter(None, [rest, rest2])).strip() or None
-        return name, message
-
-    # Try "Name, message" pattern (comma separated)
-    parts = text.split(",", 1)
-    if len(parts) == 2 and len(parts[0].strip().split()) <= 3:
-        return parts[0].strip(), parts[1].strip() or None
-
-    # Try "Name - message" pattern
-    parts = text.split(" - ", 1)
-    if len(parts) == 2 and len(parts[0].strip().split()) <= 3:
-        return parts[0].strip(), parts[1].strip() or None
-
-    # If text is short (likely just a name), treat as name with no message
-    if len(text.split()) <= 3 and not any(c in text for c in "?!.@"):
-        return text, None
-
-    # Can't parse a name — treat entire thing as a message
-    return None, text
-
-
-def _parse_crush_form(query: str, anonymous: bool = True):
-    """Parse crush form submission.
-
-    Anonymous form expects: Alias + Message for Noah
-    Reveal form expects: Name + Number or social + Message for Noah
-
-    Returns:
-        anonymous=True: (alias, message) tuple
-        anonymous=False: dict with keys: name, contact, message
-    """
-    text = query.strip()
-
-    if anonymous:
-        # Try field-based parsing: "Alias: X\nMessage for Noah: Y"
-        alias_match = re.search(
-            r"(?:alias|nickname|call me)\s*[:=]?\s*(.+)", text, re.IGNORECASE
-        )
-        msg_match = re.search(
-            r"(?:message(?:\s+for\s+noah)?)\s*[:=]?\s*(.+)", text, re.IGNORECASE
-        )
-        if alias_match and msg_match:
-            return alias_match.group(1).strip(), msg_match.group(1).strip()
-
-        # Fallback: split on newline — first line alias, rest message
-        lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
-        if len(lines) >= 2:
-            return lines[0], " ".join(lines[1:])
-
-        # Single line — treat as message only
-        return None, text if text else None
-
-    # ── Reveal form ──
-    info: dict[str, str | None] = {"name": None, "contact": None, "message": None}
-
-    name_match = re.search(r"(?:name)\s*[:=]\s*(.+)", text, re.IGNORECASE)
-    contact_match = re.search(
-        r"(?:number(?:\s+or\s+social)?|social|phone|ig|insta|snap|email|contact(?:\s+info)?)\s*[:=]\s*(.+)",
-        text, re.IGNORECASE,
-    )
-    msg_match = re.search(
-        r"(?:message(?:\s+for\s+noah)?)\s*[:=]?\s*(.+)", text, re.IGNORECASE
-    )
-
-    if name_match:
-        info["name"] = name_match.group(1).strip()
-    if contact_match:
-        info["contact"] = contact_match.group(1).strip()
-    if msg_match:
-        info["message"] = msg_match.group(1).strip()
-
-    # Fallback: line-based parsing
-    if not any(info.values()):
-        lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
-        if len(lines) >= 1:
-            info["name"] = lines[0]
-        if len(lines) >= 2:
-            info["contact"] = lines[1]
-        if len(lines) >= 3:
-            info["message"] = " ".join(lines[2:])
-
-    # Final fallback: reuse existing free-form parser
-    if not info["name"] and not info["contact"]:
-        name, msg = _parse_name_and_message(text)
-        info["name"] = name
-        info["message"] = msg
-        phone = re.search(
-            r'(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', text
-        )
-        if phone:
-            info["contact"] = phone.group()
-        else:
-            handle = re.search(r'@\w{2,}', text)
-            if handle:
-                info["contact"] = handle.group()
-
-    return info
-
-
-def _send_crush_notifications(
-    anonymous: bool = False,
-    alias: str | None = None,
-    name: str | None = None,
-    contact: str | None = None,
-    message: str | None = None,
-) -> None:
-    """Send both SMS and email notifications to Noah about a crush confession."""
-
-    # ── SMS ──
-    try:
-        from assistant.services.twilio_service import get_twilio_service
-        twilio = get_twilio_service()
-        noah_phone = os.getenv("NOAH_PHONE_NUMBER")
-
-        if noah_phone and twilio and twilio.enabled:
-            if anonymous:
-                sms_body = (
-                    f"Portfolia: Secret admirer alert.\n"
-                    f"Alias: {alias or 'Anonymous'}\n"
-                    f"Message: {(message or '(none)')[:200]}"
-                )
-            else:
-                sms_body = (
-                    f"Portfolia: Someone chose the bold option.\n"
-                    f"Name: {name or 'Unknown'}\n"
-                    f"Contact: {contact or '(none)'}\n"
-                    f"Message: {(message or '(none)')[:150]}"
-                )
-            if len(sms_body) > 1600:
-                sms_body = sms_body[:1597] + "..."
-            twilio.send_sms(to_phone=noah_phone, message=sms_body)
-            logger.info("Crush SMS sent to Noah")
-        else:
-            logger.warning("Twilio not configured -- skipping crush SMS")
-    except Exception as e:
-        logger.error(f"Crush SMS failed: {e}")
-
-    # ── Email ──
-    try:
-        from assistant.services.resend_service import get_resend_service
-        resend_svc = get_resend_service()
-
-        if resend_svc and resend_svc.enabled:
-            if anonymous:
-                subject = "Portfolia: Secret admirer"
-                html = (
-                    "<h2>Secret Admirer on Portfolia</h2>"
-                    f"<p><strong>Alias:</strong> {alias or 'Anonymous'}</p>"
-                    f"<p><strong>Message:</strong> {message or '(none)'}</p>"
-                    "<p><em>Submitted via crush confession flow</em></p>"
-                )
-            else:
-                subject = f"Portfolia: {name or 'Someone'} chose the bold option"
-                html = (
-                    "<h2>Crush Confession on Portfolia</h2>"
-                    f"<p><strong>Name:</strong> {name or 'Unknown'}</p>"
-                    f"<p><strong>Contact:</strong> {contact or '(none)'}</p>"
-                    f"<p><strong>Message:</strong> {message or '(none)'}</p>"
-                    "<p><em>Submitted via crush confession flow</em></p>"
-                )
-            resend_svc.send_email(
-                to_email=resend_svc.admin_email,
-                subject=subject,
-                html=html,
-            )
-            logger.info("Crush email sent to Noah")
-        else:
-            logger.warning("Resend not configured -- skipping crush email")
-    except Exception as e:
-        logger.error(f"Crush email failed: {e}")
-
-
-def handle_crush_flow_continuation(state: ConversationState) -> ConversationState:
-    """Handle subsequent steps in the crush confession flow.
-
-    Called when user is in the middle of the crush flow (after initial prompt).
-
-    Args:
-        state: ConversationState with crush_flow_step indicator
-
-    Returns:
-        Updated state with appropriate response for current step
-    """
-    query = state.get("query", "").strip()
-    step = state.get("crush_flow_step")
-    session_id = state.get("session_id", "unknown")
-
-    # Ensure skip_rag and message_intent are set for all crush flow continuations
-    state["skip_rag"] = True
-    state["message_intent"] = "crush_confession"
-
-    # ── Cancel / escape detection (any step) ────────────────────────────
-    if _is_cancel_choice(query):
-        state["answer"] = "No worries — back to the regular conversation. What can I help you with?"
-        state["crush_flow_step"] = None
-        state["awaiting_crush_choice"] = False
-        state["pipeline_halt"] = True
-        logger.info("Crush flow cancelled by user")
-        return state
-
-    # ── Escape detection: confusion or Noah-related queries ────────────
-    # If the user asks about Noah or seems confused, exit crush flow
-    # silently and let the pipeline re-classify their message normally.
-    _escape_noah_kw = [
-        "noah", "background", "projects", "technical", "professional",
-        "skills", "experience", "work", "portfolio", "resume", "job",
-        "built", "engineering", "architecture", "pipeline",
-    ]
-    _escape_confusion = {
-        "what", "huh", "pick what", "what do you mean",
-        "what is this", "what are you", "i don't understand",
-    }
-    # Crush/romantic signals — if present, don't escape even if "noah" appears
-    _crush_stay_signals = [
-        "crush", "love", "like", "cute", "hot", "fine", "sexy",
-        "date", "dating", "fuck", "hook up", "hookup", "hit on",
-        "admirer", "confession", "confess", "attracted", "marry",
-        "tryna", "wanna", "kiss", "flirt",
-    ]
-    q_low = query.lower().strip()
-    has_crush_signal = any(sig in q_low for sig in _crush_stay_signals)
-    is_noah_query = not has_crush_signal and any(kw in q_low for kw in _escape_noah_kw)
-    is_confused = (
-        q_low in _escape_confusion
-        or q_low.startswith("show me")
-        or q_low.startswith("tell me about")
-        or (len(q_low.split()) <= 4 and "?" in query
-            and not any(w in q_low for w in ["anonymous", "reveal", "crush", "admirer"]))
-    )
-    if is_noah_query or is_confused:
-        logger.info(f"Crush flow escape: '{query[:60]}' — exiting to normal pipeline")
-        state["crush_flow_step"] = None
-        state["awaiting_crush_choice"] = False
-        state["message_intent"] = None
-        state["skip_rag"] = False
-        return state
-
-    # ── Step: Crush form submission (unified — name/contact optional) ─────
-    if step == "awaiting_crush_form":
-        info = _parse_crush_form(query, anonymous=False)
-        r_name = info.get("name")
-        r_contact = info.get("contact")
-        r_message = info.get("message")
-
-        # Determine if anonymous (no name AND no contact provided)
-        is_anonymous = not r_name and not r_contact
-
-        # Need at least a message
-        if not r_name and not r_contact and not r_message:
-            state["answer"] = (
-                "I need at least a message for Noah. "
-                'Something like: "Tell him his portfolio convinced me."'
-            )
-            state["pipeline_halt"] = True
-            return state
-
-        display_name = r_name or "Anonymous"
-        safe_message = r_message or "(no message)"
-        safe_contact = r_contact or ""
-
-        try:
-            from supabase import create_client
-            supabase = create_client(
-                os.getenv("SUPABASE_URL"),
-                # SUPABASE_SERVICE_KEY is the legacy name; keep as fallback
-                os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_SERVICE_KEY"),
-            )
-            supabase.table("crush_confessions").insert({
-                "session_id": session_id,
-                "anonymous": is_anonymous,
-                "name": display_name,
-                "contact": safe_contact or None,
-                "message": r_message or None,
-            }).execute()
-            logger.info(f"Crush stored: name={display_name}, anonymous={is_anonymous}")
-        except Exception as e:
-            logger.error(f"Failed to store crush: {e}")
-
-        # Mark capture in conversation analytics
-        try:
-            from assistant.analytics.supabase_analytics import supabase_analytics
-            supabase_analytics.mark_data_captured(
-                session_id=session_id,
-                capture_turn=state.get("message_count", 0),
-                capture_type="crush_confession",
-            )
-        except Exception as analytics_err:
-            logger.error(f"Failed to mark crush capture in analytics: {analytics_err}")
-
-        _send_crush_notifications(
-            anonymous=is_anonymous,
-            alias=display_name if is_anonymous else None,
-            name=None if is_anonymous else display_name,
-            contact=safe_contact or None,
-            message=safe_message,
-        )
-
-        if is_anonymous:
-            state["answer"] = (
-                "Say less. Noah knows he's got a secret admirer, and he got your message.\n\n"
-                "Now that we've handled that, want to see what he actually builds?"
-            )
-        else:
-            state["answer"] = (
-                f"Done. Noah just got notified that {display_name} visited his portfolio "
-                "and chose the bold option. Now that we've handled that, "
-                "want to see what he actually builds? Might add context to the decision."
-            )
-
-        state["crush_flow_step"] = None
-        state["awaiting_crush_choice"] = False
-        state["pipeline_halt"] = True
-        return state
-
-    # Fallback — shouldn't reach here, but reset crush state
-    state["crush_flow_step"] = None
-    state["awaiting_crush_choice"] = False
     return state

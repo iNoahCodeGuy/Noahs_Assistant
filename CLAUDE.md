@@ -15,6 +15,8 @@ https://noahdelacalzada.com (frontend repo: iNoahCodeGuy/portfolia_frontend).
 ## Project Structure
 - `assistant/flows/conversation_flow.py` — pipeline entry point (`run_conversation_flow`)
 - `assistant/flows/node_logic/stage*.py` — node implementations (stage0–stage7)
+- `assistant/flows/capture/` — capture state machines (crush flow, lead capture,
+  notifications) + the marker constants both producer and detector must share
 - `assistant/core/rag_engine.py` — RAG orchestration
 - `assistant/retrieval/pgvector_retriever.py` — vector search against Supabase
 - `api/main.py` — FastAPI app
