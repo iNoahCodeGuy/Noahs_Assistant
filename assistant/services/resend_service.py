@@ -61,10 +61,11 @@ class ResendService:
     """Resend email service wrapper."""
 
     def __init__(self):
-        """Initialize Resend service with API key."""
-        self.api_key = os.getenv('RESEND_API_KEY')
-        self.from_email = os.getenv('RESEND_FROM_EMAIL', 'noreply@yourdomain.com')
-        self.admin_email = os.getenv('ADMIN_EMAIL', 'noah@yourdomain.com')
+        """Initialize Resend service from the central settings object."""
+        from assistant.config.supabase_config import supabase_settings
+        self.api_key = supabase_settings.resend_api_key or None
+        self.from_email = supabase_settings.resend_from_email
+        self.admin_email = supabase_settings.admin_email or 'noah@yourdomain.com'
 
         if not RESEND_AVAILABLE:
             logger.warning("Resend package not available. Install with: pip install resend")

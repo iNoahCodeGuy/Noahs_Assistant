@@ -63,11 +63,12 @@ class TwilioService:
     """Twilio SMS service wrapper."""
 
     def __init__(self):
-        """Initialize Twilio service with credentials."""
-        self.account_sid = os.getenv('TWILIO_ACCOUNT_SID')
-        self.auth_token = os.getenv('TWILIO_AUTH_TOKEN')
-        self.from_phone = os.getenv('TWILIO_PHONE_NUMBER') or os.getenv('TWILIO_FROM')
-        self.admin_phone = os.getenv('ADMIN_PHONE_NUMBER')
+        """Initialize Twilio service from the central settings object."""
+        from assistant.config.supabase_config import supabase_settings
+        self.account_sid = supabase_settings.twilio_account_sid or None
+        self.auth_token = supabase_settings.twilio_auth_token or None
+        self.from_phone = supabase_settings.twilio_from_number or None
+        self.admin_phone = supabase_settings.admin_phone or None
 
         if not TWILIO_AVAILABLE:
             logger.warning("Twilio package not available. Install with: pip install twilio")

@@ -28,17 +28,23 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Portfolia API")
 
 # --- CORS ---
-origins = [
-    "http://localhost:3000",
-]
-vercel_url = os.getenv("FRONTEND_URL")
-if vercel_url:
-    origins.append(vercel_url)
+# Strict allow-list when FRONTEND_URL is configured; permissive fallback
+# otherwise so a missing env var degrades to "open" rather than breaking
+# the live site. No credentials cross-origin (the API is cookie-free).
+from assistant.config.supabase_config import supabase_settings
+
+origins = ["http://localhost:3000"]
+if supabase_settings.frontend_url:
+    origins.append(supabase_settings.frontend_url)
+else:
+    logger_cors = logging.getLogger(__name__)
+    logger_cors.warning("FRONTEND_URL not set — CORS falls back to allow all origins")
+    origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=origins,
+    allow_credentials=False,
     allow_methods=["POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )

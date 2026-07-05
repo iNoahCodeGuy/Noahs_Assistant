@@ -136,11 +136,20 @@ class SupabaseSettings:
         self.openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
         self.embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small").strip()
 
-        # External services (for Next.js API routes)
+        # External services — the single place env vars for Twilio/Resend
+        # are read; services take their config from these attributes.
         self.resend_api_key = os.getenv("RESEND_API_KEY", "").strip()
+        self.resend_from_email = os.getenv("RESEND_FROM_EMAIL", "noreply@yourdomain.com").strip()
+        self.admin_email = os.getenv("ADMIN_EMAIL", "").strip()
         self.twilio_account_sid = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
         self.twilio_auth_token = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
-        self.twilio_from_number = os.getenv("TWILIO_FROM", "").strip()
+        # TWILIO_PHONE_NUMBER is the legacy name for TWILIO_FROM
+        self.twilio_from_number = (
+            os.getenv("TWILIO_FROM") or os.getenv("TWILIO_PHONE_NUMBER") or ""
+        ).strip()
+        self.admin_phone = os.getenv("ADMIN_PHONE_NUMBER", "").strip()
+        self.noah_phone = os.getenv("NOAH_PHONE_NUMBER", "").strip()
+        self.frontend_url = os.getenv("FRONTEND_URL", "").strip()
 
         # Application settings
         self.youtube_fight_link = os.getenv(

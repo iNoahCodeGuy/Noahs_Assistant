@@ -136,7 +136,7 @@ class BaseRetriever(ABC):
         try:
             health = self.health_check()
             return health["status"] in ["healthy", "degraded"]
-        except:
+        except Exception:
             return False
 
 
