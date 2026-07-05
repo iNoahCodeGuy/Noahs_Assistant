@@ -9,6 +9,32 @@ All notable changes to Portfolia are documented here. The format is based on
 
 ---
 
+## [2026-07-04] — Structural cleanup completed + production hardening (Phase 5B/6)
+
+### Added
+- Per-IP rate limiting (20/min) and a 4k-char message cap on `/chat`, enforced
+  before any LLM call; six hermetic guard tests
+- `supabase/migrations/APPLIED.md` — the production applied-state record
+
+### Changed
+- stage1 intent router split: capture state machines (crush, lead capture,
+  notifications, shared marker constants) now live in `assistant/flows/capture/`;
+  `classify_intent` is a short dispatcher (1,981 → 1,113 lines). Verified with
+  byte-level AST comparison and a 294-case differential battery
+- stage6 formatting split by responsibility: voice enforcement, link throttling,
+  and followup generation are separate modules (2,633 → 1,203 lines)
+- Migrations renumbered uniquely (two 002s/003s resolved); one-off variants archived
+- langsmith pinned explicitly (tracing is a feature, not a transitive accident)
+
+### Fixed
+- Capture-trigger contact form was unrecoverable from history in stateless mode
+  (marker case mismatch — detection now case-insensitive)
+- Frontend: chat requests time out instead of hanging; login button can't stick
+  on "Checking…"; dashboard fetches surface auth expiry properly; analytics
+  routes fail loud on missing env; labeled inputs + aria-live for screen readers
+
+---
+
 ## [2026-07-04] — Structural cleanup (Phase 5B, part 1)
 
 ### Added
