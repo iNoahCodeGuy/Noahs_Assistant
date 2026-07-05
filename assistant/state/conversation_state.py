@@ -35,21 +35,20 @@ References:
     - QA_LANGGRAPH_MIGRATION.md § Standard 2 for node signature requirements
 """
 
-from typing import Annotated, Any, Dict, List
+from typing import Any, Dict, List
 from typing_extensions import TypedDict
-from langgraph.graph.message import add_messages
 
 
 class ConversationState(TypedDict, total=False):
-    """State dictionary passed between LangGraph nodes.
+    """State dictionary passed between pipeline nodes.
 
     Uses total=False to allow partial state updates from nodes. Each node
     returns a Dict[str, Any] containing only the fields it modifies, and
-    LangGraph merges these updates into the full state.
+    run_conversation_flow merges these updates into the full state via
+    state.update(result).
 
     Design Rationale:
         - total=False: Allows nodes to return partial updates (Principle: Modularity)
-        - Annotated[list, add_messages]: LangGraph auto-appends chat messages (Principle: DRY)
         - Type hints: Self-documenting, IDE-friendly (Principle: Maintainability)
         - No default values: Explicit initialization required (Principle: Defensibility)
 
@@ -83,17 +82,12 @@ class ConversationState(TypedDict, total=False):
     session_id: str
     """Unique session identifier for analytics and conversation tracking."""
 
-    chat_history: Annotated[list, add_messages]
-    """Conversation history with automatic message appending.
+    chat_history: List[Dict[str, str]]
+    """Conversation history as [{"role": "user"|"assistant", "content": ...}].
 
-    The add_messages annotation tells LangGraph to append new messages rather
-    than replace the list. This follows the standard chat interface pattern
-    used across LangChain/LangGraph applications.
-
-    Example:
-        state = {"chat_history": [{"role": "user", "content": "Hello"}]}
-        update = {"chat_history": [{"role": "assistant", "content": "Hi!"}]}
-        # LangGraph merges: chat_history = [user_msg, assistant_msg]
+    The pipeline appends the current query and final answer in update_memory;
+    nodes that need history read it directly. Callers wanting the original
+    list must deep-copy before invoking the pipeline (it mutates in place).
     """
 
     # --- Query Classification ---
