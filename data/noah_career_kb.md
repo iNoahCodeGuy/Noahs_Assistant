@@ -9,7 +9,7 @@ Each section is designed to be useful for RAG retrieval and semantic search.
 
 ### Project 1: Portfolia AI Assistant
 
-Portfolia is Noah's flagship project, an AI-powered portfolio assistant built with a RAG (Retrieval-Augmented Generation) architecture. The tech stack includes LangGraph for stateful conversation orchestration, Supabase with pgvector for vector storage and semantic retrieval, FastAPI for the backend API, and OpenAI embeddings for semantic search. It demonstrates production-grade skills in AI/ML engineering, prompt engineering, database design, API development, and error handling. Noah built it from scratch as both a portfolio showcase and a working example of enterprise AI architecture.
+Portfolia is Noah's flagship project, an AI-powered portfolio assistant built with a RAG (Retrieval-Augmented Generation) architecture. The tech stack includes a 22-node LangGraph-style functional pipeline for conversation orchestration, Supabase with pgvector for vector storage and semantic retrieval, FastAPI for the backend API, and OpenAI embeddings for semantic search. It demonstrates production-grade skills in AI/ML engineering, prompt engineering, database design, API development, and error handling. Noah built it from scratch as both a portfolio showcase and a working example of enterprise AI architecture.
 
 ### Project 2: Generic Lead Response Heatmap Dashboard
 
@@ -27,9 +27,9 @@ Noah built a logistic regression model predicting employee attrition. He achieve
 
 Noah works as an Inside Sales Advisor at Tesla in Las Vegas. He achieved Plaid Club recognition, placing him in the top 10% of the sales team. This recognition demonstrates his ability to perform at a high level in a competitive, metrics-driven environment.
 
-### Why Transitioning to Tech
+### Why Tech: Working Upstream on Systems
 
-Noah's transition from sales to tech is driven by a desire to work upstream on the systems that create leverage. As he explains: "Sales taught me how the business actually works, how customers think, where friction shows up, and what decisions really matter. Over time, I realized I was more interested in building the systems behind the decisions than just executing the pitch."
+Noah's move into tech is driven by a desire to work upstream on the systems that create leverage. As he explains: "Sales taught me how the business actually works, how customers think, where friction shows up, and what decisions really matter. Over time, I realized I was more interested in building the systems behind the decisions than just executing the pitch."
 
 He kept noticing inefficiencies, manual workflows, slow feedback loops, data that existed but wasn't being used. Rather than accepting these as constraints, he started teaching himself how to work with data and software to fix those problems.
 
@@ -133,12 +133,12 @@ This foundation trained him to reason quantitatively in complex systems and made
 
 Repository: https://github.com/iNoahCodeGuy/portfolia-backend.git
 
-Portfolia is Noah's flagship project, a production-grade AI-powered portfolio assistant built with a LangGraph pipeline. It uses RAG (Retrieval-Augmented Generation) to answer questions about Noah's professional background, technical skills, and projects.
+Portfolia is Noah's flagship project, a production-grade AI-powered portfolio assistant built with a 22-node LangGraph-style functional pipeline. It uses RAG (Retrieval-Augmented Generation) to answer questions about Noah's professional background, technical skills, and projects.
 
 ### Technical Architecture
 
 Portfolia's pipeline (assistant/flows/conversation_flow.py):
-- **Orchestration**: LangGraph for stateful conversation management
+- **Orchestration**: 22-node functional pipeline (LangGraph-style plain function loop) in assistant/flows/conversation_flow.py
 - **Retrieval**: Supabase pgvector with text-embedding-3-small (1536 dimensions)
 - **Generation**: Anthropic Claude Sonnet 4.5 (claude-sonnet-4-5-20250929), with Claude Haiku for intent classification
 - **Backend**: Python with FastAPI for API endpoints
@@ -171,14 +171,14 @@ Stage 7: Execute actions, update memory, log to Supabase
 - **Two-tier similarity thresholds**: 0.5 for precision, 0.3 for recall when needed
 - **Bounded memory**: Supports 100+ turn conversations with sliding window (last 4 responses for novelty checks)
 - **Graceful degradation**: If retrieval fails, continues with empty context instead of crashing
-- **Role-aware prompts**: Different tone and depth for developers vs hiring managers
+- **Universal pipeline**: One conversation flow for every visitor after the welcome — role selection changes the opening message, not the prompts
 
 ### Error Handling Patterns
 
 - Graceful degradation: External service failures don't crash the pipeline
 - Grounding validation: If similarity scores are too low, admits lack of information
 - Quality gates: Non-blocking checks at retrieval and generation stages
-- All errors logged to Supabase for observability
+- Errors are reported to Sentry; conversation analytics are logged to Supabase
 
 ### Problem Solved by Portfolia
 
@@ -189,7 +189,7 @@ Traditional portfolios are static. Portfolia allows dynamic, conversational expl
 The Portfolia project demonstrates Noah's skills in:
 - RAG architecture design and implementation
 - Vector database optimization (pgvector)
-- LangGraph pipeline orchestration
+- Functional pipeline orchestration (22 nodes, LangGraph-style)
 - LLM prompt engineering and response formatting
 - Python backend development
 - FastAPI API design
@@ -215,11 +215,10 @@ Noah used Python with pandas, NumPy, scikit-learn, matplotlib, and seaborn. The 
 
 ### Results
 
-- Accuracy: 79.1% on the test set
-- Precision: 73.7%
-- Recall: 54.0% (acknowledged as a limitation, model misses many actual attritions)
-- F1 Score: 0.623
-- AUC-ROC: 0.725
+- Accuracy: 94.75% on the test set (baseline of predicting the majority class: 65.6%)
+- Precision: 71.5%
+- Recall: 47.8% (acknowledged as a limitation, model misses many actual attritions)
+- AUC-ROC: 0.74
 
 ### Key Findings
 
@@ -334,7 +333,7 @@ Noah builds heatmaps, time-series plots, and distribution analyses. He develops 
 
 ### AI and LLM Systems
 
-Noah designs and implements RAG architecture, works with vector databases (Supabase, pgvector), integrates LLMs (OpenAI API), and performs prompt engineering and response optimization.
+Noah designs and implements RAG architecture, works with vector databases (Supabase, pgvector), integrates LLMs (Anthropic Claude for generation, OpenAI for embeddings), and performs prompt engineering and response optimization.
 
 ### Backend Development
 
@@ -368,11 +367,11 @@ He spent 16 months managing freight logistics at TQL, coordinating carriers, neg
 
 Noah has a strong foundation in quantitative reasoning from his biology background. He was trained to think in hypotheses, evaluate evidence, and avoid over-interpreting noisy data. That makes it easier for him to understand statistics, machine learning, and model limitations, not just how to use tools, but when they break.
 
-Unlike many career switchers, Noah is already comfortable with production pressure. He has owned outcomes, handled failures publicly, and been accountable to customers and stakeholders in real time. That translates directly to engineering environments where systems fail, priorities shift, and clear communication matters as much as clean code.
+Noah is already comfortable with production pressure, which is rare at his stage. He has owned outcomes, handled failures publicly, and been accountable to customers and stakeholders in real time. That translates directly to engineering environments where systems fail, priorities shift, and clear communication matters as much as clean code.
 
 Noah has proven he can learn hard things in demanding environments. He maintained high performance in his sales role (Top 10% at Tesla) while separately building technical projects. That signals adaptability, endurance, and the ability to grow without needing perfect conditions.
 
-Noah is not transitioning into tech to escape pressure. He is moving into it because his skill set is already aligned with how real technical systems are built, evaluated, and improved.
+Noah is not moving into tech to escape pressure. He is moving into it because his skill set is already aligned with how real technical systems are built, evaluated, and improved.
 
 ---
 

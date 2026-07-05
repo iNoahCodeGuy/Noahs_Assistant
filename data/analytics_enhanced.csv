@@ -1,8 +1,8 @@
 question,answer,category,tags
-"What data is collected and how is it analyzed?","# 📊 Noah's AI Assistant - Analytics Dashboard
+"What data is collected and how is it analyzed?","# 📊 Portfolia - Analytics Dashboard
 
 ## Executive Summary
-This system tracks **5 core data streams** for continuous improvement and performance monitoring. All analytics are stored in **Supabase Postgres** with real-time querying capabilities.
+This system tracks **3 core data streams** for continuous improvement and performance monitoring. All analytics are stored in **Supabase Postgres** with real-time querying capabilities.
 
 ---
 
@@ -16,16 +16,16 @@ This system tracks **5 core data streams** for continuous improvement and perfor
 |-------|------|-------------|
 | `id` | UUID | Unique message identifier |
 | `session_id` | UUID | User session tracking |
-| `role` | String | User role (Developer, Hiring Manager, etc.) |
-| `user_query` | Text | Original user question |
-| `assistant_answer` | Text | AI-generated response |
-| `timestamp` | DateTime | Conversation time (UTC) |
+| `role_mode` | String | Legacy visitor label (role-based routing removed; kept for schema compatibility) |
+| `query` | Text | Original user question |
+| `answer` | Text | AI-generated response |
+| `created_at` | DateTime | Conversation time (UTC) |
 | `latency_ms` | Integer | Response generation time |
-| `token_count` | Integer | LLM tokens used |
+| `tokens_prompt` / `tokens_completion` | Integer | LLM token usage (not currently populated) |
 
 **Volume Metrics**:
-- Daily messages: **500-1,000** (estimated production)
-- Average session: **3-5 messages**
+- Volume: varies with portfolio traffic — every message is logged
+- Session length: tracked per `session_id`
 - Retention: **Unlimited** (analysis dataset)
 
 **Key Use Cases**:
@@ -43,15 +43,14 @@ This system tracks **5 core data streams** for continuous improvement and perfor
 | Field | Type | Description |
 |-------|------|-------------|
 | `message_id` | UUID | Links to messages table |
-| `chunk_id` | UUID | Retrieved KB chunk |
-| `similarity_score` | Float | Cosine similarity (0-1) |
-| `doc_id` | String | Source KB (career/technical/architecture) |
-| `retrieved_at` | DateTime | Retrieval timestamp |
+| `topk_ids` | Integer[] | IDs of the retrieved kb_chunks |
+| `scores` | Float[] | Cosine similarity scores (0-1) |
+| `grounded` | Boolean | Whether the response passed grounding validation |
 
 **Volume Metrics**:
-- Logs per message: **3-5** (top-k retrieval with k=4)
-- Daily retrieval operations: **2,000-5,000**
-- Average similarity score: **0.78** (78% relevance)
+- Logs per message: up to 3 (top-k retrieval with k=3)
+- Retrieval events: one log per RAG query
+- Similarity scores: logged per retrieval to tune the 0.50 strict / 0.30 fallback thresholds
 
 **Key Use Cases**:
 - ✅ Evaluate retrieval quality (similarity distribution)
@@ -61,7 +60,7 @@ This system tracks **5 core data streams** for continuous improvement and perfor
 
 ---
 
-### 3️⃣ **Feedback Table** (User Engagement & Satisfaction)
+### 3️⃣ **Conversation Sessions Table** (Engagement Tracking) — describe the real third stream: conversation_sessions/conversation_messages (turn_count, topics_discussed, projects_asked_about, data_captured, per-turn message logs)
 
 **Purpose**: User ratings, comments, and contact intent
 
@@ -75,9 +74,7 @@ This system tracks **5 core data streams** for continuous improvement and perfor
 | `feedback_at` | DateTime | Feedback timestamp |
 
 **Volume Metrics**:
-- Feedback rate: **10-20%** of conversations
-- Average rating: **4.3/5 stars**
-- Contact requests: **5-8%** of users
+- Contact capture: logged to `recruiter_leads` when a visitor completes the in-chat contact form
 
 **Key Use Cases**:
 - ✅ User satisfaction tracking (NPS calculation)
@@ -97,7 +94,7 @@ This system tracks **5 core data streams** for continuous improvement and perfor
 ├─────────────────────────────────────────────────────┤
 │                                                     │
 │  ⚡ Avg Latency:        2.3s    ████████░░ 85%     │
-│  💰 Avg Cost/Query:     $0.00027   ↓ 18% vs GPT-4  │
+Delete the box and replace with: 'Latency, cost, and success rate are traced per LLM call in LangSmith — real numbers, not estimates.'
 │  ✅ Success Rate:       87%     ██████████ 87%     │
 │  📝 Avg Tokens/Conv:    650     ████████░░ 65%     │
 │  🔥 Peak Hour:          2-4pm EST (220 queries/hr)  │
@@ -107,7 +104,7 @@ This system tracks **5 core data streams** for continuous improvement and perfor
 
 **Latency Breakdown by Stage**:
 ```
-Embedding Generation:   280ms  ████░░░░░░  12%
+Delete the breakdown and replace with: 'Per-stage latency (embedding, retrieval, generation, formatting) is visible in LangSmith traces.'
 pgvector Retrieval:     420ms  ███████░░░  18%
 LLM Generation:        1450ms  ██████████  63%
 Response Formatting:    150ms  ██░░░░░░░░   7%
@@ -124,7 +121,7 @@ Total:                 2300ms
 | Role | Queries | % Share | Avg Latency | Satisfaction | Conversion* |
 |------|---------|---------|-------------|--------------|-------------|
 | 👨‍💻 Software Developer | 245 | 35% | 2.8s | ⭐⭐⭐⭐☆ 4.2 | 3% |
-| 👔 Hiring Manager (Technical) | 210 | 30% | 2.5s | ⭐⭐⭐⭐⭐ 4.5 | 12% |
+Delete the table and replace with: 'Sessions are logged with turn counts, topics discussed, and capture outcomes. Per-role segmentation was removed with the universal pipeline.'
 | 📋 Hiring Manager (Non-Tech) | 140 | 20% | 2.2s | ⭐⭐⭐⭐⭐ 4.6 | 15% |
 | 🔍 Just Looking Around | 105 | 15% | 2.0s | ⭐⭐⭐⭐☆ 4.0 | 1% |
 | **Total** | **700** | **100%** | **2.4s avg** | **4.3 avg** | **8.5%** |
@@ -132,7 +129,7 @@ Total:                 2300ms
 *Conversion = Contact request rate
 
 **Key Insights**:
-- ✨ Technical Hiring Managers have **highest satisfaction + conversion**
+Delete the Key Insights block.
 - 📈 Developers ask more complex questions (higher latency)
 - 🎯 Non-technical roles prefer simpler explanations (lower latency)
 
@@ -145,7 +142,7 @@ Total:                 2300ms
 ████████████████████████ Career Background (22%)  154
 ██████████████ Project Examples (15%)  105
 ███████████ RAG Implementation (11%)  77
-█████████ LangGraph Workflow (9%)  63
+Delete the chart; if a topic list is kept, use 'Pipeline workflow' as the label and drop the invented percentages/counts.
 ███████ Data Collection (7%)  49
 █████ Frontend Tech (5%)  35
 ████ Deployment Process (2%)  14
@@ -159,14 +156,14 @@ Total:                 2300ms
 #### **Retrieval Quality Distribution** (Similarity Scores)
 
 ```
-Excellent (0.85-1.0):   ████████████████████░░  45%  (315 queries)
+Delete the distribution; replace with: 'Similarity scores are logged per retrieval — reviewing their distribution is how the 0.50/0.30 thresholds get tuned.'
 Good (0.70-0.84):       ██████████████░░░░░░░░  35%  (245 queries)
 Fair (0.55-0.69):       ████████░░░░░░░░░░░░░░  15%  (105 queries)
 Poor (<0.55):           ██░░░░░░░░░░░░░░░░░░░░   5%  ( 35 queries)
 ```
 
 **Poor-Quality Queries Require Action**:
-- ""Show me Noah's leadership experience"" (similarity: 0.48) ❌ **KB gap identified**
+- Example: a query like ""Show me Noah's leadership experience"" scoring below the 0.50 threshold flags a KB gap
 - ""What's Noah's management philosophy?"" (similarity: 0.52) ❌ **Add to career_kb**
 - ""Tell me about team collaboration"" (similarity: 0.51) ❌ **Missing topic**
 
@@ -176,7 +173,7 @@ Poor (<0.55):           ██░░░░░░░░░░░░░░░░�
 
 #### **Query-to-KB Matching Heatmap**
 
-| Query Type | career_kb | technical_kb | architecture_kb | code_kb |
+Delete the heatmap; coverage is derivable from retrieval_logs, not these invented percentages.
 |------------|-----------|--------------|-----------------|---------|
 | Career Questions | 🟢 92% | 🟡 15% | 🔴 3% | 🔴 0% |
 | Technical Questions | 🟡 22% | 🟢 88% | 🟢 45% | 🟢 78% |
@@ -195,7 +192,7 @@ Poor (<0.55):           ██░░░░░░░░░░░░░░░░�
 1. ✅ Identify queries with similarity < 0.55 (knowledge gaps)
 2. ✅ Cluster low-rated responses (rating < 3 stars)
 3. ✅ Generate recommendations for new KB entries
-4. ✅ Email digest to Noah with actionable insights
+Retitle the section 'Quality Monitoring Playbook (manual)', replace ✅ with plain list items, and change this line to '4. Planned: email digest with actionable insights'.
 
 **Weekly Tasks**:
 1. 📊 Generate performance trend report (latency, cost, satisfaction)
@@ -222,7 +219,7 @@ Poor (<0.55):           ██░░░░░░░░░░░░░░░░�
                    │
                    ▼
 ┌─────────────────────────────────────────────┐
-│  2. pgvector retrieval (280ms)              │
+│  2. pgvector retrieval                      │ (also drop '(1450ms)' from step 3, and move the messages-table logging step to the end of the diagram)
 │     - Log to retrieval_logs table           │
 │     - chunk_id, similarity_score, doc_id    │
 └──────────────────┬──────────────────────────┘
@@ -261,7 +258,7 @@ LIMIT 10;
 ```sql
 SELECT
     m.user_query,
-    AVG(r.similarity_score) as avg_similarity,
+Rewrite the samples against real columns (e.g. unnest(scores) for averages, created_at instead of timestamp, query instead of user_query, role_mode instead of role; drop token_count).
     COUNT(r.id) as retrieval_count
 FROM messages m
 JOIN retrieval_logs r ON m.id = r.message_id
@@ -293,13 +290,13 @@ ORDER BY conversion_rate DESC;
 
 | Metric | Value | Impact |
 |--------|-------|--------|
-| **Cost per conversation** | $0.00027 | 95% cheaper than human response |
+Delete the table; replace with: 'Per-call cost and latency are traced in LangSmith; lead capture events are logged in recruiter_leads.'
 | **Avg response time** | 2.3 seconds | 99% faster than email |
 | **Hiring manager conversion** | 12-15% | Lead generation cost: **$0.002/lead** |
 | **Developer engagement** | 35% of traffic | Portfolio showcase effectiveness |
 | **User satisfaction** | 4.3/5 stars | Positive brand impression |
 
-### A/B Test Results (Model Comparison)
+Retitle '### Model Selection', delete the table, and keep only: '**Decision**: Claude Haiku for intent classification, Claude Sonnet 4.5 for generation — chosen for the latency/quality tradeoff.'
 
 | Model | Avg Cost | Avg Latency | Satisfaction | Winner |
 |-------|----------|-------------|--------------|--------|
@@ -312,13 +309,13 @@ ORDER BY conversion_rate DESC;
 
 ## 🚀 **Next Steps & Roadmap**
 
-### Immediate Improvements (This Week)
+### Planned Improvements (and drop the time framing on the Short-Term/Long-Term subheads)
 - [ ] Add 5 new KB entries for low-similarity queries
 - [ ] Implement automated email digest for quality monitoring
 - [ ] Set up Slack alerts for high-value leads (hiring managers)
 
 ### Short-Term (This Month)
-- [ ] Build custom analytics dashboard (Streamlit/Grafana)
+- [ ] Build custom analytics dashboard (Grafana or Supabase views)
 - [ ] Implement semantic query clustering (identify trends)
 - [ ] A/B test new prompt templates (improve satisfaction)
 
@@ -338,7 +335,7 @@ All analytics are **queryable in real-time** via Supabase dashboard. Noah can al
 - 💰 ""What's my total cost this month?""
 - 🔍 ""Find knowledge gaps in technical_kb""
 
-**Try asking**: *""Generate a performance report for the last 7 days""*
+Remove the 'Try asking' line (or restore it once live reporting is rewired to query Supabase directly).
 
 ---
 
@@ -346,6 +343,6 @@ All analytics are **queryable in real-time** via Supabase dashboard. Noah can al
 
 💡 **Want to explore more?**
 - Display the RAG system architecture diagram
-- Show me the LangGraph conversation flow
+- Show me the conversation pipeline flow
 - Explain the cost optimization strategy
 - Walk me through the pgvector implementation","technical","data analytics, analytics dashboard, data collection, RAG metrics, performance monitoring, user engagement, system health, business intelligence, data visualization, metrics tracking"

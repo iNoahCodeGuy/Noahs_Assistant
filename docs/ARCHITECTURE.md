@@ -100,9 +100,9 @@ notifications, and returns to normal conversation.
 ```mermaid
 stateDiagram-v2
     [*] --> idle
-    idle --> awaiting_form: user picks the flow /\nPortfolia emits marker phrase
-    awaiting_form --> idle: cancel ("nevermind", "nah", ...)
-    awaiting_form --> complete: form parsed + validated →\nSupabase write, SMS, email
+    idle --> awaiting_form: flow chosen, Portfolia emits its marker phrase
+    awaiting_form --> idle: cancel words like nevermind or nah
+    awaiting_form --> complete: form parsed and validated, then write + SMS + email
     complete --> idle: conversation resumes
 ```
 
