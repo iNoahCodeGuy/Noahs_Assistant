@@ -45,6 +45,10 @@ Design decisions worth knowing:
 - **Everything is traced.** LangSmith records every LLM call with prompt, response,
   latency, and cost (optional — degrades gracefully without an API key).
 
+The full walkthrough — all 22 nodes, each design decision and the constraint that
+forced it, KB engineering, failure behavior — is in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Stack
 
 | Layer | Technology |

@@ -22,6 +22,7 @@ Requirements:
 import sys
 import os
 import csv
+import hashlib
 import time
 import logging
 from typing import List, Dict, Any, Tuple
@@ -136,7 +137,10 @@ class DataMigration:
                     'source': source,
                     'row_index': idx,
                     'question': row['question'],
-                    'migrated_at': datetime.utcnow().isoformat()
+                    'migrated_at': datetime.utcnow().isoformat(),
+                    # Provenance: lets scripts/verify_kb_parity.py prove the
+                    # live table matches the CSVs without re-reading content
+                    'content_sha256': hashlib.sha256(content.encode('utf-8')).hexdigest(),
                 }
             }
             chunks.append(chunk)
@@ -412,6 +416,11 @@ def main():
         action='store_true',
         help='Delete existing chunks and re-import'
     )
+    parser.add_argument(
+        '--all',
+        action='store_true',
+        help='Migrate every data/*.csv (combine with --force for a full rebuild)'
+    )
 
     args = parser.parse_args()
 
@@ -425,6 +434,19 @@ def main():
     except Exception as e:
         logger.error(f"❌ Supabase configuration invalid: {e}")
         sys.exit(1)
+
+    if args.all:
+        import glob
+        csv_paths = sorted(glob.glob('data/*.csv'))
+        if not csv_paths:
+            logger.error("❌ No CSV files found in data/")
+            sys.exit(1)
+        logger.info(f"Migrating {len(csv_paths)} CSV files: {[os.path.basename(p) for p in csv_paths]}")
+        for path in csv_paths:
+            # Fresh instance per file so stats and doc_id derivation stay per-source
+            DataMigration().run(path, force=args.force)
+        logger.info("Run scripts/verify_kb_parity.py to confirm the table matches the CSVs.")
+        return
 
     # Check CSV exists
     if not os.path.exists(args.csv):

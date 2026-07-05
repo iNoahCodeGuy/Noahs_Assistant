@@ -18,6 +18,7 @@ README = "README.md"
 DOCS_DIR = "docs"
 KEPT_DOCS = [
     "docs/README.md",
+    "docs/ARCHITECTURE.md",
     "docs/GLOSSARY.md",
     "docs/EXTERNAL_SERVICES.md",
     "docs/LANGSMITH.md",
