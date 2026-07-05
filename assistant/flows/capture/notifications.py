@@ -8,12 +8,48 @@ try/except so a missing/misconfigured service degrades gracefully.
 
 import logging
 import os
+import time
+from collections import deque
+from typing import Deque
 
 logger = logging.getLogger(__name__)
 
 
+# --- Dispatch throttle ---
+# The protected resource here is Noah's phone and inbox. The /chat rate
+# limiter (api/main.py) caps per-IP traffic, but a patient client — or many
+# IPs — could still turn every capture submission into an SMS + email.
+# Sliding-window cap on total dispatches; in-memory is correct for the
+# single-instance Railway deployment (upgrade path: Upstash/Redis if this
+# ever scales horizontally). Throttled submissions are still written to
+# Supabase by the callers — only the SMS/email ping is skipped, and the
+# dashboard shows everything.
+NOTIFY_LIMIT = 10
+NOTIFY_WINDOW_SECONDS = 3600
+
+_dispatch_log: Deque[float] = deque()
+
+
+def _notify_throttled() -> bool:
+    """Record this dispatch; True if the hourly cap is already exhausted."""
+    now = time.time()
+    while _dispatch_log and now - _dispatch_log[0] > NOTIFY_WINDOW_SECONDS:
+        _dispatch_log.popleft()
+    if len(_dispatch_log) >= NOTIFY_LIMIT:
+        return True
+    _dispatch_log.append(now)
+    return False
+
+
 def _send_hm_lead_notifications(info: dict) -> bool:
     """Send SMS and email notifications to Noah about a new hiring manager lead."""
+    if _notify_throttled():
+        logger.warning(
+            "Notification throttle hit -- skipping HM lead SMS/email "
+            "(the lead itself is saved)"
+        )
+        return False
+
     name = info.get('name') or 'Unknown'
     company = info.get('company') or 'Unknown company'
     email = info.get('email') or ''
@@ -87,6 +123,12 @@ def _send_crush_notifications(
     message: str | None = None,
 ) -> None:
     """Send both SMS and email notifications to Noah about a crush confession."""
+    if _notify_throttled():
+        logger.warning(
+            "Notification throttle hit -- skipping crush SMS/email "
+            "(the confession itself is saved)"
+        )
+        return
 
     # ── SMS ──
     try:
