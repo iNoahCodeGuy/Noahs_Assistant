@@ -1,68 +1,60 @@
-"""LangGraph-style orchestrator with 22-node pipeline including quality validation and phase tracking.
+"""Functional orchestrator for the 22-node conversation pipeline.
 
-Educational mission: make every conversation a live case study of production RAG
-patterns with clear node boundaries, traceability, and cinematic-yet-grounded tone.
+The runtime pipeline is a plain function loop (`state = node(state)` with
+partial-dict merging), LangGraph-style in structure but with no graph engine
+in the hot path. This list mirrors the `pipeline` tuple in
+run_conversation_flow — if you change one, change both:
 
-Enhanced Pipeline (18→22 nodes with quality assurance + phase tracking + intent routing):
-1. initialize_conversation_state → normalize state containers and load memory
-2. handle_greeting → warm intro without RAG cost for first-turn hellos
-3. classify_role_mode → welcome message routing (no role-based branching after welcome)
-4. classify_intent → determine engineering vs business focus and data needs
-5. detect_conversation_phase → determine phase: discovery/exploration/synthesis/extended (NEW)
-6. presentation_controller → depth level (1-3) + display toggles in one pass
-7. extract_entities → capture company, role, timeline, contact hints
-8. assess/ask_clarification → clarify vague prompts before retrieval
-9. compose_query → build retrieval-ready prompt with persona + entity context
-10. retrieve_chunks → pgvector search + MMR diversification
-11. validate_retrieval_relevance → quality gate: check chunks match intent
-12. validate_grounding / handle_grounding_gap → stop hallucinations early
-13. generate_draft → role-aware LLM generation (stored as draft_answer)
-14. validate_answer_quality → quality gate: relevance + novelty checks
-15. validate_conversation_guidance → detect guidance needs (stuck, progression)
-16. hallucination_check → attach citations and mark safety status
-17. plan_actions → decide on actions + hiring signal detection
-18. format_answer → structure answer with enrichments + followup generation
-19. execute_actions → fire side-effects (email/SMS/storage)
-20. update_memory → store soft signals + affinity tracking + memory pruning
-21. log_and_notify → Supabase analytics + LangSmith metadata (always executed)
+Stage 0 — initialization
+ 1. initialize_conversation_state → defaults + clear volatile per-turn fields
 
-Quality Assurance Features:
-- Answer relevance check: Ensures answer addresses query key terms
-- Novelty check: Prevents repetitive answers (compares with last 4 responses)
-- Conversation guidance: Detects stuck patterns, progression opportunities
-- Retrieval relevance: Validates chunks match query intent
-- Memory pruning: Bounded memory for indefinite conversations (100+ turns)
-- Enhanced retry logic: Quality warnings trigger regeneration with specific instructions
-- Guided followups: Context-aware suggestions based on conversation flow
+Stage 1 — first contact
+ 2. prompt_for_role_selection → first-turn menu prompt
+ 3. handle_greeting → deterministic hello handling, no LLM cost
 
-Conversation Phase Tracking (NEW):
-- discovery: Turns 1-3, user exploring/getting oriented
-- exploration: Turns 4-8, user diving into specific areas
-- synthesis: Turns 8+ with 4+ topics, ready for connections
-- extended: Turns 15+, long-running conversation
-- Phase influences guidance suggestions and followup generation
+Stage 1.5 — intent routing (classify before you retrieve)
+ 4. classify_message_intent → Claude Haiku intent + capture/crush FSM steps
+ 5. handle_non_knowledge_intent → answers greeting/small-talk/off-topic/crush
 
-Scalability for Indefinite Conversations:
-- All quality checks use sliding windows (last 4-10 items)
-- Memory pruning: topics (10), entities (20), files (10), chat backup (6)
-- O(1) or O(recent_history) complexity, not O(full_history)
-- Supports 100+ turn conversations without memory bloat
+Stage 2 — understanding
+ 6. classify_role_mode → welcome-message routing (universal pipeline after)
+ 7. classify_intent → query type + topic focus (regex/keywords, no LLM)
+ 8. detect_conversation_phase → discovery/exploration/synthesis/extended
+ 9. extract_entities → company, role, timeline, contact hints
 
-Merged nodes (Part 1 & 2):
-- route_hiring_manager_technical → removed (universal conversation after welcome)
-- depth_controller + display_controller → presentation_controller
-- re_rank_and_dedup → retrieve_chunks
-- detect_hiring_signals + handle_resume_request → plan_actions
-- suggest_followups → format_answer
-- update_enterprise_affinity + update_technical_affinity → update_memory
+Stage 3 — query preparation
+10. assess_clarification_need → flag vague queries
+11. ask_clarifying_question → short-circuit with a question when too vague
+12. presentation_controller → depth level + display toggles
+13. compose_query → retrieval-ready prompt
 
-Performance characteristics:
-- Typical latency ~1.3s (slight increase due to quality checks)
-- Quality validation adds <5ms per check (in-memory operations)
-- Greeting short-circuit <50ms
-- Cold start ~3s on Vercel
-- p95 latency <3.2s with tracing enabled
-- Recursion depth: 22 nodes (quality gates are lightweight)
+Stage 4 — retrieval
+14. retrieve_chunks → pgvector search (0.50 strict / 0.30 fallback) + MMR
+15. validate_grounding → similarity threshold gate before generation
+16. handle_grounding_gap → self-knowledge injection or graceful degradation
+
+Stage 5 — generation
+17. generate_draft → Claude Sonnet 4.5 generation (+ verbatim-copy detection)
+18. hallucination_check → deterministic claim verification vs sources
+    (HALLUCINATION_GATE=log|enforce|off)
+
+Stage 6 — enrichment
+19. plan_actions → queue side effects + hiring-signal detection
+20. format_answer → voice enforcement, followups, link throttling
+
+Stage 7 — finalization
+21. execute_actions → fire queued side effects (Supabase/Twilio/Resend)
+22. update_memory → session memory + affinity tracking + pruning
+
+Post-loop (always runs, even on short-circuit):
+    log_and_notify → Supabase analytics + latency metadata
+
+Memory is bounded for long conversations: quality checks use sliding
+windows, and pruning caps topics (10), entities (20), and chat backup (6).
+
+Latency is dominated by the LLM calls (Haiku classification, then Sonnet
+generation for knowledge queries); everything else is in-memory or a single
+pgvector RPC. Real per-stage timings are visible in LangSmith traces.
 """
 
 from __future__ import annotations
@@ -710,9 +702,8 @@ def run_conversation_flow(
             break
 
     # ── Strip leaked source citations ──────────────────────────────────
-    # hallucination_check appends "Sources: 1. entry_X; ..." to draft_answer.
-    # format_answer normally strips it, but early-return paths (welcome messages,
-    # action requests) or LLM-generated citations can leak through.
+    # Guard against the LLM emitting its own "Sources: 1. ..." trailer
+    # (prompt-driven; nothing in the pipeline appends citations anymore).
     answer = state.get("answer") or ""
     if answer:
         answer = re.sub(r'\n*Sources:\s*[\d].*$', '', answer, flags=re.DOTALL).rstrip()

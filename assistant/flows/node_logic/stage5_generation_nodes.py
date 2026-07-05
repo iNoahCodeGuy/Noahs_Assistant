@@ -2,22 +2,21 @@
 
 This module handles answer generation with the LLM:
 1. generate_draft → LLM creates answer using retrieved context
-2. hallucination_check → Attaches citations and flags hallucination risk
+   (includes verbatim-copy detection on the output)
+2. hallucination_check → verifies checkable claims (percentages, dollar
+   amounts, URLs) against retrieved sources; HALLUCINATION_GATE=log|enforce|off
 
 Design Principles:
 - SRP: Each function handles one generation concern
-- Runtime awareness: Technical users see self-referential architecture content
 - Defensibility: Graceful degradation on LLM failures
 - Observability: Detailed logging for generation quality
 
-Performance Characteristics:
-- generate_draft: ~800-1500ms (LLM call)
-- hallucination_check: <10ms (in-memory citation attachment)
-
-See: docs/context/CONVERSATION_PERSONALITY.md for generation personality
+Latency is dominated by the LLM call in generate_draft; both validation
+passes are in-memory regex work.
 """
 
 import logging
+import os
 import re
 from typing import Dict, Any, List, Optional
 
@@ -92,13 +91,6 @@ def _prune_context_for_tokens(chunks: List[Dict], max_tokens: int = 4000) -> Lis
     return pruned
 
 
-MENU_OPTION_ONE_MIN_WORDS = 100
-MENU_OPTION_ONE_MAX_RETRIES = 2
-
-MENU_OPTION_TWO_MIN_WORDS = 500
-MENU_OPTION_TWO_MAX_WORDS = 600
-MENU_OPTION_TWO_MAX_RETRIES = 2
-
 # Context window management constants
 MAX_CONTEXT_TOKENS = 4000  # Leave room for prompt + response (model limit typically 8k-128k)
 
@@ -164,355 +156,6 @@ def _validate_answer_relevance(query: str, answer: str) -> bool:
     return is_relevant
 
 
-def _validate_menu_option_one_answer(answer: str) -> Dict[str, Any]:
-    """Validate menu option 1 output structure and length."""
-
-    required_layers = [
-        "Frontend:",
-        "Backend:",
-        "Data Pipeline:",
-        "Observability:"
-    ]
-
-    missing_layers = [layer for layer in required_layers if layer not in answer]
-    word_count = len(answer.split())
-
-    # Check for closing question
-    has_closing_question = any(phrase in answer.lower() for phrase in [
-        "detailed walkthrough",
-        "specific part",
-        "would you like"
-    ])
-
-    return {
-        "missing_layers": missing_layers,
-        "word_count": word_count,
-        "has_closing_question": has_closing_question,
-        "is_valid": not missing_layers and word_count >= MENU_OPTION_ONE_MIN_WORDS and word_count <= 160 and has_closing_question
-    }
-
-
-def _validate_menu_option_two_answer(answer: str) -> Dict[str, Any]:
-    """Validate menu option 2 output structure, length, and quality.
-
-    Checks that the orchestration layer explanation includes:
-    - Required sections (Turn 1, Turn 2, Turn 3+, Stage Flow, Example)
-    - Word count within target range (500-600)
-    - Turn references (actual conversation history references)
-    - Memory demonstration (specific, measurable examples)
-
-    Args:
-        answer: Generated answer text to validate
-
-    Returns:
-        Dict with validation results including:
-        - missing_sections: List of missing required sections
-        - word_count: Word count of answer
-        - has_turn_references: Boolean indicating turn references present
-        - has_memory_demonstration: Boolean indicating memory improvement demonstrated
-        - is_valid: Boolean indicating overall validity
-    """
-    answer_lower = answer.lower()
-
-    # Required sections (flexible matching - check for key phrases)
-    required_sections = [
-        ("Turn 1", ["turn 1", "turn one", "first turn", "initial turn"]),
-        ("Turn 2", ["turn 2", "turn two", "second turn"]),
-        ("Turn 3", ["turn 3", "turn three", "third turn", "turn 3+", "turn three+"]),
-        ("Stage Flow", ["stage flow", "nodes use memory", "how nodes use", "memory across turns"]),
-        ("Example", ["example: your conversation", "your conversation", "actual turns", "walk through"])
-    ]
-
-    missing_sections = []
-    for section_name, keywords in required_sections:
-        if not any(keyword in answer_lower for keyword in keywords):
-            missing_sections.append(section_name)
-
-    word_count = len(answer.split())
-
-    # Check for turn references (numbers 1, 2, 3 should appear)
-    has_turn_references = any(
-        phrase in answer_lower for phrase in [
-            "turn 1", "turn one", "turn 2", "turn two", "turn 3", "turn three",
-            "in turn 1", "in turn 2", "in turn 3", "first turn", "second turn", "third turn"
-        ]
-    )
-
-    # Check for memory demonstration (specific, measurable language)
-    memory_demonstration_indicators = [
-        "improved", "better", "enables", "because", "due to", "enabled by",
-        "similarity", "score", "compared to", "from turn", "accumulated"
-    ]
-    has_memory_demonstration = any(indicator in answer_lower for indicator in memory_demonstration_indicators)
-
-    # Additional check: ensure memory demonstration has specificity (numbers or comparisons)
-    has_specific_examples = any(
-        phrase in answer_lower for phrase in [
-            "similarity", "score", "0.", "improved from", "better than",
-            "compared to turn", "saved", "increased", "decreased"
-        ]
-    ) or any(char.isdigit() for char in answer)
-
-    is_valid = (
-        not missing_sections and
-        word_count >= MENU_OPTION_TWO_MIN_WORDS and
-        word_count <= MENU_OPTION_TWO_MAX_WORDS and
-        has_turn_references and
-        has_memory_demonstration
-    )
-
-    return {
-        "missing_sections": missing_sections,
-        "word_count": word_count,
-        "has_turn_references": has_turn_references,
-        "has_memory_demonstration": has_memory_demonstration,
-        "has_specific_examples": has_specific_examples,
-        "is_valid": is_valid
-    }
-
-
-def _format_outline_hint(layer_outline: Optional[Dict[str, str]]) -> str:
-    """Convert the layer outline dict into a human readable hint."""
-
-    if not layer_outline:
-        return ""
-
-    parts: List[str] = []
-    for layer, facts in layer_outline.items():
-        if facts and "No specific facts" not in facts:
-            parts.append(f"{layer.title()}: {facts}")
-
-    if not parts:
-        return ""
-
-    return "Layer cues pulled from retrieved chunks → " + " | ".join(parts)
-
-
-def _build_retry_instruction(validation: Dict[str, Any], attempt: int, layer_outline: Optional[Dict[str, str]]) -> str:
-    """Create a corrective instruction block for retry attempts."""
-
-    missing_layers = validation.get("missing_layers", [])
-    word_count = validation.get("word_count", 0)
-    missing_text = ", ".join(missing_layers) if missing_layers else "All required headings are present."
-    outline_hint = _format_outline_hint(layer_outline)
-
-    retry_block = [
-        f"REWRITE DIRECTIVE #{attempt} FOR MENU OPTION 1:",
-        f"- Previous attempt length: {word_count} words (target: 100-150).",
-        f"- Missing headings: {missing_text}.",
-        "- Start over and deliver a BRIEF list format response that follows the exact layer order.",
-        "- EACH layer must contain 1-2 sentences in first person explaining purpose only.",
-        f"- Keep it between {MENU_OPTION_ONE_MIN_WORDS} and 160 words (strict limit).",
-        "- DO NOT use markdown asterisks (**) - use plain text only.",
-        "- MUST end with: 'Would you like a detailed walkthrough of my architecture, or go into detail about a specific part?'"
-    ]
-
-    if outline_hint:
-        retry_block.append(f"- {outline_hint}.")
-
-    retry_block.append("- Do not reuse wording from the previous attempt; synthesize anew with the provided context.")
-
-    return "\n".join(retry_block)
-
-
-def _build_menu_option_two_retry_instruction(
-    validation: Dict[str, Any],
-    attempt: int,
-    conversation_examples: str,
-    memory_context: str
-) -> str:
-    """Create a corrective instruction block for menu option 2 retry attempts.
-
-    Similar to _build_retry_instruction but tailored for orchestration layer
-    explanation requirements: sections, turn references, memory demonstration.
-
-    Args:
-        validation: Validation results from _validate_menu_option_two_answer()
-        attempt: Retry attempt number (1-indexed)
-        conversation_examples: Formatted conversation history examples
-        memory_context: Formatted memory accumulation indicators
-
-    Returns:
-        Formatted retry instruction string
-    """
-    missing_sections = validation.get("missing_sections", [])
-    word_count = validation.get("word_count", 0)
-    has_turn_references = validation.get("has_turn_references", False)
-    has_memory_demonstration = validation.get("has_memory_demonstration", False)
-    has_specific_examples = validation.get("has_specific_examples", False)
-
-    retry_block = [
-        f"REWRITE DIRECTIVE #{attempt} FOR MENU OPTION 2 (ORCHESTRATION LAYER):",
-        f"- Previous attempt length: {word_count} words (target: {MENU_OPTION_TWO_MIN_WORDS}-{MENU_OPTION_TWO_MAX_WORDS})."
-    ]
-
-    if missing_sections:
-        missing_text = ", ".join(missing_sections)
-        retry_block.append(f"- Missing required sections: {missing_text}.")
-        retry_block.append("- YOU MUST include all required sections: Turn 1 Logic, Turn 2 Logic, Turn 3+ Logic, Stage Flow, Example: Your Conversation.")
-
-    if not has_turn_references:
-        retry_block.append("- Missing turn references: You must reference actual conversation turns (Turn 1, Turn 2, Turn 3) from chat history.")
-        retry_block.append(f"- Use these conversation examples: {conversation_examples[:200]}...")
-
-    if not has_memory_demonstration:
-        retry_block.append("- Missing memory demonstration: You must show HOW memory accumulation improves inference with specific examples.")
-        retry_block.append("- DO NOT just list what's stored - show concrete improvement (better retrieval, avoided repetition, progressive depth).")
-        retry_block.append(f"- Memory context available: {memory_context[:200]}...")
-
-    if not has_specific_examples:
-        retry_block.append("- Missing specific examples: Include measurable improvements (similarity scores, token savings, depth increases) if available.")
-        retry_block.append("- Use causal language: 'because', 'due to', 'enabled by', 'improved from'.")
-
-    if word_count < MENU_OPTION_TWO_MIN_WORDS:
-        retry_block.append(f"- Answer too short: Add more detail about each turn's logic and how memory accumulates.")
-    elif word_count > MENU_OPTION_TWO_MAX_WORDS:
-        retry_block.append(f"- Answer too long: Be more concise while maintaining all required sections.")
-
-    retry_block.append("- CRITICAL: Reference actual conversation turns from chat_history as concrete examples.")
-    retry_block.append("- CRITICAL: Show specific, measurable examples of how memory improves inference.")
-    retry_block.append("- Do not reuse wording from the previous attempt; synthesize anew.")
-
-    return "\n".join(retry_block)
-
-
-def _compute_retrieval_stats(chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Collect simple stats from retrieved chunks for observability copy."""
-
-    similarities = [chunk.get("similarity") for chunk in chunks if isinstance(chunk, dict) and chunk.get("similarity") is not None]
-    avg_similarity = sum(similarities) / len(similarities) if similarities else None
-
-    return {
-        "chunk_count": len(chunks),
-        "avg_similarity": avg_similarity
-    }
-
-
-def _formatted_layer_fact(layer_outline: Optional[Dict[str, str]], layer: str, fallback: str) -> str:
-    """Return a readable fact string for a layer."""
-
-    if not layer_outline:
-        return fallback
-
-    facts = layer_outline.get(layer)
-    if not facts or "No specific facts" in facts:
-        return fallback
-
-    return facts.replace(" | ", "; ")
-
-
-def _build_deterministic_menu_option_response(layer_outline: Optional[Dict[str, str]], chunks: List[Dict[str, Any]]) -> str:
-    """Fallback narrative when the LLM refuses to follow instructions - brief list format."""
-
-    outline = layer_outline or _extract_layer_outline(chunks)
-
-    opening = "Here's my tech stack at a glance:"
-
-    frontend = (
-        f"Frontend: Streamlit powers the workshop console, while Next.js on Vercel handles production traffic. "
-        f"Purpose: Mix rapid iteration with polished presentation."
-    )
-
-    backend = (
-        f"Backend: LangGraph pipeline in Python 3.11 orchestrates conversation flow through modular nodes. "
-        f"Purpose: Enable testable, traceable decision-making for enterprise audiences."
-    )
-
-    data_layer = (
-        f"Data Pipeline: Supabase Postgres with pgvector stores embeddings alongside relational data. "
-        f"Purpose: Keep retrieval grounded and costs predictable with one governed database."
-    )
-
-    observability = (
-        f"Observability: LangSmith traces LLM calls while Supabase tables persist analytics. "
-        f"Purpose: Provide audit trail and performance metrics for hiring managers."
-    )
-
-    closing_question = (
-        "Would you like a detailed walkthrough of my architecture, or go into detail about a specific part?"
-    )
-
-    paragraphs = [opening, frontend, backend, data_layer, observability, closing_question]
-    return "\n\n".join(paragraphs)
-
-
-def _build_deterministic_menu_option_two_response(
-    conversation_examples: str,
-    memory_context: str
-) -> str:
-    """Fallback response for menu option 2 when LLM fails after retries.
-
-    Provides a structured explanation of orchestration layer logic with
-    conversation examples and memory demonstration, even if LLM generation fails.
-
-    Args:
-        conversation_examples: Formatted conversation history
-        memory_context: Formatted memory accumulation indicators
-
-    Returns:
-        Formatted fallback explanation (500-600 words)
-    """
-    opening = (
-        "Let me explain the logic behind my conversation orchestration by walking through how each turn works "
-        "and how memory accumulation improves inference with each interaction."
-    )
-
-    turn1_logic = (
-        "Turn 1 Logic: Initialization & Greeting - I proactively send my greeting first for two critical reasons. "
-        "First, having you select a role allows me to tailor the entire conversation experience to your needs. "
-        "Second, leading the conversation means I can guide our exploration - if you speak first, your query becomes "
-        "too general ('hello' or 'tell me about yourself'), which makes it much harder for me to provide focused, "
-        "valuable responses. This greeting stores `initial_greeting_shown=true` in session_memory, which becomes "
-        "intelligence for later turns."
-    )
-
-    turn2_logic = (
-        "Turn 2 Logic: Role Detection & Menu Presentation - When you selected your role (e.g., '2' for Technical Hiring Manager), "
-        "my `classify_role_mode` node detected your persona and stored it as `role_mode: hiring_manager_technical` in session_memory. "
-        "The menu I showed wasn't just a list - it was structured to guide you through my knowledge base in a way that matches "
-        "your technical background. This role detection and menu presentation stored multiple memory signals: role_mode, "
-        "role_welcome_shown, and any entities you might have mentioned."
-    )
-
-    turn3_logic = (
-        "Turn 3+ Logic: Memory-Accumulated Inference - Now that I know your role and have accumulated session_memory from previous turns, "
-        "my nodes make significantly smarter decisions. My `classify_intent` node uses persona_hints to route queries more accurately. "
-        "My `extract_entities` node avoids re-asking for information I already know (like your role). Most importantly, my `compose_query` "
-        "node takes your current query and enhances it with role_context and previous entities, transforming a generic 'explain orchestration' "
-        "into '[hiring_manager_technical] LangGraph orchestration layer nodes states safeguards' - this persona-aware query improves "
-        "retrieval similarity significantly (from ~0.43 to ~0.56 in typical cases). Memory accumulation enables three key improvements: "
-        "(1) Better retrieval through role-aware queries, (2) Avoided repetition by not re-asking for known information, "
-        "(3) Progressive depth as depth_level increases with accumulated context."
-    )
-
-    stage_flow = (
-        "Stage Flow: How Nodes Use Memory - Each turn flows through the same 7 stages, but inference improves dramatically because of memory. "
-        "Stage 0 (initialize) loads previous session_memory into state - this is how Turn 3 remembers what happened in Turn 1 and Turn 2. "
-        "Stages 1-2 (greeting/role) skip execution if already known, saving tokens and improving speed. Stage 3 (query refinement) uses "
-        "session_memory.entities to avoid duplicate extraction. Stage 4 (retrieval) uses role_context and previous topics to improve similarity "
-        "scores. Stage 5 (generation) references chat_history for narrative coherence. Stage 7 (memory) accumulates new signals: topics discussed, "
-        "entities extracted, affinity scores. Turn 3's retrieval is measurably better than Turn 1's because it has accumulated context from "
-        "two previous turns - role, entities, topics - all of which enhance query composition and similarity matching."
-    )
-
-    example = (
-        f"Example: Your Conversation - Looking at our actual conversation: {conversation_examples[:150]}... "
-        "Notice how in Turn 1, I stored `initial_greeting_shown=true`. In Turn 2, I stored your role and menu selection. "
-        "Now in Turn 3, when you asked about orchestration, I used that accumulated memory to enhance your query with role context, "
-        "improving retrieval relevance by 30% compared to a generic query. This is the orchestration layer's intelligence in action: "
-        "stateless nodes with stateful memory enabling progressive inference."
-    )
-
-    closing = (
-        "This memory accumulation is what makes me smarter with each turn. I learn your preferences, avoid repetition, and provide "
-        "increasingly relevant responses. The orchestration layer's intelligence comes from stateless nodes working with stateful memory - "
-        "each node executes independently, but memory creates the thread that connects them into progressively smarter behavior."
-    )
-
-    paragraphs = [opening, turn1_logic, turn2_logic, turn3_logic, stage_flow, example, closing]
-    return "\n\n".join(paragraphs)
-
-
 def _log_instruction_preview(tag: str, instructions: Optional[str]) -> None:
     """Emit concise logs about instruction payload size and preview."""
 
@@ -534,60 +177,6 @@ def _log_answer_snapshot(tag: str, answer: str) -> None:
     word_count = len(answer.split())
     logger.info(f"{tag}: answer word count = {word_count}")
     logger.debug(f"{tag}: first 200 chars = {answer[:200]}")
-
-
-def _extract_layer_outline(chunks: list) -> Dict[str, str]:
-    """Extract layer-specific facts from retrieved chunks to guide synthesis.
-
-    Prevents verbatim copying by pre-organizing facts into layer buckets,
-    forcing the LLM to synthesize across sources rather than echo one chunk.
-
-    Args:
-        chunks: Retrieved knowledge base chunks
-
-    Returns:
-        Dict mapping layer names to extracted facts/technologies
-    """
-    outline = {
-        "frontend": [],
-        "backend": [],
-        "data": [],
-        "observability": [],
-        "deployment": []
-    }
-
-    # Keywords to identify layer-specific content
-    layer_keywords = {
-        "frontend": ["streamlit", "next.js", "react", "frontend", "ui", "interface"],
-        "backend": ["langgraph", "langchain", "python", "orchestration", "pipeline", "nodes"],
-        "data": ["supabase", "postgres", "pgvector", "embedding", "vector", "database", "ivfflat"],
-        "observability": ["langsmith", "tracing", "monitoring", "analytics", "observability"],
-        "deployment": ["vercel", "serverless", "deployment", "stateless", "scaling"]
-    }
-
-    for chunk in chunks:
-        content = chunk.get("content", "").lower()
-
-        # Extract sentences mentioning each layer
-        sentences = content.split(". ")
-        for layer, keywords in layer_keywords.items():
-            for sentence in sentences:
-                if any(keyword in sentence for keyword in keywords):
-                    # Store original case sentence
-                    original_sentence = sentence.strip()
-                    if original_sentence and original_sentence not in outline[layer]:
-                        outline[layer].append(original_sentence)
-
-    # Build concise fact strings for each layer
-    layer_facts = {}
-    for layer, facts in outline.items():
-        if facts:
-            # Take top 2-3 facts per layer (avoid overwhelming the prompt)
-            layer_facts[layer] = " | ".join(facts[:3])
-        else:
-            layer_facts[layer] = "(No specific facts found - synthesize from general context)"
-
-    return layer_facts
 
 
 def _generate_conversation_logic_explanation(state: ConversationState) -> str:
@@ -915,25 +504,14 @@ def _assess_query_complexity(query: str, chat_history: List[Dict], retrieved_chu
     return "medium"
 
 
-def select_model_for_task(state: ConversationState) -> str:
-    """Select model for generation.
+def select_model_for_task(state: ConversationState) -> Optional[str]:
+    """Select a model override for generation.
 
-    Generation now uses Anthropic Claude Sonnet 4.5 (claude-sonnet-4-5-20250929)
-    for all queries. Returns None to use the default model configured in
-    rag_factory.py. The previous OpenAI model routing (gpt-4o, gpt-4o-mini)
-    is no longer applicable since the backend switched to Anthropic.
-
-    Args:
-        state: Current conversation state with query and classification metadata
-
-    Returns:
-        None (uses default Claude Sonnet 4.5)
+    All generation currently uses the default Claude Sonnet 4.5 configured
+    in rag_factory.py, so this always returns None. Kept as the single
+    extension point if per-query model routing ever comes back.
     """
-    # All generation uses the default Claude Sonnet 4.5 configured in rag_factory.py
     return None
-
-    # Default to standard model for most queries
-    return supabase_settings.openai_model
 
 
 def _detect_verbatim_copying(answer: str, context_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1621,59 +1199,110 @@ def generate_draft(state: ConversationState, rag_engine: RagEngine) -> Dict[str,
     return update
 
 
-def hallucination_check(state: ConversationState) -> ConversationState:
-    """Attach lightweight citations and flag hallucination risk.
+# Facts stated verbatim in the generation system prompt
+# (assistant/core/response_generator.py) are legitimate grounding alongside
+# retrieved chunks — the model is *supposed* to know them without retrieval.
+# Keep in sync with the prompt until a shared constants module exists.
+_PROMPT_GROUNDED_FACTS = """
+94.75% 83% 58% 48% 81% 10% 47% 26% 50%
+22 nodes 1536 dimensions 0.50 0.30 150ms 2021
+https://github.com/iNoahCodeGuy
+https://www.linkedin.com/in/noah-de-la-calzada-250412358/
+https://github.com/iNoahCodeGuy/Noahs_Assistant
+https://github.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Logistic-Regression
+https://github.com/iNoahCodeGuy/Predicting-Employee-Attrition-Using-Naive-Bayes
+https://github.com/iNoahCodeGuy/Customer_Segmentation_decision_trees
+""".lower()
 
-    This node adds source attribution to the draft answer to help users
-    understand where information came from and detect potential hallucinations.
+_PERCENT_RE = re.compile(r"\d+(?:\.\d+)?%")
+_DOLLAR_RE = re.compile(r"\$[\d,]+(?:\.\d+)?")
+_URL_RE = re.compile(r"https?://[^\s)\]}\"']+")
 
-    Citation strategy:
-    - Extract section metadata from retrieved chunks
-    - Append "Sources: ..." to answer if not already present
-    - Limit to top 3 sources to avoid clutter
 
-    Performance: <10ms (in-memory string manipulation)
+def _find_unsupported_claims(answer: str, chunks: List[Dict[str, Any]]) -> List[str]:
+    """Return checkable claims in the answer that no source supports.
 
-    Design Principles:
-    - SRP: Only handles citation attachment, doesn't modify answer content
-    - Defensibility: Gracefully handles missing chunks or draft
-    - Simplicity (KISS): Simple string concatenation, no complex formatting
-
-    Args:
-        state: ConversationState with draft_answer and retrieved_chunks
-
-    Returns:
-        Updated state with:
-        - draft_answer: Answer with "Sources: ..." appended
-        - hallucination_safe: bool flag indicating citation status
-
-    Example:
-        >>> state = {
-        ...     "draft_answer": "RAG works by retrieving context first...",
-        ...     "retrieved_chunks": [
-        ...         {"section": "RAG Architecture"},
-        ...         {"section": "Vector Search"}
-        ...     ]
-        ... }
-        >>> hallucination_check(state)
-        >>> "Sources:" in state["draft_answer"]
-        True
+    Checks the high-signal, low-false-positive claim types: percentages,
+    dollar amounts, and URLs. Support = retrieved chunk text or the facts
+    the generation prompt itself states.
     """
-    draft = state.get("draft_answer")
-    chunks = state.get("retrieved_chunks", [])
+    corpus = (
+        " ".join(chunk.get("content", "") for chunk in chunks).lower()
+        + " "
+        + _PROMPT_GROUNDED_FACTS
+    )
+    findings: List[str] = []
 
-    if not draft or not chunks:
-        state["hallucination_safe"] = False if not chunks else state.get("hallucination_safe", True)
+    for pct in _PERCENT_RE.findall(answer):
+        # "94.75%" is supported by either "94.75%" or a bare "94.75"
+        if pct.lower() not in corpus and pct[:-1] not in corpus:
+            findings.append(pct)
+
+    for amount in _DOLLAR_RE.findall(answer):
+        if amount.lower() not in corpus:
+            findings.append(amount)
+
+    for url in _URL_RE.findall(answer):
+        cleaned = url.rstrip(".,;:!?").lower()
+        if cleaned not in corpus:
+            findings.append(cleaned)
+
+    return findings
+
+
+def hallucination_check(state: ConversationState) -> ConversationState:
+    """Verify the draft's checkable claims against its sources.
+
+    Deterministic (no LLM call): percentages, dollar amounts, and URLs in
+    the draft must appear in the retrieved chunks or in the facts the
+    generation prompt states. Anything unsupported is a finding.
+
+    Rollout is controlled by HALLUCINATION_GATE:
+    - "log" (default): findings are logged and recorded in
+      analytics_metadata; the answer ships unchanged. Used to measure the
+      false-positive rate before enforcement.
+    - "enforce": findings replace the draft with a graceful fallback and
+      set hallucination_safe=False.
+    - "off": skip the check entirely.
+
+    Performance: <5ms (regex over in-memory strings).
+    """
+    mode = os.getenv("HALLUCINATION_GATE", "log").lower()
+    draft = state.get("draft_answer") or ""
+
+    if mode == "off" or not draft:
+        state["hallucination_safe"] = True
         return state
 
-    citations = []
-    for idx, chunk in enumerate(chunks, start=1):
-        section = chunk.get("section") or f"knowledge chunk {idx}"
-        citations.append(f"{idx}. {section}")
+    # Non-RAG paths (greetings, forms, self-knowledge) carry no retrieved
+    # factual sources to verify against.
+    checkable_chunks = [
+        c for c in state.get("retrieved_chunks", [])
+        if c.get("source") != "self_knowledge"
+    ]
+    if not checkable_chunks:
+        state["hallucination_safe"] = True
+        return state
 
-    citation_text = "; ".join(citations[:3])
-    if citation_text and "Sources:" not in draft:
-        state["draft_answer"] = f"{draft}\n\nSources: {citation_text}"
+    findings = _find_unsupported_claims(draft, checkable_chunks)
+    if not findings:
+        state["hallucination_safe"] = True
+        return state
 
-    state["hallucination_safe"] = True
+    state.setdefault("analytics_metadata", {})["hallucination_findings"] = findings
+
+    if mode == "enforce":
+        logger.warning(f"🚫 Hallucination gate (enforce): unsupported claims {findings}")
+        state["hallucination_safe"] = False
+        state["draft_answer"] = (
+            "I want to be careful not to overstate anything here — part of what "
+            "I'd normally cite didn't come back from my knowledge base. Ask that "
+            "again, or narrow it down, and I'll give you the grounded version."
+        )
+    else:
+        logger.warning(
+            f"⚠️ Hallucination gate (log): unsupported claims {findings} — shipping unchanged"
+        )
+        state["hallucination_safe"] = True
+
     return state
