@@ -9,6 +9,37 @@ All notable changes to Portfolia are documented here. The format is based on
 
 ---
 
+## [2026-07-04] — Code-level credibility (Phase 5, part 1)
+
+### Added
+- Real hallucination check: percentages, dollar amounts, and URLs in generated
+  answers are verified against retrieved sources; staged rollout via
+  `HALLUCINATION_GATE` (log → enforce), 13 new tests
+
+### Fixed
+- False "Resume dispatched" SMS on resume requests (dead resume-email actions
+  removed; resume requests now route to the reach-out offer)
+- Generation could append a factually wrong tech-stack line to answers
+  ("Ensure test expectation" hack removed)
+- Architecture snippet shown to visitors was a fabricated 18-node LangGraph
+  sketch — now a faithful view of the real 22-node pipeline
+- Code index scanned a nonexistent `src/` directory (silently indexing nothing)
+- `EMBEDDING_MODEL` setting was unread with the wrong default (ada-002)
+
+### Changed
+- All dependency-fallback shims fail loud (ImportError) instead of silently
+  substituting fake embeddings, empty loaders, or an echo LLM
+- Pipeline docstring now lists the nodes that actually run; invented latency
+  figures removed
+
+### Removed
+- ~1,300 lines of admitted-dead code: role/visitor-type machinery, menu
+  validators, `ChatOpenAI` alias, legacy `OPENAI_*` settings, empty
+  `settings.py`, unused monitor module, eight one-off scripts, frontend
+  mock-response module
+
+---
+
 ## [2026-07-04] — Test suite resurrection (Phase 4)
 
 ### Added
