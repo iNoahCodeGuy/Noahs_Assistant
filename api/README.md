@@ -41,9 +41,14 @@ Response:
   "success": true,
   "response": "…the assistant's answer…",
   "answer": "…mirror of response (the field the frontend reads)…",
-  "session_id": "any-stable-string"
+  "session_id": "any-stable-string",
+  "form": null
 }
 ```
+
+`form` is the pipeline's structured form signal — `"crush"` or `"contact"` while the
+corresponding capture flow is awaiting input, `null` otherwise. The frontend renders
+forms from this field rather than pattern-matching the answer text.
 
 On pipeline errors the endpoint still returns 200 with `"success": false` and a generic
 message — the frontend renders it as a normal bubble.

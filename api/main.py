@@ -70,6 +70,10 @@ class ChatResponse(BaseModel):
     answer: str = ""  # Mirror of response — frontend reads this field
     session_id: str = ""
     success: bool = True
+    # Structured form signal from the pipeline's state machines. The
+    # frontend renders forms from this instead of pattern-matching the
+    # answer text: "crush" | "contact" | None.
+    form: Optional[str] = None
 
 
 # --- Menu mappings ---
@@ -142,11 +146,22 @@ def chat(req: ChatRequest):
         session["role"] = result.get("role", role)
 
         answer = result.get("answer", "")
+
+        # Structured form signal from the pipeline's own state machines —
+        # the frontend renders forms from this instead of sniffing the
+        # answer text for marker phrases.
+        form = None
+        if result.get("awaiting_crush_choice"):
+            form = "crush"
+        elif result.get("hm_capture_step") == "awaiting_hm_details":
+            form = "contact"
+
         return {
             "success": True,
             "response": answer,
             "answer": answer,
             "session_id": session_id,
+            "form": form,
         }
 
     except Exception as e:
@@ -157,4 +172,5 @@ def chat(req: ChatRequest):
             "response": "Something went wrong. Try again in a moment.",
             "answer": "Something went wrong. Try again in a moment.",
             "session_id": req.session_id or "",
+            "form": None,
         }
