@@ -15,7 +15,6 @@ Exit codes: 0 = perfect parity, 1 = drift found, 2 = could not run.
 """
 
 import argparse
-import csv
 import hashlib
 import os
 import sys
@@ -23,6 +22,11 @@ from collections import Counter, defaultdict
 from glob import glob
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Single source of truth: the parity check builds content with the exact
+# same code the migrator embeds with, so they cannot drift.
+from migrate_data_to_supabase import chunk_content, read_kb_rows
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')
 PAGE_SIZE = 1000
@@ -34,12 +38,9 @@ def expected_from_csvs() -> dict:
     for path in sorted(glob(os.path.join(DATA_DIR, '*.csv'))):
         doc_id = os.path.splitext(os.path.basename(path))[0]
         hashes: Counter = Counter()
-        with open(path, encoding='utf-8') as f:
-            for row in csv.DictReader(f):
-                # Must mirror DataMigration.create_chunks / read_career_kb
-                # (Q/A strip + "Q: ...\nA: ..." concatenation).
-                content = f"Q: {row['Question'].strip()}\nA: {row['Answer'].strip()}"
-                hashes[hashlib.sha256(content.encode('utf-8')).hexdigest()] += 1
+        for row in read_kb_rows(path):
+            content = chunk_content(row['question'], row['answer'])
+            hashes[hashlib.sha256(content.encode('utf-8')).hexdigest()] += 1
         expected[doc_id] = hashes
     return expected
 

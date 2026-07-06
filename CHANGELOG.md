@@ -9,6 +9,40 @@ All notable changes to Portfolia are documented here. The format is based on
 
 ---
 
+## [2026-07-05] — Production database rebuilt on a fresh Supabase project
+
+The original Supabase project was paused by the platform with corrupted pause
+metadata (dashboard claimed a 2024 pause date and blocked restore; the project
+had served traffic the previous day). Production now runs on a fresh project
+built from the migration files, with the truth-passed KB re-embedded
+(234 chunks, parity CLEAN). Historical 2026 leads/confessions remain on the
+old project pending a Supabase support ticket.
+
+### Fixed
+- **Migration 003** failed on fresh databases: Postgres refuses to alter a
+  column's type under a dependent view — now drops/recreates
+  `messages_with_retrieval` around the change
+- **Vector index**: 001 built an IVFFLAT index on the empty table, which
+  trains degenerate centroids and returns near-random retrieval once data
+  loads. Replaced with HNSW (no training step, correct in any build order)
+- **Embedding-model mismatch**: a stale `EMBEDDING_MODEL=text-embedding-ada-002`
+  in local .env silently broke retrieval once the audit wired that knob up —
+  queries embedded with a different model than the KB produce meaningless
+  similarities (both are 1536-dim, so nothing errors). The migrator now reads
+  the same settings knob as the retriever, so KB and queries cannot diverge
+- Migrator now understands all three KB CSV schemas (Question/Answer,
+  lowercase q/a with extras, and structured tables like imports_kb/mma_kb);
+  `verify_kb_parity.py` imports the same reader so parity cannot drift
+
+### Removed
+- **Migration 004 retired**: its analytics helper functions referenced columns
+  (`user_query`, `similarity_score`) and a table (`tool_invocations`) that
+  never existed anywhere, and nothing called them — it could never have been
+  applied. Tombstone recorded in `supabase/migrations/APPLIED.md`, which is
+  fully rewritten for the new project (zero unverified rows)
+
+---
+
 ## [2026-07-05] — Audit close-out: renames, hardening, KB truth pass, architecture doc
 
 ### Added

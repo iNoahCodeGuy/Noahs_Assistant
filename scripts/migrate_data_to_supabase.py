@@ -43,11 +43,58 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-EMBEDDING_MODEL = "text-embedding-3-small"
+# Same source of truth as the retriever (EMBEDDING_MODEL env var via settings):
+# KB and queries MUST be embedded with the same model or similarity is noise.
+EMBEDDING_MODEL = supabase_settings.embedding_model or "text-embedding-3-small"
 EMBEDDING_DIMENSIONS = 1536
 BATCH_SIZE = 100  # OpenAI allows up to 2048, but 100 is safer
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds
+
+
+def read_kb_rows(csv_path: str) -> List[Dict[str, str]]:
+    """Read any KB CSV in data/ into question/answer-shaped rows.
+
+    Two shapes exist:
+    - Q/A files — 'Question,Answer' headers in any casing; extra columns
+      (category, tags) are ignored for content.
+    - Structured files (imports_kb, mma_kb) — no question/answer columns;
+      every non-id column becomes a labeled line so the chunk stays
+      self-describing for retrieval, and the first non-id column is the label.
+
+    scripts/verify_kb_parity.py imports this function so the parity check
+    can never drift from what was embedded.
+    """
+    rows = []
+    with open(csv_path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        lower = {name.lower(): name for name in reader.fieldnames}
+        if 'question' in lower and 'answer' in lower:
+            qcol, acol = lower['question'], lower['answer']
+            for row in reader:
+                rows.append({
+                    'question': row[qcol].strip(),
+                    'answer': row[acol].strip()
+                })
+        else:
+            data_cols = [n for n in reader.fieldnames if n.lower() != 'id']
+            label_col = data_cols[0]
+            for row in reader:
+                parts = [
+                    f"{name}: {row[name].strip()}"
+                    for name in data_cols
+                    if (row[name] or '').strip()
+                ]
+                rows.append({
+                    'question': row[label_col].strip(),
+                    'answer': '\n'.join(parts)
+                })
+    return rows
+
+
+def chunk_content(question: str, answer: str) -> str:
+    """The exact content string that gets embedded and hashed."""
+    return f"Q: {question}\nA: {answer}"
 
 
 class DataMigration:
@@ -78,13 +125,7 @@ class DataMigration:
         }
 
     def read_career_kb(self, csv_path: str) -> List[Dict[str, str]]:
-        """Read career knowledge base from CSV.
-
-        Args:
-            csv_path: Path to career_kb.csv
-
-        Returns:
-            List of dicts with 'question' and 'answer' keys
+        """Read a KB CSV into question/answer-shaped rows (any supported schema).
 
         Why CSV:
         - Simple, human-editable format
@@ -92,16 +133,7 @@ class DataMigration:
         - Can be version-controlled in Git
         """
         logger.info(f"📄 Reading {csv_path}...")
-
-        rows = []
-        with open(csv_path, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                rows.append({
-                    'question': row['Question'].strip(),
-                    'answer': row['Answer'].strip()
-                })
-
+        rows = read_kb_rows(csv_path)
         self.stats['rows_read'] = len(rows)
         logger.info(f"   Found {len(rows)} rows")
         return rows
@@ -127,7 +159,7 @@ class DataMigration:
         chunks = []
         for idx, row in enumerate(rows):
             # Combine question and answer for richer context
-            content = f"Q: {row['question']}\nA: {row['answer']}"
+            content = chunk_content(row['question'], row['answer'])
 
             chunk = {
                 'doc_id': doc_id,

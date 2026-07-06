@@ -36,13 +36,15 @@ CREATE TABLE IF NOT EXISTS kb_chunks (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Create index for fast similarity search
--- IVFFLAT is faster than exact search for large datasets
--- lists=100 is good for ~10k vectors, adjust based on data size
+-- Create index for fast similarity search.
+-- HNSW, not IVFFLAT: IVFFLAT trains its cluster centroids at CREATE INDEX
+-- time, so building it here — on an empty table, before any data loads —
+-- produces degenerate clusters and near-random retrieval. (Bit us on the
+-- 2026-07-05 fresh-project rebuild.) HNSW needs no training data and is
+-- correct regardless of build order.
 CREATE INDEX IF NOT EXISTS kb_chunks_embedding_idx
 ON kb_chunks
-USING ivfflat (embedding vector_cosine_ops)
-WITH (lists = 100);
+USING hnsw (embedding vector_cosine_ops);
 
 -- Index for filtering by document and section
 CREATE INDEX IF NOT EXISTS kb_chunks_doc_section_idx
