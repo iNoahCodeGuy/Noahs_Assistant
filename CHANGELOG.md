@@ -9,6 +9,61 @@ All notable changes to Portfolia are documented here. The format is based on
 
 ---
 
+## [2026-07-07] — Career-asset phase: keep-alive, KB depth, visibility
+
+The audit era is closed; this session optimizes the project as a portfolio
+piece. Everything user-visible was re-embedded and verified live.
+
+### Added
+- `GET /health` — liveness plus a kb_chunks count probe (503 when the DB is
+  unreachable), with two hermetic tests
+- `.github/workflows/keepalive.yml` — Mon+Thu cron + manual dispatch: hits
+  /health and asks production a real KB question, asserting a grounded
+  answer. Generates the activity that prevents the Supabase free-tier
+  inactivity pause (the July 5 root cause) and turns silent retrieval
+  degradation into a red workflow run. First dispatch verified green
+- `data/incidents_kb.csv` — the July 5 outage-recovery story as 6
+  first-person KB rows (the silent failure, three latent bugs, layered
+  verification, prevention)
+- `docs/INCIDENT_2026-07-05.md` — the same story as an engineering case
+  study, linked from the README and docs index
+- README "What talking to it looks like" — a real production transcript
+- KB self-knowledge for the July hardening: hallucination-gate modes and
+  staged rollout, abuse guards, notification throttle, KB provenance/parity,
+  CI and the hermetic suite, production failure visibility (6 new rows in
+  technical/architecture, 2 existing rows corrected)
+
+### Changed
+- `data/analytics_enhanced.csv` rewritten: one 12,798-char emoji/template
+  dump → 8 retrieval-granular rows, every claim verified against
+  stage7/analytics/dashboard code; fabricated metrics deleted
+- `data/lead_response_heatmap_kb.csv` 7 → 14 rows, grounded in the actual
+  project source (metric choice, bucketing tradeoff, edge cases, honest
+  limitations); `data/enterprise_agentic_kb.csv` +2 rows
+- `data/career_kb.csv` +9 rows migrating narratives that lived only in
+  `data/noah_career_kb.md` (why-tech, TQL, real estate, coaching
+  philosophy, learning approach)
+- Frontend ([portfolia-frontend](https://github.com/iNoahCodeGuy/portfolia-frontend)
+  `cf832d6`, `7bf1434`): Open Graph + twitter metadata, OG image, favicon
+  set, explicit viewport; fail-loud on missing `NEXT_PUBLIC_API_URL` in
+  prod; form input aria-labels; stable dashboard list keys; login
+  autocomplete
+
+### Removed
+- `data/noah_career_kb.md` — never embedded (the migrator reads CSVs only);
+  its unique content now lives in career_kb.csv rows
+- `.env.bak-20260705` (untracked, un-ignored secrets copy; only diff from
+  .env was the old broken EMBEDDING_MODEL value)
+
+### Verified
+- Re-embed + parity: 271 chunks across 14 CSVs, `verify_kb_parity.py`
+  CLEAN; live probes returned grounded on-voice answers for the outage
+  story, the hallucination gate, and heatmap methodology
+- 107 hermetic tests green; CI green on both repos; live /health 200 with
+  the correct chunk count
+
+---
+
 ## [2026-07-05] — Production database rebuilt on a fresh Supabase project
 
 The original Supabase project was paused by the platform with corrupted pause
