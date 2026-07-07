@@ -117,7 +117,7 @@ pipeline debug output.
 
 ## Knowledge base
 
-The KB is ~200 curated chunks across CSV files in [data/](data/), authored for retrieval
+The KB is ~270 curated chunks across 14 CSV files in [data/](data/), authored for retrieval
 quality (one concept per chunk, question-shaped sections). Editing a CSV does **not**
 change production until re-embedded:
 

@@ -173,7 +173,7 @@ convenience fallback for the single-instance deployment, not a requirement.
 
 ## Knowledge-base engineering
 
-The KB is ~200 curated chunks across CSVs in `data/` — each row authored
+The KB is ~270 curated chunks across 14 CSVs in `data/` — each row authored
 for retrieval (one concept per chunk, question-shaped sections), not
 scraped. Editing a CSV changes nothing until re-embedded:
 
