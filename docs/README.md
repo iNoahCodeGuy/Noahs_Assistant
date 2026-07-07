@@ -6,6 +6,7 @@ Reference documentation for the Portfolia backend. Start with the
 | Doc | What it covers |
 | --- | --- |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | The deep dive: 22-node pipeline walkthrough, design decisions and their why, KB engineering, failure behavior |
+| [INCIDENT_2026-07-05.md](INCIDENT_2026-07-05.md) | Case study: the database outage, the same-day rebuild, and the three latent bugs it surfaced |
 | [GLOSSARY.md](GLOSSARY.md) | Terms used across the codebase — RAG, embeddings, pgvector, grounding, testing vocabulary |
 | [EXTERNAL_SERVICES.md](EXTERNAL_SERVICES.md) | Setting up the third-party services: Supabase, Twilio, Resend, API keys |
 | [LANGSMITH.md](LANGSMITH.md) | LangSmith account setup and trace configuration |

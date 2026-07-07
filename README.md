@@ -47,7 +47,32 @@ Design decisions worth knowing:
 
 The full walkthrough — all 22 nodes, each design decision and the constraint that
 forced it, KB engineering, failure behavior — is in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For how the system fails and recovers,
+read the incident case study:
+[docs/INCIDENT_2026-07-05.md](docs/INCIDENT_2026-07-05.md) — a production outage,
+a same-day rebuild, and the three latent bugs the rebuild surfaced.
+
+## What talking to it looks like
+
+A real exchange with the production system (answer trimmed for length):
+
+> **Visitor:** What did the K-Means clustering study actually find?
+>
+> **Portfolia:** The K-Means study found that the existing customer categories
+> (A/B/C/D labels) don't reflect how customers actually cluster in feature space.
+> The algorithm identified four natural segments, but they align with life-stage
+> and income, not the original labels.
+>
+> Before running any clustering, three diagnostic questions were answered. First,
+> distribution shapes: income had a 35x spread from median to max, and 47 customers
+> were retired (4.5 standard deviations above mean after standardization). Second,
+> feature correlations: age, employment length, and address duration formed a
+> correlated block (0.54–0.67 range), meaning life-stage would dominate the distance
+> calculation. Third, label separation: none. The prediction going in was that
+> clusters would form around life-stage and income, not the existing A/B/C/D labels.
+
+Ask it yourself at [noahdelacalzada.com](https://noahdelacalzada.com/) — including
+how it was built. It knows.
 
 ## Stack
 
