@@ -14,6 +14,25 @@ All notable changes to Portfolia are documented here. The format is based on
 The audit era is closed; this session optimizes the project as a portfolio
 piece. Everything user-visible was re-embedded and verified live.
 
+### Fixed (found by running the live eval suite against the new KB)
+- **Degraded-LLM bug**: a bare `RagEngineFactory()` carried `settings=None`,
+  so `ChatAnthropic` got a `None` API key, failed validation, and silently
+  swapped in the degraded-mode fallback — every edge-case response
+  (off-topic and meta questions) was canned text instead of a generated
+  answer. The factory now defaults to the settings singleton
+- "Where can I see his work?" now retrieves a KB row carrying both the
+  GitHub and LinkedIn links (they previously lived only in separate rows)
+- `LINKEDIN_URL` constant pointed at a malformed profile slug; the welcome
+  message claimed the heatmap uses matplotlib (it is a Streamlit/Plotly
+  dashboard)
+- The live eval helper now models a post-welcome session like the hermetic
+  suite does — before this, stage2 answered every eval question with the
+  static role-welcome template. Suite: 9/9
+- Gate-flip review procedure corrected: hallucination findings are not in
+  LangSmith or Supabase — they exist only as warning lines in Railway
+  runtime logs (reset each deploy); the review command lives in the local
+  roadmap
+
 ### Added
 - `GET /health` — liveness plus a kb_chunks count probe (503 when the DB is
   unreachable), with two hermetic tests
