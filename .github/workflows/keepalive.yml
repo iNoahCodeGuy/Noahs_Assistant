@@ -1,0 +1,49 @@
+# Keep-alive + live smoke test.
+#
+# One probe, two jobs: (1) generate real Supabase activity so the free tier
+# never auto-pauses again (the 2026-07-05 outage was an inactivity pause that
+# silently degraded every KB answer to the fallback), and (2) assert that
+# production retrieval still returns grounded answers — red run instead of a
+# silent outage.
+#
+# Gotcha: GitHub disables scheduled workflows after ~60 days without repo
+# activity. If that ever happens the Actions tab shows a banner; a manual
+# workflow_dispatch run re-enables the schedule.
+
+name: keepalive
+
+on:
+  schedule:
+    - cron: "17 14 * * 1,4" # Mon + Thu 14:17 UTC — the free-tier pause needs ~7 idle days
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: /health — DB reachable, chunks present
+        run: |
+          body=$(curl -sSf --max-time 30 "$BACKEND/health")
+          echo "$body"
+          echo "$body" | grep -q '"status":"ok"'
+        env:
+          BACKEND: https://web-production-9c5bf.up.railway.app
+
+      - name: /chat — retrieval returns a grounded answer
+        run: |
+          # Turn 1 of a session is always the welcome template; retrieval only
+          # runs on later turns, so keep one session across two calls.
+          session="keepalive-$(date -u +%Y%m%dT%H%M)"
+          curl -sSf --max-time 90 -X POST "$BACKEND/chat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"message\": \"See what Noah has built\", \"session_id\": \"$session\"}" > /dev/null
+          answer=$(curl -sSf --max-time 90 -X POST "$BACKEND/chat" \
+            -H 'Content-Type: application/json' \
+            -d "{\"message\": \"What did the K-Means clustering study find?\", \"session_id\": \"$session\"}")
+          echo "${answer:0:600}"
+          echo "$answer" | grep -qi 'k-means' || {
+            echo "::error::Answer is not grounded (no K-Means mention) — retrieval may be degraded"
+            exit 1
+          }
+        env:
+          BACKEND: https://web-production-9c5bf.up.railway.app

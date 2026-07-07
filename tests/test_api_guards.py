@@ -63,6 +63,44 @@ def test_rate_limit_is_per_client(client):
     assert _post(client, ip="10.0.0.2").status_code == 200
 
 
+class _FakeSupabase:
+    """Minimal stand-in for the supabase client's table().select() chain."""
+
+    def __init__(self, count):
+        self._count = count
+
+    def table(self, name):
+        return self
+
+    def select(self, *args, **kwargs):
+        return self
+
+    def limit(self, n):
+        return self
+
+    def execute(self):
+        result = type("Result", (), {})()
+        result.count = self._count
+        return result
+
+
+def test_health_ok_reports_chunk_count(client, monkeypatch):
+    monkeypatch.setattr(api_main, "get_supabase_client", lambda: _FakeSupabase(234))
+    res = client.get("/health")
+    assert res.status_code == 200
+    assert res.json() == {"status": "ok", "kb_chunks": 234}
+
+
+def test_health_degraded_when_db_unreachable(client, monkeypatch):
+    def _boom():
+        raise RuntimeError("supabase unreachable")
+
+    monkeypatch.setattr(api_main, "get_supabase_client", _boom)
+    res = client.get("/health")
+    assert res.status_code == 503
+    assert res.json() == {"status": "degraded", "kb_chunks": None}
+
+
 def test_window_expiry_unblocks(client, monkeypatch):
     for _ in range(api_main.RATE_LIMIT_REQUESTS):
         _post(client)

@@ -59,7 +59,7 @@ app = FastAPI(title="Portfolia API")
 # are defaults here — FRONTEND_URL adds extra origins (normalized: CORS
 # origin matching is exact, so a trailing slash in the env var would
 # silently block the site). No credentials cross-origin (API is cookie-free).
-from assistant.config.supabase_config import supabase_settings
+from assistant.config.supabase_config import get_supabase_client, supabase_settings
 
 origins = {
     "http://localhost:3000",
@@ -89,6 +89,34 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"success": False, "detail": "Internal server error."},
     )
+
+
+@app.get("/health")
+def health():
+    """Liveness plus a cheap DB probe.
+
+    The keep-alive workflow (.github/workflows/keepalive.yml) hits this on a
+    schedule: the query keeps the Supabase free tier from auto-pausing (the
+    2026-07-05 outage), and a failed probe turns a silent retrieval
+    degradation into a red workflow run instead of fallback answers.
+    """
+    try:
+        result = (
+            get_supabase_client()
+            .table("kb_chunks")
+            .select("id", count="exact")
+            .limit(1)
+            .execute()
+        )
+        kb_chunks = result.count
+    except Exception as e:
+        logger.error(f"/health probe failed: {e}")
+        _report_exception(e)
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "kb_chunks": None},
+        )
+    return {"status": "ok", "kb_chunks": kb_chunks}
 
 
 # --- In-memory session store ---

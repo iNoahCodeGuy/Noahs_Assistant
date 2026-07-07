@@ -6,7 +6,7 @@ https://noahdelacalzada.com (frontend repo: iNoahCodeGuy/portfolia-frontend).
 
 ## Tech Stack
 - **Pipeline:** 22-node functional pipeline (LangGraph-style; plain function loop at runtime)
-- **Backend:** FastAPI (Python 3.12) on Railway — single endpoint `POST /chat`
+- **Backend:** FastAPI (Python 3.12) on Railway — `POST /chat` plus a `GET /health` probe
 - **Database:** Supabase + pgvector (vector storage, semantic retrieval)
 - **Generation:** Anthropic Claude Sonnet 4.5 · **Classification:** Claude Haiku
 - **Embeddings:** OpenAI text-embedding-3-small (1536 dims)

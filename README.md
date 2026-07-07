@@ -81,9 +81,11 @@ python3 chat_with_portfolia.py
 uvicorn api.main:app --reload --port 8000
 ```
 
-The API is a single endpoint: `POST /chat` with
+The chat API is a single endpoint: `POST /chat` with
 `{"message": "...", "session_id": "...", "role": "..."}` — the same contract the live
-frontend uses. Full request/response reference: [api/README.md](api/README.md).
+frontend uses. A `GET /health` probe backs the scheduled keep-alive/smoke workflow
+([keepalive.yml](.github/workflows/keepalive.yml)). Full request/response reference:
+[api/README.md](api/README.md).
 
 Terminal client commands: `/quit` exit · `/clear` reset conversation · `/debug` toggle
 pipeline debug output.

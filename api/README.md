@@ -11,7 +11,15 @@ repo's [Dockerfile](../Dockerfile); the deployed frontend
 uvicorn api.main:app --reload --port 8000
 ```
 
-## Endpoint
+## Endpoints
+
+### `GET /health`
+
+Liveness plus a cheap Supabase probe. Returns `{"status": "ok", "kb_chunks": <count>}`
+(200) when the KB table is reachable, `{"status": "degraded", "kb_chunks": null}` (503)
+when it isn't. The scheduled keep-alive workflow
+([.github/workflows/keepalive.yml](../.github/workflows/keepalive.yml)) hits this to keep
+the Supabase free tier active and to catch silent retrieval outages.
 
 ### `POST /chat`
 
