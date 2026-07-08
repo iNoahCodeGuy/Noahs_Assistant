@@ -9,6 +9,36 @@ All notable changes to Portfolia are documented here. The format is based on
 
 ---
 
+## [2026-07-08] — Security: enable RLS on post-002 tables
+
+Supabase's security advisor flagged `rls_disabled_in_public` (CRITICAL) on the
+rebuilt production project: every table created after migration 002 shipped
+without Row-Level Security.
+
+### Security
+- **Anon key had full read/write on four tables** — `crush_confessions`,
+  `recruiter_leads`, `conversation_sessions`, `conversation_messages`.
+  Verified live before the fix: conversation transcripts were readable with
+  the public anon key; the two PII capture tables were exposed but empty
+  (historical rows live only in the paused pre-rebuild project). Migration
+  `010_enable_rls_remaining_tables.sql` enables RLS with service-role
+  policies, matching the 001/002 pattern.
+- **Views bypassed base-table RLS**: Postgres views run with their owner's
+  privileges by default, and the owner bypasses RLS — `messages_with_retrieval`
+  verifiably leaked rows of the RLS-protected `messages` table to anon, and
+  `analytics_by_role` leaked its aggregates the same way. Migration 010 sets
+  `security_invoker = true` on all four views.
+- The backend is unaffected: it talks to Supabase exclusively with the
+  service role key (which bypasses RLS) — proven by fresh prod writes to the
+  `messages` table, RLS-protected since 001.
+
+### Added
+- `scripts/verify_rls.py` — probes every table and view as `anon` (SELECT
+  everywhere, INSERT on the four fixed tables) and exits nonzero on any
+  exposure. Cited by `supabase/migrations/APPLIED.md` as apply evidence.
+
+---
+
 ## [2026-07-07] — Career-asset phase: keep-alive, KB depth, visibility
 
 The audit era is closed; this session optimizes the project as a portfolio
