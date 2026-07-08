@@ -22,7 +22,7 @@ Supabase support ticket. See `AUDIT_ROADMAP.md` (incident section).
 | 007_add_referral_source | applied 2026-07-05 | |
 | 008_conversation_analytics | applied 2026-07-05 | dashboard reads conversation_sessions / conversation_messages |
 | 009_fix_match_kb_chunks_type | applied 2026-07-05 | `match_kb_chunks` verified: signature + self-match similarity 1.0 |
-| 010_enable_rls_remaining_tables | **PENDING — NOT YET APPLIED** | closes Supabase advisor CRITICAL `rls_disabled_in_public`: anon key had full read/write on `crush_confessions`, `recruiter_leads`, `conversation_sessions`, `conversation_messages` (verified 2026-07-08); also sets `security_invoker` on the 4 views (`messages_with_retrieval` leaked RLS-protected `messages` to anon). Apply in SQL editor, run `scripts/verify_rls.py` (must print ALL LOCKED DOWN), then update this row. |
+| 010_enable_rls_remaining_tables | applied 2026-07-08 | via SQL editor; closes Supabase advisor CRITICAL `rls_disabled_in_public` — anon key had full read/write on `crush_confessions`, `recruiter_leads`, `conversation_sessions`, `conversation_messages` (anon inserts verifiably landed pre-fix), and `messages_with_retrieval`/`analytics_by_role` leaked RLS-protected `messages` through owner-privilege views. Evidence: `scripts/verify_rls.py` ALL LOCKED DOWN (13 anon SELECT + 4 anon INSERT probes denied); live two-turn grounded smoke green; deployed backend's analytics writes verified landing post-RLS (4 message rows + session upsert on the smoke session). |
 
 Verification after apply (2026-07-05): all tables/views present; KB re-embedded
 (234 chunks) and `scripts/verify_kb_parity.py` reports CLEAN; end-to-end pipeline
